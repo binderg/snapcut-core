@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc d3bf6833b8939ad4b9c390ee6c7d99de8890157c0ccf296989d31f6fb5b0454c # shrinks to ops = [Ripple(1, 1)]
+cc df03ea043f4d2f23573b6ad48a97b698390b8ecd7ab1f84386da7972199dc3df # shrinks to ops = [Speed { pick: 0, num: 1, den: 3 }, Split(271)]

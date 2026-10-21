@@ -2510,6 +2510,7 @@ name = "ve-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "clap",
  "serde_json",
  "tokio",
@@ -2524,10 +2525,12 @@ dependencies = [
 name = "ve-daemon"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "blake3",
  "etcetera",
  "fs4",
  "interprocess",
+ "json-patch",
  "schemars",
  "semver",
  "serde",
@@ -2564,8 +2567,10 @@ name = "ve-history"
 version = "0.1.0"
 dependencies = [
  "json-patch",
+ "schemars",
  "serde",
  "serde_json",
+ "thiserror",
  "ve-model",
  "ve-ops",
 ]
@@ -2607,6 +2612,7 @@ version = "0.1.0"
 dependencies = [
  "json-patch",
  "proptest",
+ "schemars",
  "serde",
  "serde_json",
  "thiserror",

@@ -100,7 +100,28 @@ bumps rev and saves), `media.assets`; CLI `ve probe`, `ve import`. Asset rows
 carry a compact `media` block (exact duration, size, nominal rate, rotation,
 vfr flag, first audio stream); full ffprobe JSON is not stored. Media URLs are
 absolute `file://`. VFR footage keeps `r_frame_rate` as its rate. No proxies
-yet (needs jobs). `actor` is not recorded yet (comes with history, item 5).
+yet (needs jobs).
+Edit ops (`ve-ops`): insert, split, trim (ripple or roll), move (overwrite),
+ripple_delete (ranges, marker names or clips), delete (lift), set_speed,
+set_volume, marker add/remove, as pure fns over flattened tracks
+(`ve-ops::lane`), with proptests (patches invert, linked clips stay in sync,
+clips never read past their media). Clips inserted from an A/V asset share a
+`metadata.ve.clip.link` and are edited together unless `linked: false` (how
+J/L cuts are made: roll one side). Timeline times snap to the project frame
+grid. Speed convention: `source_range.duration` is timeline time, media used
+is `duration * speed` (OTIO's time-warp convention), and `LinearTimeWarp` is
+written too. Patches come from our own prefix/suffix JSON diff
+(`ve-ops::diff`) so a ripple delete is a few ops, not a rewrite of the track.
+Every mutating method goes through `ve-daemon::commit` (base_rev, dry_run,
+actor, save, history). History (`ve-history`): per-actor undo groups, undo
+and redo are new revisions, persisted in the OS cache dir
+(`ve/projects/<hash>/history.json`) so undo works across CLI calls; dropped if
+the file's revision moved elsewhere. serde_json has `float_roundtrip` on and
+`RationalTime` reads doubles back as the simplest exact fraction (needed once
+speed changes make fractional media in-points).
+**OTIO checkpoint (item 5): keep OTIO.** Flatten/edit/rebuild per command was
+simple, implicit positions keep patches small, and Python OTIO reads edited
+projects unchanged (positions and `LinearTimeWarp` agree).
 Everything else is documented stubs. No CI yet; the Python check runs by hand.
 
 Phase 1 gate: **an agent cuts a 10-minute talking head end to end via the CLI only.**
@@ -110,9 +131,8 @@ Next, in order:
 2. (done) Timecode parser.
 3. (done) Project folder open/save, lock, `project.summary`.
 4. (done) `media.import` / `media.probe`, asset table with blake3 hashes.
-5. edit ops (insert, split, trim, move, ripple_delete, set_speed) as pure fns with
-   proptests; history with undo groups. `set_speed` writes `LinearTimeWarp` too.
-   Checkpoint: is OTIO still the right in-memory model? (see Decisions).
+5. (done) edit ops (insert, split, trim, move, ripple_delete, set_speed) as pure
+   fns with proptests; history with undo groups. Checkpoint: keep OTIO.
 6. Resolver + filtergraph compiler; `render.frame`, `render.contact_sheet`,
    `render.range_preview`, `export`.
 7. Analyzers: silencedetect, scdet. Then the `video-edit` skill.

@@ -27,7 +27,9 @@ ve-daemon = { path = "crates/ve-daemon" }
 
 # --- model and protocol ---
 serde = { version = "1.0.229", features = ["derive"] }
-serde_json = "1.0.154"
+# float_roundtrip: exact text <-> f64, which exact rational time depends on (OTIO
+# writes times as doubles; see ve-model::time).
+serde_json = { version = "1.0.154", features = ["float_roundtrip"] }
 num-rational = { version = "0.4.2", default-features = false, features = ["std", "serde"] }
 num-integer = "0.1"
 indexmap = { version = "2.14.2", features = ["serde"] }
@@ -35,6 +37,7 @@ nanoid = "0.5.0"
 semver = { version = "1.0.28", features = ["serde"] }
 url = { version = "2.5.8", features = ["serde"] }
 json-patch = "4.2.0"
+base64 = "0.22.1"
 jsonrpsee = { version = "0.26.1", default-features = false }
 schemars = "1.2.3"
 openrpc-types = "0.5.0"

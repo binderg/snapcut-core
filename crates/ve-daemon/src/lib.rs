@@ -8,6 +8,8 @@
 //!
 //! This crate also wires every method into the shared [`ve_protocol::Registry`].
 
+pub mod commit;
+pub mod edit;
 pub mod media;
 pub mod project;
 
@@ -129,18 +131,32 @@ pub fn build_registry() -> Arc<Registry> {
 
     r.method("media.probe", "Probe a media file with ffprobe; no project needed", false, media::probe);
 
-    let s = session.clone();
-    r.method(
-        "media.import",
-        "Probe, hash and add files to the asset table; same content is never added twice",
-        true,
-        move |p: media::ImportParams| s.with_project(|proj| media::import(proj, p)),
-    );
+    // Methods that run against the open project. `$f(project, params)`.
+    macro_rules! on_project {
+        ($name:literal, $summary:literal, $mutates:expr, $f:expr) => {{
+            let s = session.clone();
+            r.method($name, $summary, $mutates, move |p| s.with_project(|proj| $f(proj, p)));
+        }};
+    }
 
-    let s = session;
-    r.method("media.assets", "The project's asset table", false, move |_: NoParams| {
-        s.with_project(|p| Ok(media::assets(p)))
-    });
+    on_project!("media.import", "Probe, hash and add files to the asset table; same content is never added twice", true, media::import);
+    on_project!("media.assets", "The project's asset table", false, |p: &mut OpenProject, _: NoParams| Ok(media::assets(p)));
+
+    on_project!("edit.insert", "Put an asset on the timeline (video + linked audio); insert or overwrite", true, edit::insert);
+    on_project!("edit.split", "Cut clips in two at a time (all clips under it, or the given ones)", true, edit::split);
+    on_project!("edit.trim", "Move a clip's in/out point; ripple (default) or roll (J/L cuts with linked=false)", true, edit::trim);
+    on_project!("edit.move", "Move a clip to a new time or track, overwriting what is there", true, edit::move_clip);
+    on_project!("edit.ripple_delete", "Remove time ranges, marker ranges or clips and close the gap", true, edit::ripple_delete);
+    on_project!("edit.delete", "Remove clips and leave gaps", true, edit::delete);
+    on_project!("edit.set_speed", "Change a clip's speed (exact ratio); writes OTIO LinearTimeWarp too", true, edit::set_speed);
+    on_project!("edit.set_volume", "Set a clip's audio gain in dB", true, edit::set_volume);
+    on_project!("marker.add", "Add a timeline marker", true, edit::marker_add);
+    on_project!("marker.remove", "Remove timeline markers by ID or name", true, edit::marker_remove);
+    on_project!("history.undo", "Undo the most recent step (one edit or one group)", true, |p: &mut OpenProject, a| edit::undo(p, a, false));
+    on_project!("history.redo", "Redo the most recently undone step", true, |p: &mut OpenProject, a| edit::undo(p, a, true));
+    on_project!("history.list", "Undo and redo steps with their actors", false, |p: &mut OpenProject, a| Ok(edit::list(p, a)));
+    on_project!("history.begin_group", "Start an undo group: the actor's next edits undo as one step", false, edit::begin_group);
+    on_project!("history.end_group", "End the actor's undo group", false, edit::end_group);
 
     r.seal("Headless Video Engine", ENGINE_VERSION)
 }

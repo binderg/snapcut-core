@@ -26,6 +26,30 @@ impl Timeline {
         self.metadata.ve.project.as_ref()
     }
 
+    /// The project frame rate: the grid every edit snaps to. Files without a
+    /// project block fall back to 24.
+    pub fn output_rate(&self) -> crate::time::Rate {
+        self.project().map_or(crate::time::Rate::integer(24), |p| p.output.rate)
+    }
+
+    /// Every stable ID in the document: tracks, clips, transitions, markers,
+    /// clip link groups and assets. Used to keep new IDs unique.
+    pub fn ids(&self) -> HashSet<Id> {
+        let mut taken = HashSet::new();
+        self.visit(&mut |item| {
+            if let Some(id) = item.id() {
+                taken.insert(id.clone());
+            }
+            if let ItemRef::Clip(c) = item
+                && let Some(link) = c.metadata.ve.clip.as_ref().and_then(|m| m.link.clone())
+            {
+                taken.insert(link);
+            }
+        });
+        taken.extend(self.metadata.ve.assets.iter().map(|a| a.id.clone()));
+        taken
+    }
+
     /// Give every track, clip, transition and marker that lacks a stable ID a
     /// fresh one, so files written by other tools become addressable. Returns
     /// how many IDs were added. Existing IDs are never changed.
