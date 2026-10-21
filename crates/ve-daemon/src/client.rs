@@ -161,9 +161,13 @@ fn detach(cmd: &mut Command) {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        const DETACHED_PROCESS: u32 = 0x0000_0008;
+        // A hidden console of its own, not DETACHED_PROCESS (no console at
+        // all): the ffmpeg/ffprobe runs a daemon starts are console programs,
+        // and without a console to inherit each one opens a window, so every
+        // rendered frame flashed a terminal on screen.
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
-        cmd.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
+        cmd.creation_flags(CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP);
     }
     #[cfg(unix)]
     {
