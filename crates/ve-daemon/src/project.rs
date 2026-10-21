@@ -96,7 +96,7 @@ impl OpenProject {
             .and_then(|bytes| {
                 let tmp = self.cache.join("history.json.tmp");
                 fs::write(&tmp, bytes)?;
-                fs::rename(&tmp, self.history_path())
+                rename_with_retry(&tmp, &self.history_path()).map_err(io::Error::other)
             });
         if let Err(e) = result {
             tracing::warn!("could not save undo history to {}: {e}", self.history_path().display());
@@ -315,14 +315,15 @@ fn cache_base() -> Result<PathBuf> {
     Ok(base.cache_dir().join("ve"))
 }
 
-/// OneDrive and antivirus scanners briefly hold files open on Windows, which
-/// makes a rename fail with "access denied". A few short retries ride it out.
+/// OneDrive, antivirus scanners and the search indexer briefly hold files open
+/// on Windows, which makes a rename fail with "access denied" or "used by
+/// another process". A few short retries (about 6 s at most) ride it out.
 fn rename_with_retry(from: &Path, to: &Path) -> Result<()> {
     let mut last = None;
-    for attempt in 0..5 {
+    for attempt in 0..7 {
         match fs::rename(from, to) {
             Ok(()) => return Ok(()),
-            Err(e) if e.kind() == io::ErrorKind::PermissionDenied => {
+            Err(e) if is_transient(&e) => {
                 last = Some(e);
                 std::thread::sleep(Duration::from_millis(50 << attempt));
             }
@@ -332,6 +333,16 @@ fn rename_with_retry(from: &Path, to: &Path) -> Result<()> {
     Err(ProjectError::Io { path: to.to_owned(), source: last.expect("loop ran") })
 }
 
+/// Errors that mean "someone else has the file open right now". Windows
+/// sharing and lock violations (os errors 32 and 33) have no `ErrorKind` of
+/// their own; std reports them as uncategorized.
+fn is_transient(e: &io::Error) -> bool {
+    const ERROR_SHARING_VIOLATION: i32 = 32;
+    const ERROR_LOCK_VIOLATION: i32 = 33;
+    e.kind() == io::ErrorKind::PermissionDenied
+        || (cfg!(windows) && matches!(e.raw_os_error(), Some(ERROR_SHARING_VIOLATION | ERROR_LOCK_VIOLATION)))
+}
+
 /// Two-space indented JSON, the same layout Python OTIO writes.
 fn to_pretty_json(tl: &Timeline) -> serde_json::Result<String> {
     let mut buf = Vec::new();
@@ -339,4 +350,42 @@ fn to_pretty_json(tl: &Timeline) -> serde_json::Result<String> {
     let mut ser = serde_json::Serializer::with_formatter(&mut buf, fmt);
     serde::Serialize::serialize(tl, &mut ser)?;
     Ok(String::from_utf8(buf).expect("serde_json writes UTF-8"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sharing_violations_are_transient() {
+        assert!(is_transient(&io::Error::from(io::ErrorKind::PermissionDenied)));
+        assert!(!is_transient(&io::Error::from(io::ErrorKind::NotFound)));
+        assert_eq!(is_transient(&io::Error::from_raw_os_error(32)), cfg!(windows));
+        assert_eq!(is_transient(&io::Error::from_raw_os_error(33)), cfg!(windows));
+    }
+
+    /// Antivirus scans the temp file right after it is written, holding it
+    /// with no sharing. That must delay the save, not fail it.
+    #[cfg(windows)]
+    #[test]
+    fn rename_waits_out_a_file_held_open() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let dir = std::env::temp_dir().join(format!("ve-rename-test-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let to = dir.join(PROJECT_FILE);
+        let from = dir.join("project.otio.tmp");
+        fs::write(&to, "old").unwrap();
+        fs::write(&from, "new").unwrap();
+        let held = File::options().read(true).share_mode(0).open(&from).unwrap();
+        let err = fs::rename(&from, &to).unwrap_err();
+        assert_eq!(err.raw_os_error(), Some(32), "the test should reproduce a sharing violation");
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(200));
+            drop(held);
+        });
+        rename_with_retry(&from, &to).unwrap();
+        release.join().unwrap();
+        assert_eq!(fs::read_to_string(&to).unwrap(), "new");
+        fs::remove_dir_all(&dir).ok();
+    }
 }
