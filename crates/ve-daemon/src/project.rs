@@ -65,20 +65,30 @@ impl OpenProject {
 
     /// Write `project.otio` atomically.
     pub fn save(&self) -> Result<()> {
-        let path = self.root.join(PROJECT_FILE);
-        let tmp = self.root.join(format!("{PROJECT_FILE}.tmp"));
-        let mut text = to_pretty_json(&self.timeline).map_err(|e| ProjectError::Invalid {
-            path: path.clone(),
-            message: e.to_string(),
-        })?;
-        text.push('\n');
-        {
-            let mut f = File::create(&tmp).map_err(io_err(&tmp))?;
-            f.write_all(text.as_bytes()).map_err(io_err(&tmp))?;
-            f.sync_all().map_err(io_err(&tmp))?;
-        }
-        rename_with_retry(&tmp, &path)
+        write_atomic(&self.root, &self.timeline)
     }
+
+    /// Replace the document with `next`, saving it first so a failed write
+    /// leaves both the file and the in-memory project unchanged.
+    pub fn commit(&mut self, next: Timeline) -> Result<()> {
+        write_atomic(&self.root, &next)?;
+        self.timeline = next;
+        Ok(())
+    }
+}
+
+fn write_atomic(root: &Path, timeline: &Timeline) -> Result<()> {
+    let path = root.join(PROJECT_FILE);
+    let tmp = root.join(format!("{PROJECT_FILE}.tmp"));
+    let mut text = to_pretty_json(timeline)
+        .map_err(|e| ProjectError::Invalid { path: path.clone(), message: e.to_string() })?;
+    text.push('\n');
+    {
+        let mut f = File::create(&tmp).map_err(io_err(&tmp))?;
+        f.write_all(text.as_bytes()).map_err(io_err(&tmp))?;
+        f.sync_all().map_err(io_err(&tmp))?;
+    }
+    rename_with_retry(&tmp, &path)
 }
 
 /// Create a new project folder (the folder itself may already exist, empty or not).

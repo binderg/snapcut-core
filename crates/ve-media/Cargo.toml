@@ -11,6 +11,7 @@ publish.workspace = true
 ve-model.workspace = true
 ffmpeg-sidecar.workspace = true
 blake3.workspace = true
+url.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

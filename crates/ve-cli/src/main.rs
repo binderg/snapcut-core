@@ -47,8 +47,32 @@ enum Command {
     },
     /// Compact timeline text: tracks, clips and markers with their IDs.
     Summary,
+    /// Show what a media file contains (no project needed).
+    Probe { path: PathBuf },
+    /// Probe, hash and add media files to the project's asset table.
+    Import {
+        #[arg(required = true)]
+        paths: Vec<PathBuf>,
+        /// Show what would be imported without changing the project.
+        #[arg(long)]
+        dry_run: bool,
+        /// Revision you planned against; defaults to the current one.
+        #[arg(long)]
+        base_rev: Option<u64>,
+    },
     /// Send a raw JSON-RPC method call, e.g. `ve call project.get '{}'`.
     Call { method: String, params: Option<String> },
+}
+
+/// Paths go to the engine absolute, since a daemon's working directory is not ours.
+fn absolute(p: &std::path::Path) -> PathBuf {
+    std::path::absolute(p).unwrap_or_else(|_| p.to_owned())
+}
+
+fn media_text(media: &Value) -> String {
+    serde_json::from_value::<ve_model::meta::MediaInfo>(media.clone())
+        .map(|m| ve_model::summary::media_line(&m))
+        .unwrap_or_default()
 }
 
 /// A failed call: the JSON-RPC error object.
@@ -90,19 +114,23 @@ async fn main() -> anyhow::Result<()> {
 
     // Open the project first for commands that work on one.
     let needs_project = match &cli.command {
-        Command::Summary => Some(true),
-        Command::Call { method, .. } if !method.starts_with("system.") && method != "project.init" && method != "project.open" => {
+        Command::Summary | Command::Import { .. } => Some(true),
+        Command::Call { method, .. }
+            if !method.starts_with("system.") && !["project.init", "project.open", "media.probe"].contains(&method.as_str()) =>
+        {
             Some(false)
         }
         _ => None,
     };
+    let mut opened_rev = None;
     if let Some(required) = needs_project {
         let cwd = std::env::current_dir()?;
         let root = cli.project.clone().or_else(|| ve_daemon::project::find_root(&cwd));
         match root {
             Some(path) => {
-                if let Err(CallError(e)) = call(&registry, "project.open", json!({ "path": path })).await {
-                    fail(&e, cli.json);
+                match call(&registry, "project.open", json!({ "path": path })).await {
+                    Ok(info) => opened_rev = info["revision"].as_u64(),
+                    Err(CallError(e)) => fail(&e, cli.json),
                 }
             }
             None if required => usage_error(
@@ -125,6 +153,12 @@ async fn main() -> anyhow::Result<()> {
             ("project.init".to_owned(), params)
         }
         Command::Summary => ("project.summary".to_owned(), json!({})),
+        Command::Probe { path } => ("media.probe".to_owned(), json!({ "path": absolute(path) })),
+        Command::Import { paths, dry_run, base_rev } => {
+            let paths: Vec<PathBuf> = paths.iter().map(|p| absolute(p)).collect();
+            let base_rev = base_rev.or(opened_rev).unwrap_or(0);
+            ("media.import".to_owned(), json!({ "paths": paths, "base_rev": base_rev, "dry_run": dry_run }))
+        }
         Command::Call { method, params } => {
             let p = match params.as_deref().map(serde_json::from_str).transpose() {
                 Ok(p) => p.unwrap_or(json!({})),
@@ -152,6 +186,22 @@ async fn main() -> anyhow::Result<()> {
             result["name"].as_str().unwrap_or("?")
         ),
         (Command::Summary, false) => print!("{}", result["text"].as_str().unwrap_or_default()),
+        (Command::Probe { .. }, false) => {
+            println!("{}", result["url"].as_str().unwrap_or("?"));
+            println!("{}", media_text(&result["media"]));
+        }
+        (Command::Import { .. }, false) => {
+            for a in result["assets"].as_array().into_iter().flatten() {
+                let file = a["url"].as_str().unwrap_or("?").rsplit('/').next().unwrap_or("?");
+                let state = if a["existing"].as_bool() == Some(true) { "already imported" } else { "new" };
+                println!("{}  {file}  ({state})  {}", a["id"].as_str().unwrap_or("?"), media_text(&a["media"]));
+            }
+            if result["dry_run"].as_bool() == Some(true) {
+                println!("dry run: project unchanged (rev {})", result["revision"]);
+            } else {
+                println!("rev {}", result["revision"]);
+            }
+        }
         _ => println!("{}", serde_json::to_string_pretty(&result)?),
     }
     Ok(())

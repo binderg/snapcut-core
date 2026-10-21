@@ -51,3 +51,4 @@ All third-party versions are pinned once in the root `Cargo.toml`
 - Generated OpenRPC from `schemars` schemas (`ve describe`)
 - CLI exit codes mapped from protocol errors
 - `ve init my-edit --fps 29.97 --size 1920x1080` and `ve summary` (compact timeline text with IDs)
+- `ve probe clip.mov`, `ve import media/a.mov media/b.mov` (asset table with blake3 hashes and exact durations)

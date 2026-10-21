@@ -8,6 +8,7 @@
 //!
 //! This crate also wires every method into the shared [`ve_protocol::Registry`].
 
+pub mod media;
 pub mod project;
 
 use std::path::PathBuf;
@@ -118,7 +119,7 @@ pub fn build_registry() -> Arc<Registry> {
         })
     });
 
-    let s = session;
+    let s = session.clone();
     r.method(
         "project.summary",
         "Compact text view of tracks, clips and markers with IDs, for agents",
@@ -126,10 +127,25 @@ pub fn build_registry() -> Arc<Registry> {
         move |_: NoParams| s.with_project(|p| Ok(Summary { revision: p.revision(), text: ve_model::summary::summary(&p.timeline) })),
     );
 
+    r.method("media.probe", "Probe a media file with ffprobe; no project needed", false, media::probe);
+
+    let s = session.clone();
+    r.method(
+        "media.import",
+        "Probe, hash and add files to the asset table; same content is never added twice",
+        true,
+        move |p: media::ImportParams| s.with_project(|proj| media::import(proj, p)),
+    );
+
+    let s = session;
+    r.method("media.assets", "The project's asset table", false, move |_: NoParams| {
+        s.with_project(|p| Ok(media::assets(p)))
+    });
+
     r.seal("Headless Video Engine", ENGINE_VERSION)
 }
 
-fn rpc_error(e: ProjectError) -> RpcError {
+pub(crate) fn rpc_error(e: ProjectError) -> RpcError {
     let code = match e {
         ProjectError::Locked(_) => ErrorCode::ProjectLocked,
         ProjectError::Io { .. } => ErrorCode::Internal,

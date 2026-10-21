@@ -6,6 +6,7 @@
 //! missing IDs.
 
 use indexmap::IndexMap;
+use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{Map, Value};
 
@@ -85,7 +86,7 @@ pub struct OutputSettings {
 }
 
 /// One row of `metadata.ve.assets`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Asset {
     pub id: Id,
     /// Media URI (`file://` in Phase 1).
@@ -96,9 +97,51 @@ pub struct Asset {
     pub hash: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provenance: Option<Value>,
+    /// Compact probe result, so edits and summaries need no ffprobe run and
+    /// work while media is offline. The full ffprobe JSON is not stored.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media: Option<MediaInfo>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// What an asset contains, from ffprobe, with exact times and rates.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct MediaInfo {
+    /// Video stream duration if there is video, else audio. At the video
+    /// rate (or the audio sample rate for audio-only files).
+    pub duration: RationalTime,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub video: Option<VideoInfo>,
+    /// First audio stream.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audio: Option<AudioInfo>,
+    pub size_bytes: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct VideoInfo {
+    pub codec: String,
+    /// Stored (coded) size, before rotation.
+    pub width: u32,
+    pub height: u32,
+    /// Nominal frame rate. For variable-frame-rate footage this is the
+    /// capture rate, not the average.
+    pub rate: Rate,
+    /// Display rotation in degrees, 0/90/180/270 (phone portrait video is 90 or 270).
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub rotation: u16,
+    /// Frame timing varies (common on phones); renders must conform it.
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub vfr: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct AudioInfo {
+    pub codec: String,
+    pub sample_rate: u32,
+    pub channels: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AssetKind {
     Source,

@@ -120,6 +120,22 @@ impl<'de> Deserialize<'de> for Rate {
     }
 }
 
+/// Schema for the `[num, den]` form.
+impl JsonSchema for Rate {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "Rate".into()
+    }
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "description": "Exact rate as [numerator, denominator], e.g. [30000, 1001] for 29.97",
+            "type": "array",
+            "items": {"type": "integer", "minimum": 1},
+            "minItems": 2,
+            "maxItems": 2
+        })
+    }
+}
+
 impl fmt::Display for Rate {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if *self.0.denom() == 1 {

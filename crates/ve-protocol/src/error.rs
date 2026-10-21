@@ -70,7 +70,7 @@ impl RpcError {
     pub fn stale_revision(current_rev: u64) -> Self {
         Self {
             code: ErrorCode::StaleRevision,
-            message: "stale_revision".into(),
+            message: format!("stale_revision: the project is at rev {current_rev}; re-read it and retry"),
             data: Some(serde_json::json!({ "current_rev": current_rev })),
         }
     }

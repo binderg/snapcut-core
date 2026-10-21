@@ -2516,6 +2516,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "ve-daemon",
+ "ve-model",
  "ve-protocol",
 ]
 
@@ -2579,6 +2580,7 @@ dependencies = [
  "serde_json",
  "thiserror",
  "tracing",
+ "url",
  "ve-model",
 ]
 

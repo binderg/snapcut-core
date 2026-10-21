@@ -8,7 +8,7 @@
 
 use std::fmt::Write;
 
-use crate::meta::Asset;
+use crate::meta::{Asset, MediaInfo};
 use crate::otio::{Clip, Composable, Marker, MediaReference, Stack, Timeline, Track, TrackKind};
 use crate::time::{Q, Rate, RationalTime};
 use crate::timecode::to_smpte;
@@ -65,7 +65,11 @@ pub fn summary(tl: &Timeline) -> String {
     if !tl.metadata.ve.assets.is_empty() {
         out.push_str("assets:\n");
         for a in &tl.metadata.ve.assets {
-            let _ = writeln!(out, "  {}  {}  {}", a.id, label(a.kind), file_name(&a.url));
+            let _ = write!(out, "  {}  {}  {}", a.id, label(a.kind), file_name(&a.url));
+            if let Some(m) = &a.media {
+                let _ = write!(out, "  {}", media_line(m));
+            }
+            out.push('\n');
         }
     }
 
@@ -88,6 +92,38 @@ pub fn summary(tl: &Timeline) -> String {
     out
 }
 
+/// One line describing probed media: duration, picture and sound.
+/// `00:10:00;00  1920x1080 29.97fps h264 rot90 vfr  aac 48000Hz 2ch`
+pub fn media_line(m: &MediaInfo) -> String {
+    let mut out = String::new();
+    let d = m.duration;
+    if m.video.is_some() {
+        out.push_str(&to_smpte(d, d.rate.has_drop_frame()).unwrap_or_else(|_| clock(d)));
+    } else {
+        // Timecode at an audio sample rate (`00:00:01:22050`) helps nobody.
+        out.push_str(&clock(d));
+    }
+    if let Some(v) = &m.video {
+        let _ = write!(out, "  {}x{} {} {}", v.width, v.height, Fmt::rate_text(v.rate), v.codec);
+        if v.rotation != 0 {
+            let _ = write!(out, " rot{}", v.rotation);
+        }
+        if v.vfr {
+            out.push_str(" vfr");
+        }
+    }
+    if let Some(a) = &m.audio {
+        let _ = write!(out, "  {} {}Hz {}ch", a.codec, a.sample_rate, a.channels);
+    }
+    out
+}
+
+/// `HH:MM:SS.mmm`, rounded down to the millisecond.
+fn clock(t: RationalTime) -> String {
+    let ms = (t.seconds() * Q::from_integer(1000)).floor().to_integer();
+    format!("{:02}:{:02}:{:02}.{:03}", ms / 3_600_000, ms / 60_000 % 60, ms / 1000 % 60, ms % 1000)
+}
+
 struct Fmt<'a> {
     rate: Rate,
     assets: &'a [Asset],
@@ -97,13 +133,21 @@ impl Fmt<'_> {
     fn rate_label(&self) -> String {
         let q = self.rate.as_ratio();
         if q.is_integer() {
-            format!("{}fps", q.numer())
+            Self::rate_text(self.rate)
         } else {
-            let approx = *q.numer() as f64 / *q.denom() as f64;
             let df = if self.rate.has_drop_frame() { ", drop-frame" } else { "" };
-            let approx = format!("{approx:.3}");
-            format!("{}fps ({}{df})", approx.trim_end_matches('0'), self.rate)
+            format!("{} ({}{df})", Self::rate_text(self.rate), self.rate)
         }
+    }
+
+    /// `30fps`, `29.97fps`, `23.976fps`. Display only; the exact rate is elsewhere.
+    fn rate_text(rate: Rate) -> String {
+        let q = rate.as_ratio();
+        if q.is_integer() {
+            return format!("{}fps", q.numer());
+        }
+        let approx = format!("{:.3}", *q.numer() as f64 / *q.denom() as f64);
+        format!("{}fps", approx.trim_end_matches('0'))
     }
 
     fn tc(&self, t: RationalTime) -> String {

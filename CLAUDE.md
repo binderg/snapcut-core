@@ -94,6 +94,13 @@ because of OneDrive), atomic saves, missing IDs assigned and saved on open.
 Methods `project.init|open|save|get|summary`; CLI `ve init`, `ve summary`,
 global `--project` (else nearest parent with `project.otio`). Error code
 `project_locked` (-31003, exit 6).
+Media (`ve-media`, `ve-daemon::media`): `media.probe` (no project needed),
+`media.import` (base_rev + dry_run, all-or-nothing, dedup by blake3 hash,
+bumps rev and saves), `media.assets`; CLI `ve probe`, `ve import`. Asset rows
+carry a compact `media` block (exact duration, size, nominal rate, rotation,
+vfr flag, first audio stream); full ffprobe JSON is not stored. Media URLs are
+absolute `file://`. VFR footage keeps `r_frame_rate` as its rate. No proxies
+yet (needs jobs). `actor` is not recorded yet (comes with history, item 5).
 Everything else is documented stubs. No CI yet; the Python check runs by hand.
 
 Phase 1 gate: **an agent cuts a 10-minute talking head end to end via the CLI only.**
@@ -102,7 +109,7 @@ Next, in order:
 1. (done) OTIO structs + `metadata.ve` blocks.
 2. (done) Timecode parser.
 3. (done) Project folder open/save, lock, `project.summary`.
-4. `media.import` / `media.probe` via ffprobe JSON; asset table with blake3 hashes.
+4. (done) `media.import` / `media.probe`, asset table with blake3 hashes.
 5. edit ops (insert, split, trim, move, ripple_delete, set_speed) as pure fns with
    proptests; history with undo groups. `set_speed` writes `LinearTimeWarp` too.
    Checkpoint: is OTIO still the right in-memory model? (see Decisions).

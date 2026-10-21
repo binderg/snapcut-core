@@ -9,6 +9,7 @@ publish.workspace = true
 
 [dependencies]
 ve-protocol.workspace = true
+ve-model.workspace = true
 ve-daemon.workspace = true
 clap.workspace = true
 anyhow.workspace = true
