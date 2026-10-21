@@ -136,7 +136,7 @@ fn timeline_built_in_rust_matches_python_output() {
         .into(),
     });
     intro.metadata.other.insert("resolve".into(), json!({"clip_color": "Orange"}));
-    let mut um = Marker::new("um", rng(120, 18));
+    let mut um = Marker::new("um", rng(432, 18));
     um.color = "YELLOW".into();
     um.comment = "filler word".into();
     um.metadata.ve.marker = Some(MarkerMeta {
@@ -175,4 +175,29 @@ fn timeline_built_in_rust_matches_python_output() {
     tl.tracks.markers.push(Marker::new("chapter", rng(0, 0)));
 
     assert_eq!(serde_json::to_value(&tl).unwrap(), fixture("talking_head.otio"));
+}
+
+#[test]
+fn summary_of_fixture() {
+    let tl: Timeline = serde_json::from_value(fixture("talking_head.otio")).unwrap();
+    let expected = r#""talking_head"  rev 7  1920x1080  29.97fps (30000/1001, drop-frame)  48000 Hz  bt709
+duration 00:01:05;17 (1965f)  2 tracks  6 clips  2 markers
+assets:
+  asset_a1b2c3  source  IMG_4410.MOV
+"V1" trk_v1a2b3 video  ends 00:01:05;17
+  00:00:00;00    450f  clip_7f3a01 "intro_take3"  src 00:00:10;12 asset_a1b2c3  fx_0200aa core.color/exposure@1
+  00:00:15;00     15f  gap
+  00:00:15;15    900f  clip_44be02 "point_one"  src 00:00:40;00 asset_a1b2c3
+  00:00:45;15          tr_5e6f70 transition "dissolve" core.dissolve@1 in 6f out 6f
+  00:00:45;15    600f  clip_b07c03 "point_two"  src 00:01:20;02 asset_a1b2c3
+"A1" trk_a1c4d5 audio  ends 00:01:05;17
+  00:00:00;00    450f  clip_7f3a91 "intro_take3"  src 00:00:10;12 asset_a1b2c3
+  00:00:15;00     15f  gap
+  00:00:15;15    900f  clip_44be92 "point_one"  src 00:00:40;00 asset_a1b2c3
+  00:00:45;15    600f  - "broll_missing"  src 00:00:00;00  MEDIA MISSING
+markers:
+  00:00:00;00      0f  - "chapter" red
+  00:00:04;00     18f  mk_9c0d1e "um" yellow analyzer  "filler word"  on clip_7f3a01
+"#;
+    assert_eq!(ve_model::summary::summary(&tl), expected);
 }

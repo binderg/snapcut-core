@@ -24,6 +24,14 @@ fs4.workspace = true
 etcetera.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+semver.workspace = true
+blake3.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
 
 [lints]
 workspace = true

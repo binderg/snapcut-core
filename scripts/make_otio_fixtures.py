@@ -35,7 +35,7 @@ intro = clip("intro_take3", "clip_7f3a01", 312, 450, effects=[{
     "id": "fx_0200aa", "effect": "core.color/exposure@1", "params": {"exposure": 0.3},
     "keyframes": {"exposure": [{"t": RT(0, R), "v": 0.0}, {"t": RT(30, R), "v": 0.3, "ease": "ease-out"}]}}])
 intro.metadata["resolve"] = {"clip_color": "Orange"}
-m = otio.schema.Marker(name="um", marked_range=rng(120, 18), color="YELLOW", comment="filler word")
+m = otio.schema.Marker(name="um", marked_range=rng(432, 18), color="YELLOW", comment="filler word")
 m.metadata["ve"] = {"marker": {"id": "mk_9c0d1e", "source": "analyzer", "payload": {"kind": "silence", "db": -42.5}}}
 intro.markers.append(m)
 v.append(intro)

@@ -20,6 +20,12 @@ JSON-RPC 2.0 protocol. Primary use case: an agent editing real footage
   make choices that would prevent someone else writing a thin MCP shim from `describe`.
 - **Standards over invention:** OTIO JSON project, JSON-RPC 2.0 + OpenRPC,
   JSON Schema params, JSON Patch (RFC 6902) change events, WGSL effects.
+- **OTIO stays the on-disk format (reconfirmed Oct 20 2026), with a checkpoint
+  at edit ops (item 5).** Its main value is handoff to Resolve/Premiere/Avid; our
+  speed/volume/effects live in `metadata.ve`, which other tools ignore. If the
+  edit ops end up fighting OTIO's shape, switch to a native model with OTIO as
+  import/export only. Either way, `set_speed` also writes OTIO's own
+  `LinearTimeWarp` effect so speed survives the handoff.
 - **Exact time only.** `Ratio<i64>` everywhere; no floats in model or protocol.
   OTIO stores doubles on the wire; `ve-model::time` snaps NTSC rates to n/1001.
 - **Stable IDs** (`clip_7f3a`); commands address IDs, never indexes.
@@ -82,6 +88,12 @@ in `ve-model::meta`, matching Python `opentimelineio` 0.18 output field for
 field (`fixtures/otio/`, checked by `python scripts/otio_roundtrip.py`);
 `ve-model::timecode` parses SMPTE (incl. drop-frame), `f2172` and `72.4s` and
 formats SMPTE (matches OTIO's timecode output; we don't wrap at 24h).
+Project folders (`ve-daemon::project`): `init`/`open`/`save` with an exclusive
+lock file in the OS cache dir (`ve/locks/<hash>.lock`, not the project folder,
+because of OneDrive), atomic saves, missing IDs assigned and saved on open.
+Methods `project.init|open|save|get|summary`; CLI `ve init`, `ve summary`,
+global `--project` (else nearest parent with `project.otio`). Error code
+`project_locked` (-31003, exit 6).
 Everything else is documented stubs. No CI yet; the Python check runs by hand.
 
 Phase 1 gate: **an agent cuts a 10-minute talking head end to end via the CLI only.**
@@ -89,10 +101,11 @@ Phase 1 gate: **an agent cuts a 10-minute talking head end to end via the CLI on
 Next, in order:
 1. (done) OTIO structs + `metadata.ve` blocks.
 2. (done) Timecode parser.
-3. Project folder open/save with file lock; `project.summary` (compact text for agents).
+3. (done) Project folder open/save, lock, `project.summary`.
 4. `media.import` / `media.probe` via ffprobe JSON; asset table with blake3 hashes.
 5. edit ops (insert, split, trim, move, ripple_delete, set_speed) as pure fns with
-   proptests; history with undo groups.
+   proptests; history with undo groups. `set_speed` writes `LinearTimeWarp` too.
+   Checkpoint: is OTIO still the right in-memory model? (see Decisions).
 6. Resolver + filtergraph compiler; `render.frame`, `render.contact_sheet`,
    `render.range_preview`, `export`.
 7. Analyzers: silencedetect, scdet. Then the `video-edit` skill.

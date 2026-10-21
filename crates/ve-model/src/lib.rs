@@ -9,9 +9,11 @@
 //! - Every addressable thing has a stable ID; commands address IDs, never indexes.
 //! - Our extensions live under one `metadata.ve` key so other OTIO tools ignore them.
 
+pub mod doc;
 pub mod id;
 pub mod meta;
 pub mod otio;
+pub mod summary;
 pub mod time;
 pub mod timecode;
 

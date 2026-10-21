@@ -64,6 +64,41 @@ impl Rate {
         }
         Q::approximate_float(f).map(Self)
     }
+
+    /// Parse a rate a person types: `30`, `30000/1001`, or the usual NTSC
+    /// shorthands `23.976`, `29.97`, `59.94` (snapped to n/1001). Other
+    /// decimals are taken exactly (`12.5` is 25/2).
+    pub fn parse(s: &str) -> Option<Self> {
+        let s = s.trim();
+        if let Some((n, d)) = s.split_once('/') {
+            let (n, d): (i64, i64) = (n.trim().parse().ok()?, d.trim().parse().ok()?);
+            return (n > 0 && d > 0).then(|| Self::new(n, d));
+        }
+        let (whole, frac) = s.split_once('.').unwrap_or((s, ""));
+        if whole.is_empty() || !whole.bytes().all(|b| b.is_ascii_digit()) || !frac.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        let scale = 10i64.checked_pow(u32::try_from(frac.len()).ok()?)?;
+        let numer = whole.parse::<i64>().ok()?.checked_mul(scale)?.checked_add(if frac.is_empty() { 0 } else { frac.parse().ok()? })?;
+        if numer <= 0 {
+            return None;
+        }
+        let exact = Q::new(numer, scale);
+        // 29.97 is within 0.001 of 30000/1001; anything that close means NTSC.
+        let tolerance = Q::new(1, 1000);
+        for (n, d) in NTSC {
+            let diff = exact - Q::new(n, d);
+            if !exact.is_integer() && diff < tolerance && -diff < tolerance {
+                return Some(Self(Q::new(n, d)));
+            }
+        }
+        Some(Self(exact))
+    }
+
+    /// True for 30000/1001 and 60000/1001, the rates that have drop-frame timecode.
+    pub fn has_drop_frame(self) -> bool {
+        self == Self::new(30_000, 1001) || self == Self::new(60_000, 1001)
+    }
 }
 
 /// Written as an exact `[num, den]` pair (used in `metadata.ve`; OTIO's own
@@ -265,6 +300,20 @@ mod tests {
         let r = Rate::from_f64(29.970_029_970_029_97).unwrap();
         assert_eq!(r, Rate::new(30_000, 1001));
         assert_eq!(Rate::from_f64(r.to_f64()).unwrap(), r);
+    }
+
+    #[test]
+    fn parses_typed_rates() {
+        assert_eq!(Rate::parse("30"), Some(Rate::integer(30)));
+        assert_eq!(Rate::parse("29.97"), Some(Rate::new(30_000, 1001)));
+        assert_eq!(Rate::parse("23.976"), Some(Rate::new(24_000, 1001)));
+        assert_eq!(Rate::parse("59.94"), Some(Rate::new(60_000, 1001)));
+        assert_eq!(Rate::parse("30000/1001"), Some(Rate::new(30_000, 1001)));
+        assert_eq!(Rate::parse("12.5"), Some(Rate::new(25, 2)));
+        assert_eq!(Rate::parse("30.0"), Some(Rate::integer(30)));
+        for bad in ["", "0", "-30", "abc", "30/0", "1.2.3", ".5", "30fps"] {
+            assert_eq!(Rate::parse(bad), None, "{bad:?}");
+        }
     }
 
     #[test]

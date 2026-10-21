@@ -168,7 +168,7 @@
                   "start_time": {
                     "OTIO_SCHEMA": "RationalTime.1",
                     "rate": 29.97002997002997,
-                    "value": 120.0
+                    "value": 432.0
                   }
                 },
                 "comment": "filler word"
