@@ -13,6 +13,7 @@ pub mod id;
 pub mod meta;
 pub mod otio;
 pub mod time;
+pub mod timecode;
 
 pub use id::Id;
 pub use meta::Meta;
