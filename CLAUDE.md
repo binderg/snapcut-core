@@ -75,15 +75,17 @@ entries tagged `(Phase N)` are declared but unused. Add deps there, inherit with
 
 Done: workspace scaffold; `RationalTime`/`TimeRange` with OTIO round-trip and
 property tests; `Id`; `Registry` + OpenRPC generation + error/exit codes;
-`ve version | describe | call`; `ve-ops::diff_patches` (forward + inverse).
-Everything else is documented stubs.
+`ve version | describe | call`; `ve-ops::diff_patches` (forward + inverse);
+OTIO schema types in `ve-model::otio` (Timeline, Stack, Track, Clip, Gap,
+Transition, Marker, External/MissingReference) and typed `metadata.ve` blocks
+in `ve-model::meta`, matching Python `opentimelineio` 0.18 output field for
+field (`fixtures/otio/`, checked by `python scripts/otio_roundtrip.py`).
+Everything else is documented stubs. No CI yet; the Python check runs by hand.
 
 Phase 1 gate: **an agent cuts a 10-minute talking head end to end via the CLI only.**
 
 Next, in order:
-1. OTIO structs in ve-model (Timeline, Stack, Track, Clip, Gap, Transition,
-   Marker, ExternalReference) + `metadata.ve` blocks; CI round-trip through
-   Python `opentimelineio`.
+1. (done) OTIO structs + `metadata.ve` blocks.
 2. Timecode parser (SMPTE incl. drop-frame, `f2172`, `72.4s`) -> RationalTime.
 3. Project folder open/save with file lock; `project.summary` (compact text for agents).
 4. `media.import` / `media.probe` via ffprobe JSON; asset table with blake3 hashes.

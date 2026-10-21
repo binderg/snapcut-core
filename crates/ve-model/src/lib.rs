@@ -10,9 +10,13 @@
 //! - Our extensions live under one `metadata.ve` key so other OTIO tools ignore them.
 
 pub mod id;
+pub mod meta;
+pub mod otio;
 pub mod time;
 
 pub use id::Id;
+pub use meta::Meta;
+pub use otio::{Clip, Composable, ExternalReference, Gap, Marker, MediaReference, Stack, Timeline, Track, TrackKind, Transition};
 pub use time::{Rate, RationalTime, TimeRange};
 
 /// Current project schema version, stored in `metadata.ve.project`.

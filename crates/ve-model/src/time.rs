@@ -66,6 +66,25 @@ impl Rate {
     }
 }
 
+/// Written as an exact `[num, den]` pair (used in `metadata.ve`; OTIO's own
+/// fields carry rates inside `RationalTime` doubles instead).
+impl Serialize for Rate {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        self.0.serialize(s)
+    }
+}
+
+impl<'de> Deserialize<'de> for Rate {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let q = Q::deserialize(d)?;
+        if *q.numer() > 0 && *q.denom() > 0 {
+            Ok(Self(q))
+        } else {
+            Err(serde::de::Error::custom("rate must be positive"))
+        }
+    }
+}
+
 impl fmt::Display for Rate {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if *self.0.denom() == 1 {

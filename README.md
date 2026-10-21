@@ -45,6 +45,8 @@ All third-party versions are pinned once in the root `Cargo.toml`
 ## What works today
 
 - `RationalTime` / `TimeRange` with OTIO JSON round-trip and exact NTSC rates
+- OTIO timeline types with typed `metadata.ve` blocks; reads and writes what
+  Python `opentimelineio` writes (`python scripts/otio_roundtrip.py fixtures/otio`)
 - Method registry on jsonrpsee `RpcModule`; one dispatch path for every transport
 - Generated OpenRPC from `schemars` schemas (`ve describe`)
 - CLI exit codes mapped from protocol errors
