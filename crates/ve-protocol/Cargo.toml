@@ -1,0 +1,25 @@
+[package]
+name = "ve-protocol"
+description = "Method registry, JSON Schema + OpenRPC generation, actors, error codes."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+ve-model.workspace = true
+jsonrpsee = { workspace = true, features = ["server"] }
+schemars.workspace = true
+openrpc-types.workspace = true
+jsonschema.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
+insta.workspace = true
+
+[lints]
+workspace = true

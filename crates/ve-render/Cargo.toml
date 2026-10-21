@@ -1,0 +1,21 @@
+[package]
+name = "ve-render"
+description = "Timeline resolver, FFmpeg filtergraph compiler (Phase 1), wgpu compositor (Phase 2), frame cache."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+ve-model.workspace = true
+ve-media.workspace = true
+image.workspace = true
+fast_image_resize.workspace = true
+quick_cache.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,29 @@
+[package]
+name = "ve-daemon"
+description = "Session server: local socket / named pipe + WebSocket, jobs, change events. Spawned on demand by the CLI."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+ve-model.workspace = true
+ve-protocol.workspace = true
+ve-ops.workspace = true
+ve-history.workspace = true
+ve-media.workspace = true
+ve-render.workspace = true
+ve-export.workspace = true
+ve-analyze.workspace = true
+ve-plugin.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+interprocess.workspace = true
+fs4.workspace = true
+etcetera.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

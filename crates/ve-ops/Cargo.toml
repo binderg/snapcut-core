@@ -1,0 +1,21 @@
+[package]
+name = "ve-ops"
+description = "Commands as pure functions: (doc, params) -> (new doc, patch, inverse patch)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+ve-model.workspace = true
+json-patch.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+
+[lints]
+workspace = true

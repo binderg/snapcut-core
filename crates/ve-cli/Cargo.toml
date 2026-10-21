@@ -1,0 +1,25 @@
+[package]
+name = "ve-cli"
+description = "The ve binary: a thin client, one subcommand per protocol method."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+ve-protocol.workspace = true
+ve-daemon.workspace = true
+clap.workspace = true
+anyhow.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "ve"
+path = "src/main.rs"

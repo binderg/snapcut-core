@@ -1,0 +1,26 @@
+[package]
+name = "ve-model"
+description = "Timeline types (OTIO JSON via serde), exact rational time, stable IDs. No I/O, no GPU."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+num-rational.workspace = true
+num-integer.workspace = true
+indexmap.workspace = true
+nanoid.workspace = true
+semver.workspace = true
+url.workspace = true
+schemars.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+
+[lints]
+workspace = true

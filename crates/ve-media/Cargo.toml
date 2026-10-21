@@ -1,0 +1,25 @@
+[package]
+name = "ve-media"
+description = "Probing, proxies, thumbnails, waveforms. Phase 1 drives the ffmpeg/ffprobe binaries."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+ve-model.workspace = true
+ffmpeg-sidecar.workspace = true
+blake3.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+# Dev only: lets ffmpeg-sidecar download an FFmpeg build. Those builds are GPL;
+# never enable this in release builds. Ship an LGPL build or use the user's own.
+download-ffmpeg = ["ffmpeg-sidecar/download_ffmpeg"]

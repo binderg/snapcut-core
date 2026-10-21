@@ -1,0 +1,22 @@
+[package]
+name = "ve-plugin"
+description = "Plugin manifests, discovery, process host (JSON-RPC over stdio)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+ve-protocol.workspace = true
+semver.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+futures.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true
