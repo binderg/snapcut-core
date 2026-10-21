@@ -9,14 +9,17 @@
 //! This crate also wires every method into the shared [`ve_protocol::Registry`].
 
 pub mod analyze;
+pub mod client;
 pub mod commit;
 pub mod edit;
+pub mod events;
 pub mod media;
 pub mod project;
 pub mod render;
+pub mod server;
 
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -28,10 +31,16 @@ use crate::project::{OpenProject, ProjectError};
 
 pub const ENGINE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// State shared by every method: the one open project, if any.
+/// State shared by every method: the one open project, if any, and the
+/// event stream its changes go out on.
 #[derive(Default)]
 pub struct Session {
     project: Mutex<Option<OpenProject>>,
+    pub events: events::Events,
+    /// Set when this session is served by a daemon (`server::run`).
+    daemon: OnceLock<DaemonInfo>,
+    /// Signalled by `daemon.stop`.
+    pub(crate) shutdown: tokio::sync::Notify,
 }
 
 impl Session {
@@ -45,13 +54,32 @@ impl Session {
         let p = guard
             .as_mut()
             .ok_or_else(|| RpcError::invalid_params("no project is open; call project.open or project.init first"))?;
-        f(p)
+        if p.reload_if_changed().map_err(rpc_error)? {
+            tracing::info!("{} changed on disk; reloaded at rev {}", p.root().display(), p.revision());
+            self.events.publish_reloaded(p.revision());
+        }
+        let result = f(p);
+        // Published under the lock, so events go out in revision order.
+        for change in p.changes.drain(..) {
+            self.events.publish(&change);
+        }
+        result
+    }
+
+    /// Revision of the open project, if one is open.
+    pub fn revision(&self) -> Option<u64> {
+        self.lock().as_ref().map(OpenProject::revision)
     }
 }
 
-/// Build the method registry used by every transport.
+/// Build the method registry used by every transport, with a fresh session.
 pub fn build_registry() -> Arc<Registry> {
-    let session = Arc::new(Session::default());
+    registry(Arc::new(Session::default()))
+}
+
+/// Build the method registry over a given session (the daemon keeps a handle
+/// to it for events and shutdown).
+pub fn registry(session: Arc<Session>) -> Arc<Registry> {
     let mut r = Registry::new();
     r.method("system.version", "Engine, protocol and project schema versions", false, |_: NoParams| {
         Ok(VersionInfo {
@@ -169,6 +197,26 @@ pub fn build_registry() -> Arc<Registry> {
     on_project!("analyze.silence", "Find quiet stretches in the timeline audio; writes `silence` markers", true, analyze::silence);
     on_project!("analyze.scenes", "Find hard cuts in the timeline picture; writes `scene` markers", true, analyze::scenes);
 
+    let s = session.clone();
+    r.method(
+        "events.subscribe",
+        "Get `project.changed` notifications on this connection (daemon transports only).          Each carries {revision, actor, command, patch}; `events.lagged` means refetch with project.get",
+        false,
+        move |_: NoParams| Ok(Subscribed { revision: s.revision() }),
+    );
+    let s = session.clone();
+    r.method("daemon.info", "The running daemon: pid, binary, project, socket and WebSocket URL", false, move |_: NoParams| {
+        s.daemon.get().cloned().ok_or_else(|| RpcError::invalid_params("not running as a daemon"))
+    });
+    let s = session.clone();
+    r.method("daemon.stop", "Stop the daemon after answering (the project is already saved)", false, move |_: NoParams| {
+        if s.daemon.get().is_none() {
+            return Err(RpcError::invalid_params("not running as a daemon"));
+        }
+        s.shutdown.notify_one();
+        Ok(Stopping { stopping: true })
+    });
+
     r.seal("Headless Video Engine", ENGINE_VERSION)
 }
 
@@ -238,6 +286,58 @@ pub struct ProjectDoc {
     pub revision: u64,
     /// The `Timeline.1` OTIO document.
     pub timeline: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct Subscribed {
+    /// Current revision (none if no project is open). Events newer than this follow.
+    pub revision: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct Stopping {
+    pub stopping: bool,
+}
+
+/// Result of `daemon.info`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct DaemonInfo {
+    pub pid: u32,
+    pub engine: String,
+    /// The daemon's binary and its modification time; the CLI restarts a
+    /// daemon whose binary differs from its own.
+    pub exe: ExeIdentity,
+    pub project: PathBuf,
+    /// Local socket (named pipe on Windows) name.
+    pub socket: String,
+    /// `ws://127.0.0.1:<port>/rpc?token=...`, loopback only.
+    pub websocket: String,
+    /// Seconds without connections before the daemon exits.
+    pub idle_timeout_secs: u64,
+}
+
+/// Which binary a process runs, to spot a daemon left over from an older build.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ExeIdentity {
+    pub path: PathBuf,
+    /// Modification time in nanoseconds since the Unix epoch, as text.
+    pub modified: String,
+}
+
+impl ExeIdentity {
+    pub fn current() -> Self {
+        Self::of(&std::env::current_exe().unwrap_or_default())
+    }
+
+    pub fn of(path: &std::path::Path) -> Self {
+        let path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_owned());
+        let modified = std::fs::metadata(&path)
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map_or_else(String::new, |d| d.as_nanos().to_string());
+        Self { path, modified }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

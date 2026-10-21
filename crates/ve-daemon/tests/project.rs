@@ -81,7 +81,7 @@ fn ids_added_on_open_are_saved_and_stable() {
 fn save_round_trips_and_leaves_no_temp_file() {
     let dir = scratch("save");
     copy_fixture(&dir);
-    let p = project::open(&dir).unwrap();
+    let mut p = project::open(&dir).unwrap();
     let before = p.timeline.clone();
     p.save().unwrap();
     drop(p);

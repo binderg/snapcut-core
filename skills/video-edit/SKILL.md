@@ -163,3 +163,8 @@ A 1080p export runs at about twice real time on a 4-core machine; run it last.
 - Transitions and effects don't render yet (cuts only); captions and
   transcription come from plugins, not the core.
 - If a render says media is missing, the source file moved; tell the user.
+- Commands go through a background `ve` process for the project. It starts on
+  its own, exits after 10 idle minutes, and restarts itself after a rebuild.
+  `ve daemon status` shows it; `ve daemon stop` ends it (nothing is lost, every
+  edit is saved). The user may be editing the same project at the same time,
+  which is what exit code 3 catches.

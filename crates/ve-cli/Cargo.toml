@@ -16,11 +16,20 @@ anyhow.workspace = true
 serde_json.workspace = true
 base64.workspace = true
 tokio.workspace = true
+interprocess.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 
-[lints]
-workspace = true
+[target.'cfg(windows)'.dependencies]
+windows-sys.workspace = true
+
+# The workspace lints, except unsafe_code is `deny` rather than `forbid` so
+# src/stdio.rs can allow its one Windows call. Keep in sync with the root.
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
 
 [[bin]]
 name = "ve"

@@ -4,7 +4,7 @@
 //! same project. The lock file lives in the OS cache dir, not the project
 //! folder, because a held-open file inside OneDrive/Dropbox causes sync
 //! errors. It is named by a hash of the canonical project path and holds that
-//! path (and later the daemon's socket address) for debugging.
+//! path for debugging. The same hash names the daemon's socket (see [`locate`]).
 //!
 //! Saves write a temp file next to `project.otio` and rename it over the old
 //! one, so a crash mid-save never leaves a half-written project.
@@ -29,7 +29,7 @@ pub enum ProjectError {
     NotFound(PathBuf),
     #[error("{} already has a {PROJECT_FILE}", .0.display())]
     AlreadyExists(PathBuf),
-    #[error("project {} is open in another ve process", .0.display())]
+    #[error("project {} is open in another ve process (a running daemon stops with `ve daemon stop`)", .0.display())]
     Locked(PathBuf),
     #[error("{} is not a ve project: {message}", .path.display())]
     Invalid { path: PathBuf, message: String },
@@ -57,7 +57,21 @@ pub struct OpenProject {
     pub ids_added: usize,
     /// Per-project folder in the OS cache dir (renders, history).
     cache: PathBuf,
+    /// Changes committed during the current call, waiting to go out as
+    /// `project.changed` events (the session drains them after each call).
+    pub(crate) changes: Vec<crate::events::Change>,
+    /// `project.otio` as this process last read or wrote it, to spot edits
+    /// made outside the engine while a daemon holds the project.
+    disk: Option<Stamp>,
     _lock: File,
+}
+
+/// Modification time and size of `project.otio`.
+type Stamp = (std::time::SystemTime, u64);
+
+fn stamp(root: &Path) -> Option<Stamp> {
+    let m = fs::metadata(root.join(PROJECT_FILE)).ok()?;
+    Some((m.modified().ok()?, m.len()))
 }
 
 impl OpenProject {
@@ -105,16 +119,38 @@ impl OpenProject {
     }
 
     /// Write `project.otio` atomically.
-    pub fn save(&self) -> Result<()> {
-        write_atomic(&self.root, &self.timeline)
+    pub fn save(&mut self) -> Result<()> {
+        write_atomic(&self.root, &self.timeline)?;
+        self.disk = stamp(&self.root);
+        Ok(())
     }
 
     /// Replace the document with `next`, saving it first so a failed write
     /// leaves both the file and the in-memory project unchanged.
     pub fn commit(&mut self, next: Timeline) -> Result<()> {
         write_atomic(&self.root, &next)?;
+        self.disk = stamp(&self.root);
         self.timeline = next;
         Ok(())
+    }
+
+    /// Re-read `project.otio` if something outside the engine changed it
+    /// (a git checkout, a script, another editor). Undo history survives only
+    /// if the file's revision still matches it. Returns whether it reloaded.
+    pub fn reload_if_changed(&mut self) -> Result<bool> {
+        let now = stamp(&self.root);
+        if now.is_none() || now == self.disk {
+            return Ok(false);
+        }
+        let (timeline, ids_added) = load(&self.root)?;
+        self.timeline = timeline;
+        self.ids_added = ids_added;
+        self.disk = now;
+        self.load_history();
+        if ids_added > 0 {
+            self.save()?;
+        }
+        Ok(true)
     }
 }
 
@@ -144,12 +180,14 @@ pub fn init(root: &Path, name: &str, output: OutputSettings) -> Result<OpenProje
         let d = root.join(dir);
         fs::create_dir_all(&d).map_err(io_err(&d))?;
     }
-    let project = OpenProject {
+    let mut project = OpenProject {
         timeline: ve_model::doc::new_project(name, output),
         root,
         history: History::new(0),
         ids_added: 0,
         cache,
+        changes: Vec::new(),
+        disk: None,
         _lock: lock,
     };
     project.save()?;
@@ -167,6 +205,20 @@ pub fn open(root: &Path) -> Result<OpenProject> {
         return Err(ProjectError::NotFound(root));
     }
     let (lock, cache) = lock(&root)?;
+    let disk = stamp(&root);
+    let (timeline, ids_added) = load(&root)?;
+    let mut project =
+        OpenProject { root, timeline, history: History::default(), ids_added, cache, changes: Vec::new(), disk, _lock: lock };
+    project.load_history();
+    if ids_added > 0 {
+        project.save()?;
+    }
+    Ok(project)
+}
+
+/// Read and check `project.otio`, giving IDs to items that have none.
+fn load(root: &Path) -> Result<(Timeline, usize)> {
+    let path = root.join(PROJECT_FILE);
     let text = fs::read_to_string(&path).map_err(io_err(&path))?;
     let mut timeline: Timeline = serde_json::from_str(&text)
         .map_err(|e| ProjectError::Invalid { path: path.clone(), message: e.to_string() })?;
@@ -188,12 +240,7 @@ pub fn open(root: &Path) -> Result<OpenProject> {
         return Err(ProjectError::TooNew { path, found: found.clone(), supported });
     }
     let ids_added = timeline.ensure_ids();
-    let mut project = OpenProject { root, timeline, history: History::default(), ids_added, cache, _lock: lock };
-    project.load_history();
-    if ids_added > 0 {
-        project.save()?;
-    }
-    Ok(project)
+    Ok((timeline, ids_added))
 }
 
 /// Walk up from `start` to the nearest folder holding a `project.otio`.
@@ -214,16 +261,33 @@ fn strip_verbatim(p: PathBuf) -> PathBuf {
     }
 }
 
+/// Where a project's engine state lives, keyed by its canonical path.
+#[derive(Debug, Clone)]
+pub struct Located {
+    /// Canonical project folder.
+    pub root: PathBuf,
+    /// 16 hex chars of blake3 over the root path (case-folded on Windows).
+    pub key: String,
+    /// `<OS cache dir>/ve/projects/<key>/`: renders, history, daemon log and socket.
+    pub cache: PathBuf,
+}
+
+/// Canonicalize a project folder and work out its key and cache folder.
+pub fn locate(root: &Path) -> Result<Located> {
+    let root = canonical(root).map_err(|_| ProjectError::NotFound(root.to_owned()))?;
+    // Case-fold on Windows, where C:\A and c:\a are the same folder.
+    let folded = if cfg!(windows) { root.to_string_lossy().to_lowercase() } else { root.to_string_lossy().into_owned() };
+    let key = blake3::hash(folded.as_bytes()).to_hex()[..16].to_owned();
+    let cache = cache_base()?.join("projects").join(&key);
+    Ok(Located { root, key, cache })
+}
+
 /// Take the project's lock. Returns the lock file and the project's cache folder.
 fn lock(root: &Path) -> Result<(File, PathBuf)> {
-    let base = cache_base()?;
-    let dir = base.join("locks");
+    let Located { key, cache, .. } = locate(root)?;
+    let dir = cache_base()?.join("locks");
     fs::create_dir_all(&dir).map_err(io_err(&dir))?;
-    // Case-fold on Windows, where C:\A and c:\a are the same folder.
-    let key = if cfg!(windows) { root.to_string_lossy().to_lowercase() } else { root.to_string_lossy().into_owned() };
-    let hash = blake3::hash(key.as_bytes()).to_hex();
-    let path = dir.join(format!("{}.lock", &hash[..16]));
-    let cache = base.join("projects").join(&hash[..16]);
+    let path = dir.join(format!("{key}.lock"));
     let mut file = File::options()
         .create(true)
         .truncate(false)

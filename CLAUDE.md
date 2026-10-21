@@ -30,8 +30,11 @@ JSON-RPC 2.0 protocol. Primary use case: an agent editing real footage
   OTIO stores doubles on the wire; `ve-model::time` snaps NTSC rates to n/1001.
 - **Stable IDs** (`clip_7f3a`); commands address IDs, never indexes.
 - **One run mode:** the CLI connects to a per-project daemon and spawns it if
-  missing (idle timeout). No separate "direct mode". Until the socket exists,
-  the CLI dispatches in-process against `ve_daemon::build_registry()`.
+  missing (idle timeout). No separate "direct mode". Only project-less
+  commands (`init`, `probe`, `version`, `describe`) run in-process.
+- **UI is deferred** (Oct 21 2026) until the core is further along. When it
+  comes it is a separate client over the WebSocket (likely React), in a folder
+  that is not git tracked; talk about it before building.
 - **One method registry** (`ve-protocol::Registry` on jsonrpsee `RpcModule`);
   every transport calls `Registry::dispatch(raw_json)`. OpenRPC is generated
   from the same registrations, so it cannot drift.
@@ -67,7 +70,11 @@ JSON-RPC 2.0 protocol. Primary use case: an agent editing real footage
 ve-analyze, ve-plugin, ve-protocol, ve-daemon, ve-cli (`ve` binary).
 All third-party versions are pinned once in root `[workspace.dependencies]`;
 entries tagged `(Phase N)` are declared but unused. Add deps there, inherit with
-`foo.workspace = true`. `unsafe_code` is forbidden workspace-wide.
+`foo.workspace = true`. `unsafe_code` is forbidden workspace-wide, with one
+approved exception: ve-cli is `deny` so `src/stdio.rs` can make its stdio
+handles non-inheritable on Windows before spawning the daemon (otherwise the
+daemon holds a caller's stdout pipe open and `ve ... | cat` hangs). ve-cli
+copies the workspace lints by hand for that reason.
 
 ## Build
 
@@ -148,6 +155,24 @@ and `analyze.scenes` (scdet at 320 px), writing analyzer markers that replace
 earlier ones in the range; `ve ripple-delete --markers silence` cuts them.
 Gate dry run (synthetic 10-min 1080p 29.97 talking head, 162 pauses):
 analyze 2.5 s, ripple-delete 0.2 s, export 4.5 min (x264 medium, 4 cores).
+Daemon (`ve-daemon::server`, `::client`, `::events`): one per project,
+holding the project lock. Local socket with newline-delimited JSON-RPC
+(`\\.\pipe\ve-<key>` on Windows, `<cache>/projects/<key>/daemon.sock`
+elsewhere; key = the hash the lock uses, `project::locate`) and an axum
+WebSocket at `ws://127.0.0.1:<port>/rpc?token=<random>`; a browser `Origin`
+must be loopback. Both call `Registry::dispatch` on the blocking pool. The CLI
+connects or spawns `ve daemon run` (detached, log in the project cache dir),
+and replaces a daemon whose binary path or mtime differs from its own. Idle
+exit after 10 min (`VE_DAEMON_IDLE_SECS`); `VE_WS_PORT` fixes the port. CLI
+`ve daemon start|status|stop`; methods `daemon.info`, `daemon.stop`,
+`events.subscribe`. `project.changed` {revision, actor, command, patch} is
+queued by `commit_doc` and broadcast after each call under the session lock
+(so in revision order; it can reach the caller before its own response).
+`events.lagged` and `project.reloaded` mean refetch. The daemon re-reads
+`project.otio` when its mtime/size changes under it (external edits), so it
+never overwrites them. Calls still serialize on the session mutex: a long
+export blocks other calls until jobs exist. Named pipe ACL is the Windows
+default (not locked down further).
 No CI yet; the Python check runs by hand.
 
 Phase 1 gate: **an agent cuts a 10-minute talking head end to end via the CLI only.**
@@ -167,9 +192,9 @@ Next, in order:
 Not done yet, and what the gate still needs (suggested order, not decided):
 - Run the gate for real: an agent with only the skill cutting real footage
   (so far only a synthetic 10-min talking head has been cut end to end).
-- Daemon socket + connect-or-spawn, so the CLI stops re-opening the project
-  per call; then jobs (export and analyze are synchronous today) and
-  `project.changed` events (patches are already in every mutation result).
+- (done) Daemon socket + connect-or-spawn + WebSocket + `project.changed`.
+- Jobs: export and analyze are synchronous and hold the session lock, so a
+  UI or agent waits behind them.
 - Proxies on import (needs jobs); faster seeks for long-GOP phone footage.
 - `ve-plugin` host, then move the analyzers to `plugins/core` (dogfooding).
 

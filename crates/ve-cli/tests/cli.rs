@@ -12,7 +12,8 @@ fn scratch() -> PathBuf {
 }
 
 fn ve(cwd: &Path, args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_ve")).current_dir(cwd).args(args).output().unwrap()
+    // Project commands start a daemon; a short idle timeout cleans it up if a test fails.
+    Command::new(env!("CARGO_BIN_EXE_ve")).current_dir(cwd).env("VE_DAEMON_IDLE_SECS", "5").args(args).output().unwrap()
 }
 
 /// Run and require success; returns stdout.
@@ -77,4 +78,6 @@ fn agent_loop() {
     assert_eq!(o.status.code(), Some(2));
     let o = ve(&proj, &["--actor", "robot", "undo"]);
     assert_eq!(o.status.code(), Some(2));
+
+    ok(&proj, &["daemon", "stop"]);
 }

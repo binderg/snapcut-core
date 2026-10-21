@@ -1,21 +1,28 @@
 //! `ve`: the CLI. Each subcommand maps to one protocol method.
 //!
-//! For now calls are dispatched in-process against the same registry the daemon
-//! serves: the CLI opens the project (taking its lock), runs the call and
-//! exits. Once ve-daemon has its socket, this becomes connect-or-spawn.
+//! Commands on a project go to that project's daemon over its local socket
+//! (a named pipe on Windows); if none is running the CLI starts one, which
+//! exits after 10 idle minutes (`VE_DAEMON_IDLE_SECS`). Commands that need no
+//! project (`init`, `probe`, `version`, `describe`) run in-process against the
+//! same registry.
 //!
-//! Mutating commands fill in `base_rev` (the revision the project had when
-//! this call opened it, unless `--base-rev` says otherwise), `dry_run` and
-//! `actor` for you. Files are written here, never by the protocol: render
+//! Mutating commands fill in `base_rev` (the project's revision when this
+//! call started, unless `--base-rev` says otherwise), `dry_run` and `actor`
+//! for you. Files are written here, never by the protocol: render
 //! methods return bytes or a file in the engine's cache, and the CLI puts the
 //! result at `-o`.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::Duration;
 
-use base64::Engine;
+use base64::Engine as _;
 use clap::{Args, Parser, Subcommand};
 use serde_json::{Value, json};
+use ve_daemon::client::{self, Client};
 use ve_protocol::{ErrorCode, Registry};
+
+mod stdio;
 
 #[derive(Parser)]
 #[command(name = "ve", version, about = "Headless, agent-friendly video engine")]
@@ -258,6 +265,24 @@ enum Command {
 
     /// Send a raw JSON-RPC method call, e.g. `ve call project.get '{}'`.
     Call { method: String, params: Option<String> },
+
+    /// The project's background engine process (started on demand by other commands).
+    #[command(subcommand)]
+    Daemon(DaemonCmd),
+}
+
+#[derive(Subcommand)]
+enum DaemonCmd {
+    /// Start the daemon if it is not running, and show it.
+    Start,
+    /// Show the running daemon: pid, socket and WebSocket URL (with its token).
+    Status,
+    /// Stop the daemon. The project is saved after every edit, so nothing is lost.
+    Stop,
+    /// Serve the project in the foreground (what `start` runs in the background).
+    /// `VE_DAEMON_IDLE_SECS` sets the idle timeout, `VE_WS_PORT` a fixed WebSocket port.
+    #[command(hide = true)]
+    Run,
 }
 
 #[derive(Subcommand)]
@@ -334,14 +359,59 @@ fn media_text(media: &Value) -> String {
 /// A failed call: the JSON-RPC error object.
 struct CallError(Value);
 
-async fn call(registry: &Registry, method: &str, params: Value) -> Result<Value, CallError> {
-    let req = json!({ "jsonrpc": "2.0", "id": 1, "method": method, "params": params }).to_string();
-    let resp: Value = serde_json::from_str(&registry.dispatch(&req).await)
-        .unwrap_or_else(|e| json!({ "error": { "code": -32603, "message": e.to_string() } }));
-    match resp.get("error") {
-        Some(err) => Err(CallError(err.clone())),
-        None => Ok(resp["result"].clone()),
+/// Where calls go: the project's daemon, or this process for project-less commands.
+enum Engine {
+    Local(Arc<Registry>),
+    Daemon(Client),
+}
+
+impl Engine {
+    async fn call(&mut self, method: &str, params: Value) -> Result<Value, CallError> {
+        match self {
+            Self::Local(registry) => {
+                let req = json!({ "jsonrpc": "2.0", "id": 1, "method": method, "params": params }).to_string();
+                let resp: Value = serde_json::from_str(&registry.dispatch(&req).await)
+                    .unwrap_or_else(|e| json!({ "error": { "code": -32603, "message": e.to_string() } }));
+                match resp.get("error") {
+                    Some(err) => Err(CallError(err.clone())),
+                    None => Ok(resp["result"].clone()),
+                }
+            }
+            Self::Daemon(client) => match client.call(method, params).await {
+                Ok(r) => r.map_err(CallError),
+                Err(e) => Err(CallError(json!({
+                    "code": ErrorCode::Internal.rpc_code(),
+                    "message": format!("lost the connection to the ve daemon: {e}"),
+                }))),
+            },
+        }
     }
+}
+
+fn internal_error(message: String, json_output: bool) -> ! {
+    fail(&json!({ "code": ErrorCode::Internal.rpc_code(), "message": message }), json_output)
+}
+
+/// The project for this command: `--project`, else the nearest folder with a project.otio.
+fn project_root(cli: &Cli) -> Option<PathBuf> {
+    let cwd = std::env::current_dir().ok()?;
+    cli.project.clone().or_else(|| ve_daemon::project::find_root(&cwd)).map(|p| absolute(&p))
+}
+
+fn require_project(cli: &Cli) -> PathBuf {
+    project_root(cli).unwrap_or_else(|| {
+        let cwd = std::env::current_dir().unwrap_or_default();
+        usage_error(
+            format!("no project.otio in {} or any parent folder; pass --project or run `ve init`", cwd.display()),
+            cli.json,
+        )
+    })
+}
+
+async fn connect(root: &Path, json_output: bool) -> Client {
+    let exe = std::env::current_exe().unwrap_or_else(|e| internal_error(format!("finding the ve binary: {e}"), json_output));
+    stdio::keep_from_children();
+    client::connect_or_spawn(root, &exe).await.unwrap_or_else(|e| internal_error(e.to_string(), json_output))
 }
 
 fn fail(err: &Value, json_output: bool) -> ! {
@@ -480,7 +550,7 @@ fn plan(cmd: &Command, json_output: bool) -> Plan {
             p["markers"] = json!(!no_markers);
             m("analyze.scenes", p)
         }
-        Command::Call { .. } => unreachable!("raw calls are planned in main"),
+        Command::Call { .. } | Command::Daemon(_) => unreachable!("planned in main"),
     }
 }
 
@@ -545,15 +615,82 @@ fn write_output(result: &Value, output: &Path, json_output: bool) {
     }
 }
 
-#[tokio::main(flavor = "current_thread")]
-async fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .with_writer(std::io::stderr)
         .init();
 
     let cli = Cli::parse();
-    let registry = ve_daemon::build_registry();
+    if let Command::Daemon(DaemonCmd::Run) = cli.command {
+        return run_daemon(&cli);
+    }
+    tokio::runtime::Builder::new_current_thread().enable_all().build()?.block_on(run(cli))
+}
+
+/// `ve daemon run`: serve the project until idle or stopped.
+fn run_daemon(cli: &Cli) -> anyhow::Result<()> {
+    let project = require_project(cli);
+    let env = |name: &str| std::env::var(name).ok().and_then(|v| v.parse::<u64>().ok());
+    let opts = ve_daemon::server::Options {
+        project,
+        idle: env("VE_DAEMON_IDLE_SECS").map_or(ve_daemon::server::DEFAULT_IDLE, Duration::from_secs),
+        ws_port: env("VE_WS_PORT").and_then(|p| u16::try_from(p).ok()).unwrap_or(0),
+    };
+    let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
+    let result = rt.block_on(ve_daemon::server::run(opts));
+    // Do not wait on a call still running (an export nobody is waiting for).
+    rt.shutdown_timeout(Duration::from_secs(1));
+    result.map_err(|e| {
+        eprintln!("error: {e}");
+        e.into()
+    })
+}
+
+/// `ve daemon start|status|stop`.
+async fn daemon_command(cli: &Cli, cmd: &DaemonCmd) -> anyhow::Result<()> {
+    let root = require_project(cli);
+    let loc = ve_daemon::project::locate(&root).unwrap_or_else(|e| usage_error(e.to_string(), cli.json));
+    let mut client = match cmd {
+        DaemonCmd::Start => Some(connect(&root, cli.json).await),
+        _ => Client::connect(&loc).await.ok(),
+    };
+    let Some(c) = client.as_mut() else {
+        if cli.json {
+            println!("{}", json!({ "running": false, "project": loc.root }));
+        } else {
+            println!("no ve daemon is running for {}", loc.root.display());
+        }
+        return Ok(());
+    };
+    let info = match c.call("daemon.info", json!({})).await? {
+        Ok(i) => i,
+        Err(e) => fail(&e, cli.json),
+    };
+    let stop = matches!(cmd, DaemonCmd::Stop);
+    if stop && let Err(e) = c.call("daemon.stop", json!({})).await? {
+        fail(&e, cli.json);
+    }
+    if cli.json {
+        let mut out = info.clone();
+        out["running"] = json!(!stop);
+        println!("{}", serde_json::to_string_pretty(&out)?);
+    } else if stop {
+        println!("stopped the ve daemon (pid {}) for {}", info["pid"], info["project"].as_str().unwrap_or("?"));
+    } else {
+        println!("running    pid {}, ve {}", info["pid"], info["engine"].as_str().unwrap_or("?"));
+        println!("project    {}", info["project"].as_str().unwrap_or("?"));
+        println!("socket     {}", info["socket"].as_str().unwrap_or("?"));
+        println!("websocket  {}", info["websocket"].as_str().unwrap_or("?"));
+        println!("idle exit  {}s", info["idle_timeout_secs"]);
+    }
+    Ok(())
+}
+
+async fn run(cli: Cli) -> anyhow::Result<()> {
+    if let Command::Daemon(cmd) = &cli.command {
+        return daemon_command(&cli, cmd).await;
+    }
     let Some(actor) = parse_actor(&cli.actor) else {
         usage_error(format!("--actor `{}`: use user, agent:<name> or plugin:<id>", cli.actor), cli.json)
     };
@@ -572,23 +709,25 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
-    // Open the project first for methods that work on one.
+    // Methods on a project go to its daemon; the rest run here.
     let standalone = method.starts_with("system.") || ["project.init", "project.open", "media.probe", "render.presets"].contains(&method.as_str());
     let mut opened_rev = None;
-    if !standalone {
-        let cwd = std::env::current_dir()?;
-        match cli.project.clone().or_else(|| ve_daemon::project::find_root(&cwd)) {
-            Some(path) => match call(&registry, "project.open", json!({ "path": absolute(&path) })).await {
+    let mut engine = match (standalone, project_root(&cli)) {
+        (false, Some(root)) => {
+            let mut engine = Engine::Daemon(connect(&root, cli.json).await);
+            match engine.call("project.open", json!({ "path": root })).await {
                 Ok(info) => opened_rev = info["revision"].as_u64(),
                 Err(CallError(e)) => fail(&e, cli.json),
-            },
-            None if !matches!(cli.command, Command::Call { .. }) => usage_error(
-                format!("no project.otio in {} or any parent folder; pass --project or run `ve init`", cwd.display()),
-                cli.json,
-            ),
-            None => {}
+            }
+            engine
         }
-    }
+        // A raw call with no project runs here (it fails cleanly if it needs one).
+        (false, None) if !matches!(cli.command, Command::Call { .. }) => {
+            require_project(&cli);
+            unreachable!("require_project exits when there is no project")
+        }
+        _ => Engine::Local(ve_daemon::build_registry()),
+    };
 
     if mutates {
         params["base_rev"] = json!(cli.base_rev.or(opened_rev).unwrap_or(0));
@@ -598,7 +737,7 @@ async fn main() -> anyhow::Result<()> {
         params["actor"] = actor;
     }
 
-    let result = match call(&registry, &method, params).await {
+    let result = match engine.call(&method, params).await {
         Ok(r) => r,
         Err(CallError(e)) => fail(&e, cli.json),
     };

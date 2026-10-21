@@ -131,6 +131,12 @@ pub fn commit_doc<T>(
         project.history.record(rev, &actor, command, applied.patch, applied.inverse);
     }
     project.save_history();
+    project.changes.push(crate::events::Change {
+        revision: rev,
+        actor: m.actor.cloned().unwrap_or_else(Actor::user),
+        command: command.to_owned(),
+        patch: patch.clone(),
+    });
     Ok(Committed { revision: rev, dry_run: false, changed: true, patch, group, result })
 }
 

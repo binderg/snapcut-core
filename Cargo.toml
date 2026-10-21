@@ -65,10 +65,13 @@ ebur128 = "0.1.10"              # (Phase 2)
 cpal = "0.18.2"                 # (Phase 4) playback
 
 # --- runtime, plugins, tooling ---
-tokio = { version = "1.54.0", features = ["rt-multi-thread", "macros", "process", "io-util", "sync", "time", "fs"] }
+tokio = { version = "1.54.0", features = ["rt-multi-thread", "macros", "process", "io-util", "sync", "time", "fs", "net"] }
 tokio-util = { version = "0.7.20", features = ["codec"] }
 futures = "0.3.34"
 interprocess = { version = "2.4.6", features = ["tokio"] }
+# WebSocket transport on the daemon. tower-http joins it once the daemon serves
+# the UI page and media files.
+axum = { version = "0.8.9", default-features = false, features = ["ws", "tokio", "http1", "query"] }
 fs4 = { version = "1.1.0", features = ["sync"] }
 notify = "8.2.0"
 etcetera = "0.11.0"
@@ -76,6 +79,9 @@ clap = { version = "4.6.7", features = ["derive"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 anyhow = "1.0.104"
+# Windows only, ve-cli only: one SetHandleInformation call (see ve-cli/src/stdio.rs).
+# Already in the tree through clap and tokio.
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation"] }
 keyring = "4.2.0"               # (Phase 3) BYOK secrets for plugins
 extism = "1.41.0"               # (later) WASM plugin tier
 opendal = "0.59.5"              # (later) s3:// and other media backends
