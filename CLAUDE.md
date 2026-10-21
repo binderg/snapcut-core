@@ -100,8 +100,55 @@ bumps rev and saves), `media.assets`; CLI `ve probe`, `ve import`. Asset rows
 carry a compact `media` block (exact duration, size, nominal rate, rotation,
 vfr flag, first audio stream); full ffprobe JSON is not stored. Media URLs are
 absolute `file://`. VFR footage keeps `r_frame_rate` as its rate. No proxies
-yet (needs jobs). `actor` is not recorded yet (comes with history, item 5).
-Everything else is documented stubs. No CI yet; the Python check runs by hand.
+yet (needs jobs).
+Edit ops (`ve-ops`): insert, split, trim (ripple or roll), move (overwrite),
+ripple_delete (ranges, marker names or clips), delete (lift), set_speed,
+set_volume, marker add/remove, as pure fns over flattened tracks
+(`ve-ops::lane`), with proptests (patches invert, linked clips stay in sync,
+clips never read past their media). Clips inserted from an A/V asset share a
+`metadata.ve.clip.link` and are edited together unless `linked: false` (how
+J/L cuts are made: roll one side). Timeline times snap to the project frame
+grid. Speed convention: `source_range.duration` is timeline time, media used
+is `duration * speed` (OTIO's time-warp convention), and `LinearTimeWarp` is
+written too. Patches come from our own prefix/suffix JSON diff
+(`ve-ops::diff`) so a ripple delete is a few ops, not a rewrite of the track.
+Every mutating method goes through `ve-daemon::commit` (base_rev, dry_run,
+actor, save, history). History (`ve-history`): per-actor undo groups, undo
+and redo are new revisions, persisted in the OS cache dir
+(`ve/projects/<hash>/history.json`) so undo works across CLI calls; dropped if
+the file's revision moved elsewhere. serde_json has `float_roundtrip` on and
+`RationalTime` reads doubles back as the simplest exact fraction (needed once
+speed changes make fractional media in-points).
+**OTIO checkpoint (item 5): keep OTIO.** Flatten/edit/rebuild per command was
+simple, implicit positions keep patches small, and Python OTIO reads edited
+projects unchanged (positions and `LinearTimeWarp` agree).
+Render (`ve-render`): resolver (`plan`) + filtergraph compiler (`graph`),
+run through the ffmpeg binary with the graph in a script file
+(`-/filter_complex`, or `-filter_complex_script` before 7.0). Frame-exact by
+construction: fps-conform to the source rate, trim by frame/sample counts,
+pad/cut every segment to the exact count its timeline span covers. Segments
+reading one file forward share one input (`-ss` + split), so a jump-cut
+timeline is one linear decode; geometry (scale/pad or crop) is applied once
+per input before the split, and plain segments skip fps/tpad (each held a
+full frame; a 160-cut 1080p export went from 1.6 GB to ~650 MB peak). Audio:
+default 20 ms crossfade on every cut using media handles, on alternating
+lanes summed with `amix normalize=0`; short fades at gap edges; J/L cuts fall
+out of placing audio by its own position. Matroska/WebM audio is decoded from
+the start (ms timestamps make seeks off by up to 0.5 ms). Methods
+`render.frame`, `render.contact_sheet` (base64 images), `render.range_preview`,
+`render.export` (MP4 in `<cache>/projects/<hash>/renders/`, CLI moves it to
+`-o`), `render.presets` (`ve-export`: master, youtube-1080p/720p,
+vertical-1080x1920 (crop-fill), draft-540p). Encoder: libx264 if the local
+ffmpeg has it, else hardware, openh264, mpeg4. Synchronous (no jobs yet).
+`VE_KEEP_GRAPH=1` keeps the generated graph for debugging. Tests check exact
+frames and samples against sources whose luma/samples encode position.
+Analyzers (`ve-analyze`, `ve-daemon::analyze`): `analyze.silence`
+(silencedetect on the timeline mix; snapped inward to frames, optional pad)
+and `analyze.scenes` (scdet at 320 px), writing analyzer markers that replace
+earlier ones in the range; `ve ripple-delete --markers silence` cuts them.
+Gate dry run (synthetic 10-min 1080p 29.97 talking head, 162 pauses):
+analyze 2.5 s, ripple-delete 0.2 s, export 4.5 min (x264 medium, 4 cores).
+No CI yet; the Python check runs by hand.
 
 Phase 1 gate: **an agent cuts a 10-minute talking head end to end via the CLI only.**
 
@@ -110,12 +157,21 @@ Next, in order:
 2. (done) Timecode parser.
 3. (done) Project folder open/save, lock, `project.summary`.
 4. (done) `media.import` / `media.probe`, asset table with blake3 hashes.
-5. edit ops (insert, split, trim, move, ripple_delete, set_speed) as pure fns with
-   proptests; history with undo groups. `set_speed` writes `LinearTimeWarp` too.
-   Checkpoint: is OTIO still the right in-memory model? (see Decisions).
-6. Resolver + filtergraph compiler; `render.frame`, `render.contact_sheet`,
-   `render.range_preview`, `export`.
-7. Analyzers: silencedetect, scdet. Then the `video-edit` skill.
+5. (done) edit ops (insert, split, trim, move, ripple_delete, set_speed) as pure
+   fns with proptests; history with undo groups. Checkpoint: keep OTIO.
+6. (done) Resolver + filtergraph compiler; `render.frame`, `render.contact_sheet`,
+   `render.range_preview`, `render.export`.
+7. (done) Analyzers: silencedetect, scdet. Then the `video-edit` skill
+   (`skills/video-edit/SKILL.md`, every command in it run as written).
+
+Not done yet, and what the gate still needs (suggested order, not decided):
+- Run the gate for real: an agent with only the skill cutting real footage
+  (so far only a synthetic 10-min talking head has been cut end to end).
+- Daemon socket + connect-or-spawn, so the CLI stops re-opening the project
+  per call; then jobs (export and analyze are synchronous today) and
+  `project.changed` events (patches are already in every mutation result).
+- Proxies on import (needs jobs); faster seeks for long-GOP phone footage.
+- `ve-plugin` host, then move the analyzers to `plugins/core` (dogfooding).
 
 ## Working style
 

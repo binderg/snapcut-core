@@ -10,10 +10,6 @@ publish.workspace = true
 [dependencies]
 ve-model.workspace = true
 ve-render.workspace = true
-ve-media.workspace = true
-ffmpeg-sidecar.workspace = true
-serde.workspace = true
-thiserror.workspace = true
 
 [lints]
 workspace = true

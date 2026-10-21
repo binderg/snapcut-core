@@ -16,6 +16,7 @@ use std::time::Duration;
 
 use etcetera::BaseStrategy;
 use fs4::FileExt;
+use ve_history::History;
 use ve_model::Timeline;
 use ve_model::meta::OutputSettings;
 
@@ -49,14 +50,54 @@ fn io_err(path: &Path) -> impl FnOnce(io::Error) -> ProjectError + '_ {
 pub struct OpenProject {
     root: PathBuf,
     pub timeline: Timeline,
+    /// Undo history. Persisted in the OS cache dir (not the project folder)
+    /// so undo works across CLI calls and daemon restarts.
+    pub history: History,
     /// IDs added on open to items that had none (files from other tools).
     pub ids_added: usize,
+    /// Per-project folder in the OS cache dir (renders, history).
+    cache: PathBuf,
     _lock: File,
 }
 
 impl OpenProject {
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    /// This project's folder in the OS cache dir: `ve/projects/<hash>/`.
+    pub fn cache_dir(&self) -> &Path {
+        &self.cache
+    }
+
+    fn history_path(&self) -> PathBuf {
+        self.cache.join("history.json")
+    }
+
+    /// Write the history next to the lock. Failure only costs undo across
+    /// processes, so it is logged rather than failing the edit.
+    pub fn save_history(&self) {
+        let result = fs::create_dir_all(&self.cache)
+            .and_then(|()| serde_json::to_vec(&self.history).map_err(io::Error::other))
+            .and_then(|bytes| {
+                let tmp = self.cache.join("history.json.tmp");
+                fs::write(&tmp, bytes)?;
+                fs::rename(&tmp, self.history_path())
+            });
+        if let Err(e) = result {
+            tracing::warn!("could not save undo history to {}: {e}", self.history_path().display());
+        }
+    }
+
+    /// History saved for this project, if it ends at the project's revision.
+    /// A file edited outside the engine makes the old history meaningless.
+    fn load_history(&mut self) {
+        let rev = self.revision();
+        self.history = fs::read(self.history_path())
+            .ok()
+            .and_then(|b| serde_json::from_slice::<History>(&b).ok())
+            .filter(|h| h.head_rev == rev)
+            .unwrap_or_else(|| History::new(rev));
     }
 
     pub fn revision(&self) -> u64 {
@@ -98,14 +139,21 @@ pub fn init(root: &Path, name: &str, output: OutputSettings) -> Result<OpenProje
     if root.join(PROJECT_FILE).exists() {
         return Err(ProjectError::AlreadyExists(root));
     }
-    let lock = lock(&root)?;
+    let (lock, cache) = lock(&root)?;
     for dir in SUBDIRS {
         let d = root.join(dir);
         fs::create_dir_all(&d).map_err(io_err(&d))?;
     }
-    let project =
-        OpenProject { timeline: ve_model::doc::new_project(name, output), root, ids_added: 0, _lock: lock };
+    let project = OpenProject {
+        timeline: ve_model::doc::new_project(name, output),
+        root,
+        history: History::new(0),
+        ids_added: 0,
+        cache,
+        _lock: lock,
+    };
     project.save()?;
+    project.save_history();
     Ok(project)
 }
 
@@ -118,7 +166,7 @@ pub fn open(root: &Path) -> Result<OpenProject> {
     if !path.is_file() {
         return Err(ProjectError::NotFound(root));
     }
-    let lock = lock(&root)?;
+    let (lock, cache) = lock(&root)?;
     let text = fs::read_to_string(&path).map_err(io_err(&path))?;
     let mut timeline: Timeline = serde_json::from_str(&text)
         .map_err(|e| ProjectError::Invalid { path: path.clone(), message: e.to_string() })?;
@@ -140,7 +188,8 @@ pub fn open(root: &Path) -> Result<OpenProject> {
         return Err(ProjectError::TooNew { path, found: found.clone(), supported });
     }
     let ids_added = timeline.ensure_ids();
-    let project = OpenProject { root, timeline, ids_added, _lock: lock };
+    let mut project = OpenProject { root, timeline, history: History::default(), ids_added, cache, _lock: lock };
+    project.load_history();
     if ids_added > 0 {
         project.save()?;
     }
@@ -165,13 +214,16 @@ fn strip_verbatim(p: PathBuf) -> PathBuf {
     }
 }
 
-fn lock(root: &Path) -> Result<File> {
-    let dir = lock_dir()?;
+/// Take the project's lock. Returns the lock file and the project's cache folder.
+fn lock(root: &Path) -> Result<(File, PathBuf)> {
+    let base = cache_base()?;
+    let dir = base.join("locks");
     fs::create_dir_all(&dir).map_err(io_err(&dir))?;
     // Case-fold on Windows, where C:\A and c:\a are the same folder.
     let key = if cfg!(windows) { root.to_string_lossy().to_lowercase() } else { root.to_string_lossy().into_owned() };
     let hash = blake3::hash(key.as_bytes()).to_hex();
     let path = dir.join(format!("{}.lock", &hash[..16]));
+    let cache = base.join("projects").join(&hash[..16]);
     let mut file = File::options()
         .create(true)
         .truncate(false)
@@ -187,15 +239,16 @@ fn lock(root: &Path) -> Result<File> {
     }
     file.set_len(0).map_err(io_err(&path))?;
     writeln!(file, "{}", root.display()).map_err(io_err(&path))?;
-    Ok(file)
+    Ok((file, cache))
 }
 
-fn lock_dir() -> Result<PathBuf> {
+/// `<OS cache dir>/ve`.
+fn cache_base() -> Result<PathBuf> {
     let base = etcetera::choose_base_strategy().map_err(|e| ProjectError::Io {
         path: PathBuf::from("~"),
         source: io::Error::other(e.to_string()),
     })?;
-    Ok(base.cache_dir().join("ve").join("locks"))
+    Ok(base.cache_dir().join("ve"))
 }
 
 /// OneDrive and antivirus scanners briefly hold files open on Windows, which

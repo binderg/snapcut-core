@@ -22,6 +22,12 @@ impl Id {
         Self(format!("{kind}_{}", nanoid::nanoid!(6, &ALPHABET)))
     }
 
+    /// An ID from text someone passed in (a param, a file). Not validated:
+    /// lookups simply fail for IDs that do not exist.
+    pub fn from_raw(s: impl Into<String>) -> Self {
+        Self(s.into())
+    }
+
     pub fn as_str(&self) -> &str {
         &self.0
     }

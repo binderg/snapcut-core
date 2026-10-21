@@ -5,7 +5,7 @@
 //!
 //! - SMPTE `HH:MM:SS:FF`. A `;` anywhere (`00:01:00;02`) means drop-frame,
 //!   which exists only for 30000/1001 and 60000/1001.
-//! - Frames `f2172`, at the given rate.
+//! - Frames `f2172` (or `2172f`), at the given rate.
 //! - Seconds `72.4s`, read as an exact decimal. The result can fall between
 //!   frames; callers that need a frame boundary snap it themselves.
 //!
@@ -39,7 +39,7 @@ pub fn parse(input: &str, rate: Rate) -> Result<RationalTime, TimecodeError> {
         Some(rest) => (true, rest),
         None => (false, s),
     };
-    let t = if let Some(frames) = body.strip_prefix('f') {
+    let t = if let Some(frames) = body.strip_prefix('f').or_else(|| body.strip_suffix('f')) {
         RationalTime::from_frames(parse_int(frames, input)?, rate)
     } else if let Some(secs) = body.strip_suffix('s') {
         let seconds = parse_decimal(secs, input)?;

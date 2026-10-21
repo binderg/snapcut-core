@@ -174,6 +174,11 @@ pub struct ClipVe {
 }
 
 /// `metadata.ve.clip`.
+///
+/// Speed follows OTIO's time-warp convention: the clip's `source_range`
+/// starts at the media in-point and its duration is the time the clip takes
+/// on the timeline. The media it plays is `duration * speed` long. `set_speed`
+/// also writes an OTIO `LinearTimeWarp` effect so other tools see the speed.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ClipMeta {
     pub id: Id,
@@ -182,11 +187,16 @@ pub struct ClipMeta {
     pub speed: Q,
     #[serde(default)]
     pub volume_db: f64,
+    /// Clips that share a link ID (a video clip and its audio) are edited
+    /// together: split, trim, move, speed and delete apply to the whole group
+    /// unless a call asks for one clip only (that is how J/L cuts are made).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub link: Option<Id>,
 }
 
 impl ClipMeta {
     pub fn new(id: Id) -> Self {
-        Self { id, speed: unit_speed(), volume_db: 0.0 }
+        Self { id, speed: unit_speed(), volume_db: 0.0, link: None }
     }
 }
 

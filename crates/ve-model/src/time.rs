@@ -59,10 +59,7 @@ impl Rate {
                 return Some(Self::new(n, d));
             }
         }
-        if f.fract() == 0.0 {
-            return Some(Self::integer(f as i64));
-        }
-        Q::approximate_float(f).map(Self)
+        rational_from_f64(f).map(Self)
     }
 
     /// Parse a rate a person types: `30`, `30000/1001`, or the usual NTSC
@@ -213,6 +210,48 @@ impl Sub for RationalTime {
     }
 }
 
+/// The simplest fraction whose double is exactly `x`.
+///
+/// Values are written as `numer as f64 / denom as f64`, so a fractional time
+/// such as 271/3 frames (a cut inside a 1/3-speed clip) arrives as
+/// 90.33333333333333. Walking the continued fraction of `x` and stopping at
+/// the first convergent that maps back to the same double recovers 271/3;
+/// distinct small-denominator fractions are much further apart than double
+/// precision, so this is exact for every value the engine writes.
+pub(crate) fn rational_from_f64(x: f64) -> Option<Q> {
+    if !x.is_finite() {
+        return None;
+    }
+    if x.fract() == 0.0 && x.abs() < 9.0e15 {
+        return Some(Q::from_integer(x as i64));
+    }
+    let y = x.abs();
+    let (mut h0, mut h1, mut k0, mut k1) = (0i128, 1i128, 1i128, 0i128);
+    let mut r = y;
+    for _ in 0..64 {
+        let a = r.floor();
+        if a >= 9.0e18 {
+            break;
+        }
+        let a = a as i128;
+        let (h2, k2) = (a * h1 + h0, a * k1 + k0);
+        if h2 > i128::from(i64::MAX) || k2 > i128::from(i64::MAX) {
+            break;
+        }
+        (h0, h1, k0, k1) = (h1, h2, k1, k2);
+        if h1 as f64 / k1 as f64 == y {
+            let q = Q::new(h1 as i64, k1 as i64);
+            return Some(if x < 0.0 { -q } else { q });
+        }
+        let f = r - a as f64;
+        if f == 0.0 {
+            break;
+        }
+        r = 1.0 / f;
+    }
+    Q::approximate_float(x)
+}
+
 /// OTIO wire form. Only used at the serde boundary.
 #[derive(Serialize, Deserialize, JsonSchema)]
 #[schemars(rename = "RationalTime")]
@@ -242,11 +281,7 @@ impl<'de> Deserialize<'de> for RationalTime {
         use serde::de::Error;
         let w = RationalTimeWire::deserialize(d)?;
         let rate = Rate::from_f64(w.rate).ok_or_else(|| D::Error::custom("invalid rate"))?;
-        let value = if w.value.fract() == 0.0 && w.value.abs() < 9.0e15 {
-            Q::from_integer(w.value as i64)
-        } else {
-            Q::approximate_float(w.value).ok_or_else(|| D::Error::custom("invalid value"))?
-        };
+        let value = rational_from_f64(w.value).ok_or_else(|| D::Error::custom("invalid value"))?;
         Ok(Self { value, rate })
     }
 }
@@ -374,6 +409,17 @@ mod tests {
     }
 
     proptest! {
+        #[test]
+        fn fractional_values_roundtrip_exactly(
+            numer in -100_000_000i64..100_000_000,
+            denom in 1i64..30_000,
+        ) {
+            let t = RationalTime { value: Q::new(numer, denom), rate: Rate::new(30_000, 1001) };
+            let back: RationalTime =
+                serde_json::from_str(&serde_json::to_string(&t).unwrap()).unwrap();
+            prop_assert_eq!(back.value, t.value);
+        }
+
         #[test]
         fn whole_frames_roundtrip_exactly(
             frames in -10_000_000i64..10_000_000,

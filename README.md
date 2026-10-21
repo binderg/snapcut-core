@@ -52,3 +52,14 @@ All third-party versions are pinned once in the root `Cargo.toml`
 - CLI exit codes mapped from protocol errors
 - `ve init my-edit --fps 29.97 --size 1920x1080` and `ve summary` (compact timeline text with IDs)
 - `ve probe clip.mov`, `ve import media/a.mov media/b.mov` (asset table with blake3 hashes and exact durations)
+- Editing: `ve insert`, `split`, `trim` (ripple or `--roll`), `move`, `ripple-delete`
+  (ranges, `--markers silence`, or clips), `delete`, `speed 3/2`, `volume -6`,
+  `marker add|rm`; `--dry-run` on all of them; `--actor agent:claude`
+- History: `ve undo`, `ve redo`, `ve history`, `ve group begin "label"` / `ve group end`
+- Looking and rendering: `ve frame --at 00:01:12:12 -o cut.jpg`, `ve sheet --count 12 -o sheet.jpg`,
+  `ve preview --from .. --to .. -o check.mp4`, `ve export --preset youtube-1080p -o final.mp4`
+  (`--list-presets`); frame- and sample-exact, 20 ms audio crossfades on cuts
+- Analyzers: `ve analyze silence --pad 0.1s` and `ve analyze scenes` write markers;
+  `ve ripple-delete --markers silence` removes the silences
+- Agent skill: `skills/video-edit/SKILL.md` (the edit loop, time formats, IDs, undo
+  groups, checking cuts, a talking-head recipe)
