@@ -61,3 +61,5 @@ All third-party versions are pinned once in the root `Cargo.toml`
   (`--list-presets`); frame- and sample-exact, 20 ms audio crossfades on cuts
 - Analyzers: `ve analyze silence --pad 0.1s` and `ve analyze scenes` write markers;
   `ve ripple-delete --markers silence` removes the silences
+- Agent skill: `skills/video-edit/SKILL.md` (the edit loop, time formats, IDs, undo
+  groups, checking cuts, a talking-head recipe)

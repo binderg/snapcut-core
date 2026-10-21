@@ -161,7 +161,17 @@ Next, in order:
    fns with proptests; history with undo groups. Checkpoint: keep OTIO.
 6. (done) Resolver + filtergraph compiler; `render.frame`, `render.contact_sheet`,
    `render.range_preview`, `render.export`.
-7. Analyzers: silencedetect, scdet (done). Then the `video-edit` skill.
+7. (done) Analyzers: silencedetect, scdet. Then the `video-edit` skill
+   (`skills/video-edit/SKILL.md`, every command in it run as written).
+
+Not done yet, and what the gate still needs (suggested order, not decided):
+- Run the gate for real: an agent with only the skill cutting real footage
+  (so far only a synthetic 10-min talking head has been cut end to end).
+- Daemon socket + connect-or-spawn, so the CLI stops re-opening the project
+  per call; then jobs (export and analyze are synchronous today) and
+  `project.changed` events (patches are already in every mutation result).
+- Proxies on import (needs jobs); faster seeks for long-GOP phone footage.
+- `ve-plugin` host, then move the analyzers to `plugins/core` (dogfooding).
 
 ## Working style
 

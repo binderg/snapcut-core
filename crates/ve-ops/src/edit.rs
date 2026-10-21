@@ -535,6 +535,7 @@ pub fn trim(tl: &Timeline, p: &Trim) -> Result<(Timeline, EditReport)> {
         return Err(EditError::new("nothing to trim: give an in or out delta of at least one frame"));
     }
     for (lane, id) in d.group(&p.clip, p.linked)? {
+        d.mark_changed(&id);
         if p.roll {
             if din != zero {
                 roll_in(&mut d, lane, &id, din)?;
@@ -558,7 +559,6 @@ pub fn trim(tl: &Timeline, p: &Trim) -> Result<(Timeline, EditReport)> {
                 set_clip_duration(c, dur);
             }
         }
-        d.mark_changed(&id);
     }
     d.finish()
 }
