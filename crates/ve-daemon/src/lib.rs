@@ -8,10 +8,12 @@
 //!
 //! This crate also wires every method into the shared [`ve_protocol::Registry`].
 
+pub mod analyze;
 pub mod commit;
 pub mod edit;
 pub mod media;
 pub mod project;
+pub mod render;
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -157,6 +159,15 @@ pub fn build_registry() -> Arc<Registry> {
     on_project!("history.list", "Undo and redo steps with their actors", false, |p: &mut OpenProject, a| Ok(edit::list(p, a)));
     on_project!("history.begin_group", "Start an undo group: the actor's next edits undo as one step", false, edit::begin_group);
     on_project!("history.end_group", "End the actor's undo group", false, edit::end_group);
+
+    on_project!("render.frame", "One frame of the timeline as JPEG/PNG (base64)", false, render::frame);
+    on_project!("render.contact_sheet", "A grid of evenly spaced frames from a range (base64 image)", false, render::contact_sheet);
+    on_project!("render.range_preview", "A low-res MP4 of a range, written to the engine cache", false, render::range_preview);
+    on_project!("render.export", "Render the timeline (or a range) with a preset to an MP4 in the engine cache", false, render::export);
+    r.method("render.presets", "Export presets", false, |_: NoParams| Ok(render::presets()));
+
+    on_project!("analyze.silence", "Find quiet stretches in the timeline audio; writes `silence` markers", true, analyze::silence);
+    on_project!("analyze.scenes", "Find hard cuts in the timeline picture; writes `scene` markers", true, analyze::scenes);
 
     r.seal("Headless Video Engine", ENGINE_VERSION)
 }

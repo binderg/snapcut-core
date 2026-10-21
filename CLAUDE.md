@@ -122,7 +122,33 @@ speed changes make fractional media in-points).
 **OTIO checkpoint (item 5): keep OTIO.** Flatten/edit/rebuild per command was
 simple, implicit positions keep patches small, and Python OTIO reads edited
 projects unchanged (positions and `LinearTimeWarp` agree).
-Everything else is documented stubs. No CI yet; the Python check runs by hand.
+Render (`ve-render`): resolver (`plan`) + filtergraph compiler (`graph`),
+run through the ffmpeg binary with the graph in a script file
+(`-/filter_complex`, or `-filter_complex_script` before 7.0). Frame-exact by
+construction: fps-conform to the source rate, trim by frame/sample counts,
+pad/cut every segment to the exact count its timeline span covers. Segments
+reading one file forward share one input (`-ss` + split), so a jump-cut
+timeline is one linear decode; geometry (scale/pad or crop) is applied once
+per input before the split, and plain segments skip fps/tpad (each held a
+full frame; a 160-cut 1080p export went from 1.6 GB to ~650 MB peak). Audio:
+default 20 ms crossfade on every cut using media handles, on alternating
+lanes summed with `amix normalize=0`; short fades at gap edges; J/L cuts fall
+out of placing audio by its own position. Matroska/WebM audio is decoded from
+the start (ms timestamps make seeks off by up to 0.5 ms). Methods
+`render.frame`, `render.contact_sheet` (base64 images), `render.range_preview`,
+`render.export` (MP4 in `<cache>/projects/<hash>/renders/`, CLI moves it to
+`-o`), `render.presets` (`ve-export`: master, youtube-1080p/720p,
+vertical-1080x1920 (crop-fill), draft-540p). Encoder: libx264 if the local
+ffmpeg has it, else hardware, openh264, mpeg4. Synchronous (no jobs yet).
+`VE_KEEP_GRAPH=1` keeps the generated graph for debugging. Tests check exact
+frames and samples against sources whose luma/samples encode position.
+Analyzers (`ve-analyze`, `ve-daemon::analyze`): `analyze.silence`
+(silencedetect on the timeline mix; snapped inward to frames, optional pad)
+and `analyze.scenes` (scdet at 320 px), writing analyzer markers that replace
+earlier ones in the range; `ve ripple-delete --markers silence` cuts them.
+Gate dry run (synthetic 10-min 1080p 29.97 talking head, 162 pauses):
+analyze 2.5 s, ripple-delete 0.2 s, export 4.5 min (x264 medium, 4 cores).
+No CI yet; the Python check runs by hand.
 
 Phase 1 gate: **an agent cuts a 10-minute talking head end to end via the CLI only.**
 
@@ -133,9 +159,9 @@ Next, in order:
 4. (done) `media.import` / `media.probe`, asset table with blake3 hashes.
 5. (done) edit ops (insert, split, trim, move, ripple_delete, set_speed) as pure
    fns with proptests; history with undo groups. Checkpoint: keep OTIO.
-6. Resolver + filtergraph compiler; `render.frame`, `render.contact_sheet`,
-   `render.range_preview`, `export`.
-7. Analyzers: silencedetect, scdet. Then the `video-edit` skill.
+6. (done) Resolver + filtergraph compiler; `render.frame`, `render.contact_sheet`,
+   `render.range_preview`, `render.export`.
+7. Analyzers: silencedetect, scdet (done). Then the `video-edit` skill.
 
 ## Working style
 

@@ -9,13 +9,16 @@ publish.workspace = true
 
 [dependencies]
 ve-model.workspace = true
-ve-media.workspace = true
-image.workspace = true
-fast_image_resize.workspace = true
-quick_cache.workspace = true
+ve-ops.workspace = true
+ffmpeg-sidecar.workspace = true
+url.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+ve-media.workspace = true
 
 [lints]
 workspace = true

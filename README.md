@@ -56,3 +56,8 @@ All third-party versions are pinned once in the root `Cargo.toml`
   (ranges, `--markers silence`, or clips), `delete`, `speed 3/2`, `volume -6`,
   `marker add|rm`; `--dry-run` on all of them; `--actor agent:claude`
 - History: `ve undo`, `ve redo`, `ve history`, `ve group begin "label"` / `ve group end`
+- Looking and rendering: `ve frame --at 00:01:12:12 -o cut.jpg`, `ve sheet --count 12 -o sheet.jpg`,
+  `ve preview --from .. --to .. -o check.mp4`, `ve export --preset youtube-1080p -o final.mp4`
+  (`--list-presets`); frame- and sample-exact, 20 ms audio crossfades on cuts
+- Analyzers: `ve analyze silence --pad 0.1s` and `ve analyze scenes` write markers;
+  `ve ripple-delete --markers silence` removes the silences

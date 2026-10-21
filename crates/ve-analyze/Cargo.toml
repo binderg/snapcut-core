@@ -9,9 +9,7 @@ publish.workspace = true
 
 [dependencies]
 ve-model.workspace = true
-ve-media.workspace = true
-serde.workspace = true
-thiserror.workspace = true
+ve-render.workspace = true
 
 [lints]
 workspace = true

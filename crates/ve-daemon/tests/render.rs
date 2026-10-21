@@ -1,0 +1,107 @@
+//! render.* and analyze.* through the registry: the agent loop on a small
+//! "talking head" (tone with pauses) plus a hard picture cut.
+
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+use base64::Engine;
+use serde_json::{Value, json};
+use ve_protocol::Registry;
+
+fn scratch(name: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join("ve-daemon-tests").join(name);
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+/// 6 s at 25 fps: red for 3 s then blue (one hard cut), with a tone that
+/// pauses for 1 s at 1.5-2.5 s and 4-5 s.
+fn make_talk(path: &Path) {
+    let st = Command::new("ffmpeg")
+        .args(["-v", "error", "-y", "-f", "lavfi", "-i", "color=red:s=160x120:r=25:d=3", "-f", "lavfi", "-i", "color=blue:s=160x120:r=25:d=3"])
+        .args(["-f", "lavfi", "-i", "aevalsrc='0.5*sin(2*PI*300*t)*(lt(t\\,1.5)+between(t\\,2.5\\,4)+gte(t\\,5))':s=48000:d=6"])
+        .args(["-filter_complex", "[0:v][1:v]concat=n=2:v=1:a=0[v]", "-map", "[v]", "-map", "2:a"])
+        .args(["-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac"])
+        .arg(path)
+        .status()
+        .expect("ffmpeg on PATH");
+    assert!(st.success());
+}
+
+async fn call(r: &Registry, method: &str, params: Value) -> Value {
+    let req = json!({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}).to_string();
+    serde_json::from_str(&r.dispatch(&req).await).unwrap()
+}
+
+async fn ok(r: &Registry, method: &str, params: Value) -> Value {
+    let resp = call(r, method, params.clone()).await;
+    assert!(resp.get("error").is_none(), "{method} {params}: {resp}");
+    resp["result"].clone()
+}
+
+#[tokio::test]
+async fn analyze_cut_and_look() {
+    let dir = scratch("render-loop");
+    make_talk(&dir.join("talk.mp4"));
+    let r = ve_daemon::build_registry();
+    ok(&r, "project.init", json!({"path": dir.join("edit"), "fps": "25", "width": 160, "height": 120})).await;
+    let asset = ok(&r, "media.import", json!({"paths": [dir.join("talk.mp4")], "base_rev": 0})).await["assets"][0]["id"].clone();
+    ok(&r, "edit.insert", json!({"asset": asset, "base_rev": 1})).await;
+
+    // Silences: two 1 s pauses, shrunk by 0.1 s padding each side.
+    let s = ok(&r, "analyze.silence", json!({"min_duration": "0.5s", "pad": "0.1s", "base_rev": 2})).await;
+    let ranges = s["ranges"].as_array().unwrap();
+    assert_eq!(ranges.len(), 2, "{s}");
+    assert_eq!(ranges[0]["start"], "00:00:01:15", "{s}");
+    assert_eq!(ranges[0]["end"], "00:00:02:10", "{s}");
+    assert_eq!(s["markers"].as_array().unwrap().len(), 2);
+    assert_eq!(s["revision"], 3);
+
+    // Re-running replaces the markers rather than adding more.
+    let again = ok(&r, "analyze.silence", json!({"min_duration": "0.5s", "pad": "0.1s", "base_rev": 3})).await;
+    assert_eq!(again["markers"].as_array().unwrap().len(), 2);
+    let text = ok(&r, "project.summary", json!({})).await["text"].as_str().unwrap().to_owned();
+    assert!(text.contains("2 markers"), "{text}");
+
+    // Scene cut at 3 s.
+    let sc = ok(&r, "analyze.scenes", json!({"base_rev": 4})).await;
+    assert_eq!(sc["ranges"].as_array().unwrap().len(), 1, "{sc}");
+    assert_eq!(sc["ranges"][0]["start"], "00:00:03:00");
+
+    // Cut the silences: 150 frames minus 20 and 19 (AAC softens the second edge).
+    let cut = ok(&r, "edit.ripple_delete", json!({"markers": "silence", "base_rev": 5})).await;
+    assert_eq!(cut["duration"], "00:00:04:11", "{cut}");
+
+    // Look at the result.
+    let f = ok(&r, "render.frame", json!({"at": "00:00:00:10", "width": 160})).await;
+    assert_eq!(f["mime"], "image/jpeg");
+    let jpg = base64::engine::general_purpose::STANDARD.decode(f["data"].as_str().unwrap()).unwrap();
+    assert!(jpg.starts_with(&[0xFF, 0xD8]));
+    let resp = call(&r, "render.frame", json!({"at": "00:00:10:00"})).await;
+    assert_eq!(resp["error"]["code"], -32602, "past the end is a bad param: {resp}");
+
+    let sheet = ok(&r, "render.contact_sheet", json!({"count": 4, "width": 80, "format": "png"})).await;
+    assert_eq!(sheet["times"].as_array().unwrap().len(), 4);
+    assert_eq!((sheet["columns"].as_u64(), sheet["rows"].as_u64()), (Some(2), Some(2)));
+
+    let prev = ok(&r, "render.range_preview", json!({"from": "1s", "to": "3s", "width": 160})).await;
+    assert_eq!(prev["frames"], 50);
+    let path = PathBuf::from(prev["path"].as_str().unwrap());
+    assert!(path.is_file() && prev["size_bytes"].as_u64().unwrap() > 0);
+
+    let presets = ok(&r, "render.presets", json!({})).await;
+    assert!(presets["presets"].as_array().unwrap().iter().any(|p| p["name"] == "youtube-1080p"));
+    let ex = ok(&r, "render.export", json!({"preset": "draft-540p"})).await;
+    assert_eq!(ex["frames"], 111);
+    assert_eq!((ex["width"].as_u64(), ex["height"].as_u64()), (Some(960), Some(540)));
+    let resp = call(&r, "render.export", json!({"preset": "imax"})).await;
+    assert!(resp["error"]["message"].as_str().unwrap().contains("presets are"), "{resp}");
+
+    // Missing media is a render failure (exit 4), named by clip.
+    fs::remove_file(dir.join("talk.mp4")).unwrap();
+    let resp = call(&r, "render.frame", json!({"at": "0s"})).await;
+    assert_eq!(resp["error"]["code"], -31001, "{resp}");
+    assert!(resp["error"]["message"].as_str().unwrap().contains("missing"), "{resp}");
+}
