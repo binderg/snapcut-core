@@ -197,7 +197,24 @@ FFmpeg handles decode and encode; a wgpu compositor handles everything between. 
 
 ## Effects and transitions
 
-An effect or transition is one WGSL function plus a manifest. The contract is deliberately tiny so an agent can write a working one in a single attempt.
+Effects, transitions and generators share one manifest format: an id, a `kind` (`effect`, `transition` or `generator`), params as JSON Schema (with `x-animatable` on params that take keyframes), and a `runtime` that says how the code runs. The compositor stays in the core; effects plug into it.
+
+**Runtimes live in the core; effects are plugins.** The core ships four runtimes, each wired into how frames move (GPU textures, the frame cache, the determinism rule, sandboxing, timeouts). Runtimes are not pluggable: a fifth way to run code would gain little and could break every effect at once. A plugin package can hold any mix of manifests; the core hands each to the runtime it names.
+
+| `runtime` | Author writes | Runs | Safety | For |
+| --- | --- | --- | --- | --- |
+| `wgsl` (default, first) | one WGSL function | on the GPU, inside the compositor; well under 1 ms per 1080p frame | naga validation plus a timed test render; cannot touch files | most transitions and looks; agent-written effects; gl-transitions import |
+| `wasm` (second) | Rust, C++, Zig or anything that compiles to WebAssembly | CPU, in `wasmtime`; costs a GPU readback and upload per frame (a few ms at 1080p) | sandboxed: no files, no network, cannot crash the engine; one build runs on every OS | work that is not per-pixel: tracking, stabilization, complex logic |
+| `ofx` (later) | an OpenFX plugin (C ABI; the standard Resolve, Nuke and Vegas host) | native CPU or CUDA, in-process | none: can crash the engine and reach the machine, so only installed plugins the user trusts, never project-local | running existing pro plugins; maximum CPU speed |
+| `process` | anything: HTML, Blender, Python, a model | its own process, baked as a job (see Generated clips) | separate process, user permissions | titles, motion graphics, AI shots. Not for transitions |
+
+Where it matters for speed, `wgsl` is the fast path: a GPU beats a CPU loop for per-pixel work, so a Rust or C++ author reaches for `wasm` or `ofx` only when the work is not shader-shaped. All four obey the determinism rule: output depends only on the input frames, time and params.
+
+**Getting code into the core.** A clip lists effects in `metadata.ve.effects` by id with params and keyframes. Code comes from built-ins (`plugins/core`, shipped as plugins), installed plugins, and the project's `effects/` folder; an agent can also send source over the protocol (`fx.define`), which goes through validation before use. `ofx` plugins load from installed plugins only.
+
+**The OpenFX host** implements the OpenFX C API against our frames and params. It needs `unsafe` FFI, so it lives in its own crate (`ve-ofx`) as a second approved exception to the workspace's `unsafe_code` rule, behind a cargo feature.
+
+The `wgsl` contract is deliberately tiny so an agent can write a working one in a single attempt.
 
 **Effect contract**
 
@@ -237,6 +254,7 @@ fn transition(uv: vec2<f32>) -> vec4<f32> {
   "id": "core.color/desaturate",
   "version": "1.0.0",
   "kind": "effect",
+  "runtime": "wgsl",
   "name": "Desaturate",
   "shader": "desaturate.wgsl",
   "params": {
@@ -269,7 +287,7 @@ A plugin is a folder with a `plugin.json` manifest. It can contribute any mix of
 
 | Type | Contributes | Runs as | Example |
 | --- | --- | --- | --- |
-| Effect / transition | WGSL shader + param schema | inside the compositor | film grain, glitch wipe |
+| Effect / transition | a manifest per effect with its `runtime`: WGSL shader, WASM module or OpenFX binary | inside the compositor (see Effects and transitions) | film grain, glitch wipe, a Rust stabilizer |
 | Command | new protocol methods (macros over `edit.*`) | external process | `jumpcut.remove_silences`, `beatsync.cut_to_beats` |
 | Analyzer | markers + analysis assets | external process, as a job | transcription, face tracking, beat detection |
 | Generator | new media assets, or editable generated clips (template + params) | external process, as a job | TTS voiceover, background-removal matte, HyperFrames lower third, Blender scene |
@@ -314,7 +332,7 @@ Every plugin can also ship a `SKILL.md` that teaches agents when and how to use 
 
 **Versioning.** Plugins declare the engine range and protocol major version they support. The engine refuses to load mismatches with a clear error. Protocol changes follow semver: additive in minors, breaking only in a new major with a deprecation window.
 
-**Sandboxing (later).** Process plugins run with the user's permissions, like VS Code extensions. If a public plugin registry happens, add a WASM tier (`wasmtime`, WASI) with explicit capabilities (read project, write edits, read media folder) for untrusted plugins. Shaders are already sandboxed by the GPU validation path.
+**Sandboxing.** Process plugins run with the user's permissions, like VS Code extensions. `wgsl` effects are sandboxed by the GPU validation path and `wasm` effects by `wasmtime`. If a public plugin registry happens, extend `wasmtime` (WASI) to commands and analyzers too, with explicit capabilities (read project, write edits, read media folder) for untrusted plugins. `ofx` plugins are never sandboxed and load only when installed by the user.
 
 **Dogfooding rule.** Silence detection, scene detection, the default transitions and the color effects ship as plugins in `plugins/core`. If the plugin API cannot express a built-in feature, fix the API, not the feature.
 
@@ -419,6 +437,7 @@ ve/
     ve-export/     encode + mux, presets
     ve-analyze/    silence, scenes, loudness (built-in analyzers)
     ve-plugin/     manifest parsing, discovery, process host (JSON-RPC over stdio)
+    ve-ofx/        OpenFX host (later; FFI, its own unsafe exception)
     ve-protocol/   method registry, JSON Schema + OpenRPC generation, error codes
     ve-daemon/     session server: socket/pipe + WebSocket, jobs, event stream
     ve-cli/        the `ve` binary
@@ -444,7 +463,8 @@ ve/
 | Text rendering | `cosmic-text` + `glyphon` |
 | Audio output, resampling, loudness | `cpal`, `rubato`, `ebur128` |
 | Image output | `image` |
-| WASM plugins (later) | `wasmtime` |
+| WASM effects (second runtime), later sandboxed plugins | `wasmtime` |
+| OpenFX host (later runtime) | own crate `ve-ofx` over the OpenFX C headers (approved `unsafe` exception) |
 
 Crate maintenance status changes; check recent release dates on crates.io before locking these in, especially the FFmpeg bindings.
 

@@ -46,6 +46,12 @@ JSON-RPC 2.0 protocol. Primary use case: an agent editing real footage
   on conflict. Every call carries an `actor` (user/agent/plugin). Dry runs on all
   mutations. Plugin callbacks run inside a transaction (`txn_id`) so a plugin's
   edits commit as one rev and one undo group.
+- **Effect runtimes (decided Oct 22 2026):** one manifest for effects,
+  transitions and generators with a `runtime` field. Runtimes are core, not
+  plugins: `wgsl` (first), `wasm` via `wasmtime` (second), `ofx` OpenFX host in
+  its own `ve-ofx` crate with an approved `unsafe` exception (later, installed
+  plugins only), `process` (HTML/Blender/AI generators, baked). The compositor
+  is core. See ARCHITECTURE.md "Effects and transitions".
 - **Phase 1 renders with an FFmpeg `-filter_complex` graph via ffmpeg-sidecar**
   (trim/atrim, setpts, scale/crop, concat, afade). No wgpu until Phase 2. Phase 2
   adds the wgpu compositor and pipes composited frames into the FFmpeg encoder so
