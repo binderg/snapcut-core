@@ -101,7 +101,7 @@ fn passes(seg: &Segment, t: Q, fx: &Registry) -> Result<Vec<Pass>> {
             let f = fx.require(&e.effect, Kind::Effect).map_err(|err| RenderError::Invalid(format!("{} on {}: {err}", e.id, seg.clip)))?;
             let local = t - seg.clip_start;
             let progress = if seg.clip_duration > Q::from_integer(0) { seconds(local / seg.clip_duration) } else { 0.0 };
-            Ok(Pass { params: f.pack(&e.params, &e.keyframes, local), fx: f, time: seconds(local), progress })
+            Ok(Pass { params: f.pack(&e.params, &e.keyframes, local), images: f.images_for(&e.params), fx: f, time: seconds(local), progress })
         })
         .collect()
 }
@@ -164,6 +164,7 @@ fn render_rgba(ctx: &mut Ctx<'_>, p: &Plan, at: Q) -> Result<Vec<u8>> {
             let local = at - tr.start;
             let pass = Pass {
                 params: f.pack(&tr.meta.params, &indexmap::IndexMap::new(), local),
+                images: f.images_for(&tr.meta.params),
                 fx: f,
                 time: seconds(local),
                 progress: seconds(local / (tr.end - tr.start)),

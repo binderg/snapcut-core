@@ -17,13 +17,18 @@
 //! it), `u.resolution` (pixels), and `p.<param>` for each manifest param.
 //!
 //! Params are JSON Schema properties. Supported: `number` and `integer` (as
-//! `f32`), `boolean` (as `f32`, 0 or 1), and color arrays (`"format":
+//! `f32`), `boolean` (as `f32`, 0 or 1), color arrays (`"format":
 //! "color"`, 3 or 4 numbers 0..1 in sRGB; the shader gets linear RGB as a
-//! `vec4<f32>` with straight alpha). `x-animatable: true` allows keyframes.
+//! `vec4<f32>` with straight alpha), vectors (an array of 2 to 4 numbers
+//! with `minItems` = `maxItems`; `vec2<f32>` to `vec4<f32>`), and images
+//! (`"type": "string", "format": "image"`: a PNG or JPEG in the effect's
+//! folder, sampled with a function named after the param, e.g. `luma(uv)`).
+//! `x-animatable: true` allows keyframes (not on images).
 //!
 //! Built-ins live in `plugins/core/effects/` and are compiled in. Project
 //! effects live in `<project>/effects/<name>/effect.json`.
 
+use std::collections::BTreeMap;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
@@ -89,6 +94,69 @@ pub enum ParamType {
     Number,
     Bool,
     Color,
+    /// `vec2<f32>` to `vec4<f32>`; the number is the size.
+    Vec(u8),
+    /// A picture from the effect's folder, bound as a texture.
+    Image,
+}
+
+/// A picture an effect samples (a luma map, a displacement map), decoded once.
+/// Stored values, not linearized: images are data for the shader.
+#[derive(Debug)]
+pub struct FxImage {
+    /// File name in the effect's folder.
+    pub name: String,
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+    /// Content hash: GPU textures are cached by it.
+    pub hash: u64,
+}
+
+/// Largest image an effect may ship, per side.
+const MAX_IMAGE_SIDE: u32 = 4096;
+
+/// A file name an image param may use: no folders, PNG or JPEG.
+pub fn is_image_name(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    !name.is_empty()
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
+        && !name.starts_with('.')
+        && [".png", ".jpg", ".jpeg"].iter().any(|e| lower.ends_with(e))
+}
+
+/// Decode a PNG or JPEG for an image param.
+pub fn decode_image(name: &str, bytes: &[u8]) -> Result<FxImage, FxError> {
+    if !is_image_name(name) {
+        return Err(err(format!("image `{name}`: use a plain file name ending in .png, .jpg or .jpeg")));
+    }
+    let img = image::load_from_memory(bytes).map_err(|e| err(format!("image `{name}`: {e}")))?.to_rgba8();
+    let (width, height) = img.dimensions();
+    if width == 0 || height == 0 || width > MAX_IMAGE_SIDE || height > MAX_IMAGE_SIDE {
+        return Err(err(format!("image `{name}` is {width}x{height}; images must be 1 to {MAX_IMAGE_SIDE} pixels per side")));
+    }
+    let rgba = img.into_raw();
+    let mut h = DefaultHasher::new();
+    rgba.hash(&mut h);
+    (width, height).hash(&mut h);
+    Ok(FxImage { name: name.to_owned(), width, height, rgba, hash: h.finish() })
+}
+
+/// One field of the params uniform, in layout order: a param, or padding.
+struct Slot<'a> {
+    param: Option<&'a Param>,
+    ty: &'static str,
+}
+
+impl Slot<'_> {
+    fn bytes(&self) -> usize {
+        match self.ty {
+            "vec4<f32>" => 16,
+            "vec3<f32>" => 12,
+            "vec2<f32>" => 8,
+            _ => 4,
+        }
+    }
 }
 
 /// One param, parsed from the schema.
@@ -119,11 +187,17 @@ pub struct Fx {
     pub origin: Origin,
     /// Folder it was loaded from (project effects).
     pub dir: Option<PathBuf>,
-    /// Hash of manifest and code: GPU pipelines are cached by it.
+    /// Hash of manifest, code and images: GPU pipelines are cached by it.
     pub hash: u64,
+    /// Pictures image params can use, by file name.
+    pub images: BTreeMap<String, Arc<FxImage>>,
 }
 
 const RESERVED: &[&str] = &["u", "p", "src", "outgoing", "incoming", "effect", "transition", "uv"];
+
+/// Texture bindings: 0 is the clip (or the outgoing clip), 4 the incoming clip,
+/// images start here in param order.
+pub const FIRST_IMAGE_BINDING: u32 = 5;
 
 fn is_ident(s: &str) -> bool {
     let mut cs = s.chars();
@@ -134,6 +208,17 @@ impl Fx {
     /// Check a manifest and its code and build the effect. Does not touch
     /// the GPU; [`crate::gpu::Gpu::test_fx`] does the test render.
     pub fn new(manifest: Manifest, source: String, origin: Origin, dir: Option<PathBuf>) -> Result<Self, FxError> {
+        Self::with_images(manifest, source, origin, dir, BTreeMap::new())
+    }
+
+    /// [`Self::new`] with the pictures its image params may use.
+    pub fn with_images(
+        manifest: Manifest,
+        source: String,
+        origin: Origin,
+        dir: Option<PathBuf>,
+        images: BTreeMap<String, Arc<FxImage>>,
+    ) -> Result<Self, FxError> {
         if manifest.runtime != "wgsl" {
             return Err(err(format!(
                 "runtime `{}` is not supported yet; only `wgsl` runs today (wasm, ofx and process come later)",
@@ -150,7 +235,13 @@ impl Fx {
         let mut h = DefaultHasher::new();
         serde_json::to_string(&manifest).unwrap_or_default().hash(&mut h);
         source.hash(&mut h);
-        let fx = Self { manifest, params, source, origin, dir, hash: h.finish() };
+        for img in images.values() {
+            img.hash.hash(&mut h);
+        }
+        let fx = Self { manifest, params, source, origin, dir, hash: h.finish(), images };
+        for p in fx.image_params() {
+            fx.check_image(p, &p.default).map_err(|e| err(format!("default: {e}")))?;
+        }
         fx.validate()?;
         Ok(fx)
     }
@@ -165,17 +256,63 @@ impl Fx {
         self.manifest.kind
     }
 
-    /// Bytes of the params uniform: colors (vec4) first, then scalars, padded to 16.
-    pub fn params_size(&self) -> usize {
-        let colors = self.params.iter().filter(|p| p.ty == ParamType::Color).count();
-        let scalars = self.params.len() - colors;
-        (colors * 16 + (scalars * 4).div_ceil(16) * 16).max(16)
+    /// The params uniform, field by field. Largest alignment first so no
+    /// field needs hidden padding: vec4 (colors too), vec3 (each followed by
+    /// one pad), vec2, then scalars; padded to a multiple of 16 bytes.
+    fn layout(&self) -> Vec<Slot<'_>> {
+        let mut v = Vec::new();
+        for p in self.params.iter().filter(|p| matches!(p.ty, ParamType::Color | ParamType::Vec(4))) {
+            v.push(Slot { param: Some(p), ty: "vec4<f32>" });
+        }
+        for p in self.params.iter().filter(|p| p.ty == ParamType::Vec(3)) {
+            v.push(Slot { param: Some(p), ty: "vec3<f32>" });
+            v.push(Slot { param: None, ty: "f32" });
+        }
+        for p in self.params.iter().filter(|p| p.ty == ParamType::Vec(2)) {
+            v.push(Slot { param: Some(p), ty: "vec2<f32>" });
+        }
+        for p in self.params.iter().filter(|p| matches!(p.ty, ParamType::Number | ParamType::Bool)) {
+            v.push(Slot { param: Some(p), ty: "f32" });
+        }
+        let mut size: usize = v.iter().map(Slot::bytes).sum();
+        while size == 0 || size % 16 != 0 {
+            v.push(Slot { param: None, ty: "f32" });
+            size += 4;
+        }
+        v
     }
 
-    fn ordered(&self) -> Vec<&Param> {
-        let mut v: Vec<&Param> = self.params.iter().filter(|p| p.ty == ParamType::Color).collect();
-        v.extend(self.params.iter().filter(|p| p.ty != ParamType::Color));
-        v
+    /// Bytes of the params uniform.
+    pub fn params_size(&self) -> usize {
+        self.layout().iter().map(Slot::bytes).sum()
+    }
+
+    /// Image params, in binding order.
+    pub fn image_params(&self) -> impl Iterator<Item = &Param> {
+        self.params.iter().filter(|p| p.ty == ParamType::Image)
+    }
+
+    /// The pictures to bind for a set of param values (others use defaults).
+    pub fn images_for(&self, values: &Map<String, Value>) -> Vec<Arc<FxImage>> {
+        self.image_params()
+            .filter_map(|p| {
+                let chosen = values.get(&p.name).and_then(Value::as_str).and_then(|n| self.images.get(n));
+                chosen.or_else(|| p.default.as_str().and_then(|d| self.images.get(d))).cloned()
+            })
+            .collect()
+    }
+
+    fn check_image(&self, p: &Param, v: &Value) -> Result<(), FxError> {
+        let name = v.as_str().ok_or_else(|| err(format!("param `{}`: expected an image file name, not {v}", p.name)))?;
+        if self.images.contains_key(name) {
+            return Ok(());
+        }
+        let have: Vec<&str> = self.images.keys().map(String::as_str).collect();
+        Err(err(format!(
+            "param `{}`: no image `{name}` in the effect's folder{}",
+            p.name,
+            if have.is_empty() { String::new() } else { format!(" (it has {})", have.join(", ")) }
+        )))
     }
 
     /// The full shader: engine prelude, then the author's code. Returns it
@@ -184,16 +321,11 @@ impl Fx {
         let mut s = String::new();
         s.push_str("struct VeTime {\n    time: f32,\n    progress: f32,\n    resolution: vec2<f32>,\n};\n");
         s.push_str("struct VeParams {\n");
-        let ordered = self.ordered();
-        for p in &ordered {
-            let ty = if p.ty == ParamType::Color { "vec4<f32>" } else { "f32" };
-            s.push_str(&format!("    {}: {ty},\n", p.name));
-        }
-        let scalars = ordered.iter().filter(|p| p.ty != ParamType::Color).count();
-        let colors = ordered.len() - scalars;
-        let pad = (self.params_size() - colors * 16) / 4 - scalars;
-        for i in 0..pad {
-            s.push_str(&format!("    ve_pad{i}: f32,\n"));
+        for (i, slot) in self.layout().iter().enumerate() {
+            match slot.param {
+                Some(p) => s.push_str(&format!("    {}: {},\n", p.name, slot.ty)),
+                None => s.push_str(&format!("    ve_pad{i}: {},\n", slot.ty)),
+            }
         }
         s.push_str("};\n");
         s.push_str("@group(0) @binding(0) var ve_a: texture_2d<f32>;\n");
@@ -209,6 +341,11 @@ impl Fx {
                 s.push_str("fn outgoing(uv: vec2<f32>) -> vec4<f32> { return textureSampleLevel(ve_a, ve_s, uv, 0.0); }\n");
                 s.push_str("fn incoming(uv: vec2<f32>) -> vec4<f32> { return textureSampleLevel(ve_b, ve_s, uv, 0.0); }\n");
             }
+        }
+        for (i, p) in self.image_params().enumerate() {
+            let b = FIRST_IMAGE_BINDING + i as u32;
+            s.push_str(&format!("@group(0) @binding({b}) var ve_img{i}: texture_2d<f32>;\n"));
+            s.push_str(&format!("fn {}(uv: vec2<f32>) -> vec4<f32> {{ return textureSampleLevel(ve_img{i}, ve_s, uv, 0.0); }}\n", p.name));
         }
         s.push_str("struct VeOut {\n    @builtin(position) pos: vec4<f32>,\n    @location(0) uv: vec2<f32>,\n};\n");
         s.push_str("@vertex fn ve_vs(@builtin(vertex_index) i: u32) -> VeOut {\n");
@@ -272,6 +409,9 @@ impl Fx {
                 ))
             })?;
             check_value(p, v)?;
+            if p.ty == ParamType::Image {
+                self.check_image(p, v)?;
+            }
         }
         Ok(())
     }
@@ -294,8 +434,11 @@ impl Fx {
     /// transition starts): keyframes, then set values, then defaults.
     pub fn pack(&self, values: &Map<String, Value>, keys: &indexmap::IndexMap<String, Vec<Keyframe>>, t: Q) -> Vec<u8> {
         let mut out = Vec::with_capacity(self.params_size());
-        let ordered = self.ordered();
-        for p in &ordered {
+        for slot in self.layout() {
+            let Some(p) = slot.param else {
+                out.extend_from_slice(&0f32.to_le_bytes());
+                continue;
+            };
             let v = keys
                 .get(&p.name)
                 .filter(|k| !k.is_empty())
@@ -310,8 +453,15 @@ impl Fx {
                         out.extend_from_slice(&x.to_le_bytes());
                     }
                 }
+                ParamType::Vec(n) => {
+                    for i in 0..n as usize {
+                        let x = v.get(i).and_then(Value::as_f64).unwrap_or(0.0) as f32;
+                        out.extend_from_slice(&x.to_le_bytes());
+                    }
+                }
                 ParamType::Number => out.extend_from_slice(&(v.as_f64().unwrap_or(0.0) as f32).to_le_bytes()),
                 ParamType::Bool => out.extend_from_slice(&(if v.as_bool().unwrap_or(false) { 1.0f32 } else { 0.0 }).to_le_bytes()),
+                ParamType::Image => {}
             }
         }
         out.resize(self.params_size(), 0);
@@ -340,6 +490,27 @@ fn check_value(p: &Param, v: &Value) -> Result<(), FxError> {
             let a = v.as_array().ok_or_else(|| bad("expected a color like [1, 0.5, 0] (sRGB, 0 to 1)"))?;
             if !(3..=4).contains(&a.len()) || a.iter().any(|x| !x.as_f64().is_some_and(|x| (0.0..=1.0).contains(&x))) {
                 return Err(bad("expected 3 or 4 numbers from 0 to 1"));
+            }
+        }
+        ParamType::Vec(n) => {
+            let want = format!("expected {n} numbers");
+            let a = v.as_array().filter(|a| a.len() == n as usize).ok_or_else(|| bad(&want))?;
+            for x in a {
+                let x = x.as_f64().ok_or_else(|| bad(&want))?;
+                if p.min.is_some_and(|m| x < m) || p.max.is_some_and(|m| x > m) {
+                    return Err(err(format!(
+                        "param `{}` has {x}; each number must be within {} to {}",
+                        p.name,
+                        p.min.map_or("-inf".into(), |m| m.to_string()),
+                        p.max.map_or("inf".into(), |m| m.to_string())
+                    )));
+                }
+            }
+        }
+        ParamType::Image => {
+            let name = v.as_str().ok_or_else(|| bad("expected an image file name"))?;
+            if !is_image_name(name) {
+                return Err(bad("expected a file name in the effect's folder ending in .png, .jpg or .jpeg"));
             }
         }
     }
@@ -414,25 +585,47 @@ fn parse_params(schema: &Value) -> Result<Vec<Param>, FxError> {
         if !is_ident(name) || RESERVED.contains(&name.as_str()) || name.starts_with("ve_") {
             return Err(err(format!("param name `{name}`: use lowercase letters, digits and _, and not {} or a ve_ prefix", RESERVED.join(", "))));
         }
+        let format = s.get("format").and_then(Value::as_str);
         let ty = match s.get("type").and_then(Value::as_str) {
             Some("number" | "integer") => ParamType::Number,
             Some("boolean") => ParamType::Bool,
-            Some("array") if s.get("format").and_then(Value::as_str) == Some("color") => ParamType::Color,
+            Some("array") if format == Some("color") => ParamType::Color,
+            Some("array") => {
+                let items = s.get("items").and_then(|i| i.get("type")).and_then(Value::as_str);
+                let lo = s.get("minItems").and_then(Value::as_u64);
+                let hi = s.get("maxItems").and_then(Value::as_u64);
+                match (items, lo, hi) {
+                    (Some("number" | "integer"), Some(n), Some(m)) if n == m && (2..=4).contains(&n) => ParamType::Vec(n as u8),
+                    _ => {
+                        return Err(err(format!(
+                            "param `{name}`: a vector is {{\"type\": \"array\", \"items\": {{\"type\": \"number\"}}, \"minItems\": N, \"maxItems\": N}} with N from 2 to 4 (add \"format\": \"color\" for a color)"
+                        )));
+                    }
+                }
+            }
+            Some("string") if format == Some("image") => ParamType::Image,
             other => {
                 return Err(err(format!(
-                    "param `{name}`: type {other:?} is not supported; use number, integer, boolean, or an array with \"format\": \"color\""
+                    "param `{name}`: type {other:?} is not supported; use number, integer, boolean, a color or vector array, or a string with \"format\": \"image\""
                 )));
             }
         };
-        let min = s.get("minimum").and_then(Value::as_f64);
-        let max = s.get("maximum").and_then(Value::as_f64);
+        // Vector bounds may sit on the items, where JSON Schema puts them.
+        let bound = |k: &str| s.get(k).or_else(|| s.get("items").and_then(|i| i.get(k))).and_then(Value::as_f64);
+        let (min, max) = (bound("minimum"), bound("maximum"));
         let default = match (s.get("default"), ty) {
             (Some(d), _) => d.clone(),
             (None, ParamType::Number) => Value::from(min.unwrap_or(0.0).max(0.0).min(max.unwrap_or(f64::MAX))),
             (None, ParamType::Bool) => Value::Bool(false),
             (None, ParamType::Color) => serde_json::json!([1.0, 1.0, 1.0]),
+            (None, ParamType::Vec(n)) => Value::Array(vec![Value::from(min.unwrap_or(0.0).max(0.0)); n as usize]),
+            (None, ParamType::Image) => return Err(err(format!("param `{name}`: an image param needs a \"default\" file"))),
         };
-        let p = Param { name: name.clone(), ty, default, min, max, animatable: s.get("x-animatable").and_then(Value::as_bool).unwrap_or(false) };
+        let animatable = s.get("x-animatable").and_then(Value::as_bool).unwrap_or(false);
+        if animatable && ty == ParamType::Image {
+            return Err(err(format!("param `{name}`: images cannot be keyframed")));
+        }
+        let p = Param { name: name.clone(), ty, default, min, max, animatable };
         check_value(&p, &p.default).map_err(|e| err(format!("default: {e}")))?;
         out.push(p);
     }
@@ -482,14 +675,28 @@ fn builtins() -> &'static [Arc<Fx>] {
     })
 }
 
-/// Read `effect.json` and its code from a folder.
+/// Read `effect.json`, its code and its images (every PNG or JPEG next to it) from a folder.
 pub fn load_dir(dir: &Path, origin: Origin) -> Result<Fx, FxError> {
     let mp = dir.join("effect.json");
     let text = std::fs::read_to_string(&mp).map_err(|e| err(format!("{}: {e}", mp.display())))?;
     let m: Manifest = serde_json::from_str(&text).map_err(|e| err(format!("{}: {e}", mp.display())))?;
     let sp = dir.join(&m.shader);
     let source = std::fs::read_to_string(&sp).map_err(|e| err(format!("{}: {e}", sp.display())))?;
-    Fx::new(m, source, origin, Some(dir.to_path_buf()))
+    Fx::with_images(m, source, origin, Some(dir.to_path_buf()), read_images(dir)?)
+}
+
+/// Every PNG or JPEG in a folder, decoded, by file name.
+pub fn read_images(dir: &Path) -> Result<BTreeMap<String, Arc<FxImage>>, FxError> {
+    let mut images = BTreeMap::new();
+    let entries = std::fs::read_dir(dir).map_err(|e| err(format!("{}: {e}", dir.display())))?;
+    for e in entries.flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        if is_image_name(&name) {
+            let bytes = std::fs::read(e.path()).map_err(|e| err(format!("{name}: {e}")))?;
+            images.insert(name.clone(), Arc::new(decode_image(&name, &bytes)?));
+        }
+    }
+    Ok(images)
 }
 
 impl Registry {

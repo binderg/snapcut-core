@@ -8,6 +8,7 @@ use serde_json::{Map, Value};
 use ve_model::Id;
 use ve_ops::effects::{self, Align, EffectReport, NewTransition, TransitionReport};
 use ve_protocol::RpcError;
+use base64::Engine as _;
 use ve_render::fx::{Fx, Kind, Manifest, Origin, Registry};
 
 use crate::commit::{Committed, commit, mutation_params, parse_time};
@@ -85,6 +86,10 @@ pub struct DefineParams {
     pub manifest: Value,
     /// The WGSL source: `fn effect(uv: vec2<f32>) -> vec4<f32>` or `fn transition(uv: vec2<f32>) -> vec4<f32>`.
     pub source: String,
+    /// Images for `"format": "image"` params: file name (PNG or JPEG) to base64 bytes.
+    /// Saved next to the shader.
+    #[serde(default)]
+    pub files: std::collections::BTreeMap<String, String>,
     /// Validate and test-render only; write nothing.
     #[serde(default)]
     pub dry_run: bool,
@@ -111,7 +116,15 @@ pub fn define(p: &mut OpenProject, a: DefineParams) -> Result<Defined, RpcError>
     if existing.list.iter().any(|f| f.manifest.id == m.id && f.origin == Origin::Builtin) {
         return Err(invalid(format!("`{}` is a built-in id", m.id)));
     }
-    let fx = Fx::new(m, a.source, Origin::Project, None).map_err(invalid)?;
+    let mut images = std::collections::BTreeMap::new();
+    let mut raw = Vec::new();
+    for (name, b64) in &a.files {
+        let bytes = base64::engine::general_purpose::STANDARD.decode(b64).map_err(|e| invalid(format!("files.{name}: not base64: {e}")))?;
+        let img = ve_render::fx::decode_image(name, &bytes).map_err(invalid)?;
+        images.insert(name.clone(), std::sync::Arc::new(img));
+        raw.push((name.clone(), bytes));
+    }
+    let fx = Fx::with_images(m, a.source, Origin::Project, None, images).map_err(invalid)?;
     let gpu = ve_render::gpu::Gpu::shared().map_err(|e| RpcError::new(ve_protocol::ErrorCode::RenderFailure, e.to_string()))?;
     gpu.test_fx(&fx).map_err(invalid)?;
     let name = fx.manifest.id.trim_start_matches("project.").replace(['/', '.'], "_");
@@ -121,6 +134,9 @@ pub fn define(p: &mut OpenProject, a: DefineParams) -> Result<Defined, RpcError>
         let json = serde_json::to_string_pretty(&fx.manifest).unwrap_or_default() + "\n";
         std::fs::write(dir.join("effect.json"), json).map_err(|e| internal(e.to_string()))?;
         std::fs::write(dir.join(&fx.manifest.shader), &fx.source).map_err(|e| internal(e.to_string()))?;
+        for (name, bytes) in &raw {
+            std::fs::write(dir.join(name), bytes).map_err(|e| internal(e.to_string()))?;
+        }
     }
     Ok(Defined { effect: info(&fx), path: (!a.dry_run).then(|| dir.display().to_string()), tested_on: gpu.adapter.clone() })
 }

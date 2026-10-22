@@ -23,7 +23,7 @@ use std::time::Duration;
 use wgpu::util::DeviceExt as _;
 
 use crate::RenderError;
-use crate::fx::{Fx, FxError, Kind};
+use crate::fx::{FIRST_IMAGE_BINDING, Fx, FxError, FxImage, Kind};
 
 type Result<T> = std::result::Result<T, RenderError>;
 
@@ -55,6 +55,8 @@ pub struct Pass {
     pub time: f32,
     /// 0..1 across the clip (or transition).
     pub progress: f32,
+    /// Pictures for the image params, in binding order ([`Fx::images_for`]).
+    pub images: Vec<Arc<FxImage>>,
 }
 
 /// A decoded picture with its placement and effect stack.
@@ -142,6 +144,8 @@ pub struct Gpu {
     /// Rectangle draw onto the output (premultiplied over).
     rect_out: wgpu::RenderPipeline,
     fx: Mutex<HashMap<u64, Arc<FxPipeline>>>,
+    /// Effect images on the GPU, by content hash. Few and small; kept for the process.
+    images: Mutex<HashMap<u64, Arc<wgpu::Texture>>>,
     /// Adapter name and backend, for logs and diagnostics.
     pub adapter: String,
 }
@@ -300,6 +304,7 @@ impl Gpu {
             rect_work,
             rect_out,
             fx: Mutex::new(HashMap::new()),
+            images: Mutex::new(HashMap::new()),
             adapter: format!("{} ({:?})", info.name, info.backend),
         })
     }
@@ -329,6 +334,9 @@ impl Gpu {
         let mut entries = vec![tex_entry(0), sampler_entry(1), uniform_entry(2, wgpu::ShaderStages::FRAGMENT), uniform_entry(3, wgpu::ShaderStages::FRAGMENT)];
         if fx.kind() == Kind::Transition {
             entries.push(tex_entry(4));
+        }
+        for i in 0..fx.image_params().count() {
+            entries.push(tex_entry(FIRST_IMAGE_BINDING + i as u32));
         }
         let scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
         let (source, _) = fx.wrapped();
@@ -393,11 +401,45 @@ impl Gpu {
         if let Some(b) = b {
             entries.push(wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::TextureView(b) });
         }
+        let views: Vec<wgpu::TextureView> = pass.images.iter().map(|img| self.image(img).create_view(&Default::default())).collect();
+        for (i, v) in views.iter().enumerate() {
+            entries.push(wgpu::BindGroupEntry { binding: FIRST_IMAGE_BINDING + i as u32, resource: wgpu::BindingResource::TextureView(v) });
+        }
         let group = self.device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("fx"), layout: &pipe.layout, entries: &entries });
         let mut rp = begin(enc, out, wgpu::Color::TRANSPARENT);
         rp.set_pipeline(&pipe.pipeline);
         rp.set_bind_group(0, &group, &[]);
         rp.draw(0..3, 0..1);
+    }
+
+    /// An effect image as a texture, uploaded once. `Rgba8Unorm`, not sRGB:
+    /// the shader reads the stored values (a luma map is data, not light).
+    fn image(&self, img: &FxImage) -> Arc<wgpu::Texture> {
+        if let Some(t) = self.images.lock().ok().and_then(|m| m.get(&img.hash).cloned()) {
+            return t;
+        }
+        let size = wgpu::Extent3d { width: img.width, height: img.height, depth_or_array_layers: 1 };
+        let t = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some(&img.name),
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        self.queue.write_texture(
+            wgpu::TexelCopyTextureInfo { texture: &t, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
+            &img.rgba,
+            wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(img.width * 4), rows_per_image: Some(img.height) },
+            size,
+        );
+        let t = Arc::new(t);
+        if let Ok(mut m) = self.images.lock() {
+            m.insert(img.hash, Arc::clone(&t));
+        }
+        t
     }
 
     /// Upload, prep and run the effect stack of a picture. Returns the
@@ -591,7 +633,7 @@ impl Gpu {
         let (ga, gb) = (grad(false), grad(true));
         let defaults = fx.pack(&serde_json::Map::new(), &indexmap::IndexMap::new(), ve_model::time::Q::from_integer(0));
         for progress in [0.0f32, 0.5, 1.0] {
-            let pass = Pass { fx: Arc::new(fx.clone()), params: defaults.clone(), time: progress, progress };
+            let pass = Pass { fx: Arc::new(fx.clone()), params: defaults.clone(), time: progress, progress, images: fx.images_for(&serde_json::Map::new()) };
             let mut enc = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("fx test") });
             let pic = |rgba| Picture { rgba, width: S, height: S, rect: Rect { x: 0.0, y: 0.0, w: S as f32, h: S as f32 }, effects: Vec::new() };
             let a = self.picture(&mut enc, &pic(&ga)).map_err(|e| FxError(e.to_string()))?;
@@ -680,7 +722,13 @@ mod tests {
 
     fn pass(fx: &Arc<Fx>, values: serde_json::Value, progress: f32) -> Pass {
         let values = values.as_object().cloned().unwrap_or_default();
-        Pass { fx: Arc::clone(fx), params: fx.pack(&values, &indexmap::IndexMap::new(), ve_model::time::Q::from_integer(0)), time: 0.0, progress }
+        Pass {
+            fx: Arc::clone(fx),
+            params: fx.pack(&values, &indexmap::IndexMap::new(), ve_model::time::Q::from_integer(0)),
+            time: 0.0,
+            progress,
+            images: fx.images_for(&values),
+        }
     }
 
     #[test]
