@@ -102,3 +102,6 @@ opt-level = 2 # dependencies (image resize, hashing) are painfully slow unoptimi
 
 [profile.dev.package.ve-analyze]
 opt-level = 2 # per-sample loops (levels, YIN pitch) over 10-minute files
+
+[profile.dev.package.ve-render]
+opt-level = 2 # per-pixel loops on GPU readback; unoptimized, a 1080p frame took 5x longer

@@ -195,6 +195,11 @@ FFmpeg handles decode and encode; a wgpu compositor handles everything between. 
 
 **Encoding and licensing.** Ship an LGPL FFmpeg build and prefer hardware encoders (NVENC, QuickSync, AMF, VideoToolbox) plus `openh264`. Users can point the engine at their own FFmpeg if they want x264/x265. Shelling out to the `ffmpeg` binary for export is acceptable for v1; move to `ffmpeg-the-third` bindings where per-frame control is needed (preview decode).
 
+**Decoding for the compositor, in two steps.**
+
+1. **Now: warm ffmpeg processes** (`ve-render::decoder`). One long-lived `ffmpeg` per layer streams raw frames, already conformed to the source rate and scaled (in 4:2:0, like the Phase 1 graph) to the size the layer is drawn. The next frame, or a jump of up to 30 frames ahead, reads from the open pipe; a jump back or further ahead restarts that process (about 100 ms on Windows). Idle processes close after 30 s. Measured on 1080p H.264 (optimized build, RTX 4070): 9 ms per frame at 640 px and 54 ms at 1920 px when frames come in order, against 130 to 140 ms for a one-shot ffmpeg render. Random jumps stay near the cost of starting ffmpeg.
+2. **Later: in-process decoders** with `ffmpeg-the-third`, kept open per source with GOP-aware seeks, so random scrubbing costs one seek (about 40 ms for 1080p long-GOP) instead of a process start. Needs, decided when we get there: LLVM/libclang on build machines (bindgen), an LGPL shared FFmpeg build with headers per platform, and shipping its DLLs/dylibs with the engine. `DecoderPool::frame` is the seam: same inputs, same RGBA out, so the compositor does not change.
+
 ## Effects and transitions
 
 Effects, transitions and generators share one manifest format: an id, a `kind` (`effect`, `transition` or `generator`), params as JSON Schema (with `x-animatable` on params that take keyframes), and a `runtime` that says how the code runs. The compositor stays in the core; effects plug into it.

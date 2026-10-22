@@ -214,10 +214,18 @@ ffmpeg run per layer (RGBA, seek half a frame early), places it with the
 Phase 1 fit rounding (even sizes and offsets; upper tracks' bars are
 transparent), and composites. `tests/gpu.rs` matches the ffmpeg renderer
 exactly (0 diff) across cuts, 2x speed and a pillarboxed V2. Try it with
-`VE_RENDERER=gpu` in the daemon's environment (`render.frame` only). About
-340 ms per 2-layer frame after a ~5 s first frame: decode dominates, so warm
-in-process decoders (`ffmpeg-the-third`) come next, then the WGSL effect
-contract.
+`VE_RENDERER=gpu` in the daemon's environment (`render.frame` only). First
+frame ~5 s (GPU setup, once per process).
+Warm decoders (`ve-render::decoder`): one long-lived ffmpeg per layer
+streaming RGBA, `fps` conformed and scaled in yuv420p to the drawn size
+(matches Phase 1 exactly). Next frame or up to 30 ahead reuses the pipe;
+back or further restarts; idle 30 s closes. Optimized build, 1080p H.264:
+640 px in order 9 ms/frame, 1920 px 54 ms (ffmpeg path 130-140 ms); random
+jumps ~120-200 ms (no better than restart). `ve-render` is opt-level 2 in dev.
+Benchmark: `cargo test --release -p ve-render --test gpu bench -- --ignored --nocapture`.
+Next: the WGSL effect contract. In-process decoding (`ffmpeg-the-third`) is
+planned for fast random scrubbing (ARCHITECTURE.md, "Decoding for the
+compositor"); it needs LLVM and an LGPL shared FFmpeg build, decide first.
 No CI yet; the Python check runs by hand.
 
 Phase 1 gate: **an agent cuts a 10-minute talking head end to end via the CLI only.**

@@ -162,3 +162,105 @@ impl AbsDiffMax for [u8; 3] {
         (0..3).map(|i| self[i].abs_diff(other[i])).max().unwrap_or(0)
     }
 }
+
+fn ramp(work: &Path) -> PathBuf {
+    let p = work.join("ramp.mkv");
+    ffmpeg(&[
+        "-f", "lavfi", "-i", &format!("nullsrc=s={SIDE}x{SIDE}:r={FPS},geq=lum='N*2':cb=128:cr=128"),
+        "-t", "4", "-c:v", "libx264", "-qp", "0", "-g", "10", "-pix_fmt", "yuv420p", p.to_str().unwrap(),
+    ]);
+    p
+}
+
+/// Source frame index from a decoded gray ramp frame (luma 2N, limited range).
+fn ramp_index(rgba: &[u8]) -> i64 {
+    let v = f64::from(rgba[(32 * SIDE as usize + 32) * 4]);
+    ((v * 219.0 / 255.0 + 16.0) / 2.0).round() as i64
+}
+
+#[test]
+fn warm_decoders_reuse_streams_and_restart_on_jumps() {
+    use ve_render::decoder::{DecoderPool, SKIP_LIMIT, key};
+    let work = dir("gpu-warm");
+    let src = ramp(&work);
+    let k = key(&src, SIDE, SIDE, Rate::integer(FPS), 0);
+    let mut pool = DecoderPool::default();
+    // Frames below 8 are too dark to read back (luma under 16 clips to black).
+    for n in [10, 11, 12, 15, 16] {
+        assert_eq!(ramp_index(&pool.frame(&k, n).unwrap()), n);
+    }
+    assert_eq!(pool.starts, 1, "forward steps reuse one process");
+    assert_eq!(ramp_index(&pool.frame(&k, 13).unwrap()), 13);
+    assert_eq!(pool.starts, 2, "going back restarts");
+    let far = 14 + SKIP_LIMIT + 1;
+    assert_eq!(ramp_index(&pool.frame(&k, far).unwrap()), far);
+    assert_eq!(pool.starts, 3, "a far jump restarts");
+    // The same frame again (already read) restarts at that frame.
+    assert_eq!(ramp_index(&pool.frame(&k, far).unwrap()), far);
+    assert_eq!(pool.starts, 4);
+    // Past the end of the 100-frame file: the last frame.
+    assert_eq!(ramp_index(&pool.frame(&k, 150).unwrap()), 99);
+    // A second layer on the same file keeps its own stream: interleaved
+    // requests do not restart either one.
+    let k2 = key(&src, SIDE, SIDE, Rate::integer(FPS), 1);
+    assert_eq!(ramp_index(&pool.frame(&k, 20).unwrap()), 20);
+    assert_eq!(ramp_index(&pool.frame(&k2, 60).unwrap()), 60);
+    let before = pool.starts;
+    for i in 1..5 {
+        assert_eq!(ramp_index(&pool.frame(&k, 20 + i).unwrap()), 20 + i);
+        assert_eq!(ramp_index(&pool.frame(&k2, 60 + i).unwrap()), 60 + i);
+    }
+    assert_eq!(pool.starts, before);
+    assert_eq!(pool.open_count(), 2);
+}
+
+/// A 1080p 30 fps project with one 20 s clip of a color test pattern.
+fn hd_project(work: &Path) -> Timeline {
+    let src = work.join("hd.mp4");
+    ffmpeg(&["-f", "lavfi", "-i", "testsrc2=s=1920x1080:r=30", "-t", "20", "-c:v", "libx264", "-preset", "veryfast", "-g", "60", "-pix_fmt", "yuv420p", src.to_str().unwrap()]);
+    let output = OutputSettings { width: 1920, height: 1080, rate: Rate::integer(30), sample_rate: 48_000, color_space: "bt709".into() };
+    let mut tl = ve_model::doc::new_project("hd", output);
+    add_asset(&mut tl, "asset_hd", &src);
+    edit::insert(&tl, &insert("asset_hd", None, None, None, false)).unwrap().0
+}
+
+#[test]
+fn scaled_hd_frames_match() {
+    let work = dir("gpu-hd");
+    let tl = hd_project(&work);
+    for n in [0, 31, 299] {
+        let t = Q::new(n, 30);
+        let a = rgb(&ve_render::frame(&tl, t, 640, ImageFormat::Png, &work).unwrap().bytes);
+        let b = rgb(&ve_render::compose::frame(&tl, t, 640, ImageFormat::Png, &work).unwrap().bytes);
+        let (mean, max) = diff(&a, &b);
+        eprintln!("hd frame {n}: mean {mean:.3} max {max}");
+        assert!(mean < 0.5, "hd frame {n}: mean {mean:.3}, max {max}");
+    }
+}
+
+/// `cargo test -p ve-render --test gpu bench -- --ignored --nocapture`
+#[test]
+#[ignore = "benchmark; run by hand"]
+fn bench_gpu_vs_ffmpeg() {
+    use std::time::Instant;
+    let work = dir("gpu-bench");
+    let tl = hd_project(&work);
+    let _ = ve_render::compose::frame(&tl, Q::from_integer(0), 640, ImageFormat::Jpeg, &work).unwrap(); // GPU setup
+    for width in [640, 1920] {
+        for (label, frames) in [("30 frames in a row", (300..330).collect::<Vec<i64>>()), ("10 random frames", vec![17, 412, 95, 333, 501, 8, 260, 577, 140, 455])] {
+            for (name, gpu) in [("ffmpeg", false), ("gpu   ", true)] {
+                let start = Instant::now();
+                for &n in &frames {
+                    let t = Q::new(n, 30);
+                    if gpu {
+                        ve_render::compose::frame(&tl, t, width, ImageFormat::Jpeg, &work).unwrap();
+                    } else {
+                        ve_render::frame(&tl, t, width, ImageFormat::Jpeg, &work).unwrap();
+                    }
+                }
+                let per = start.elapsed().as_secs_f64() * 1000.0 / frames.len() as f64;
+                eprintln!("{width:>4}px  {label:<20} {name} {per:6.1} ms/frame");
+            }
+        }
+    }
+}
