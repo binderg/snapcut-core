@@ -279,12 +279,12 @@ fn move_overwrites_and_leaves_a_gap() {
     let (tl, _) = edit::split(&tl, &Split { at: sec(10), clips: vec![v], tracks: vec![], linked: true }).unwrap();
     let right = ids_of(&rows(&tl), TrackKind::Video)[1].clone();
     // Move the right part 5s later: a 5s gap opens on both tracks.
-    let (tl, _) = edit::move_clip(&tl, &Move { clip: right.clone(), to: sec(15), track: None, linked: true, push: false }).unwrap();
+    let (tl, _) = edit::move_clip(&tl, &Move { clip: right.clone(), to: sec(15), track: None, linked: true, push: false, reorder: false }).unwrap();
     let Composable::Track(v1) = &tl.tracks.children[0] else { panic!() };
     assert!(matches!(v1.children[1], Composable::Gap(_)));
     assert_eq!(track_end(&tl, TrackKind::Audio), sec(305));
     // Moving it back over the start overwrites the left clip's tail.
-    let (tl, _) = edit::move_clip(&tl, &Move { clip: right, to: sec(5), track: None, linked: true, push: false }).unwrap();
+    let (tl, _) = edit::move_clip(&tl, &Move { clip: right, to: sec(5), track: None, linked: true, push: false, reorder: false }).unwrap();
     let r = rows(&tl);
     assert_eq!(r[0].dur, sec(5));
     assert_eq!(track_end(&tl, TrackKind::Video), sec(295));
@@ -353,7 +353,7 @@ fn start_of(tl: &Timeline, id: &Id) -> Q {
 fn push_move_puts_a_clip_before_another_and_moves_the_rest() {
     let (tl, s) = three_shots();
     // Shot 3 in front of shot 2: shot 2 and its sound move right by 10 s; shot 3's old place is a gap.
-    let mv = Move { clip: s[2].0.clone(), to: sec(10), track: None, linked: true, push: true };
+    let mv = Move { clip: s[2].0.clone(), to: sec(10), track: None, linked: true, push: true, reorder: false };
     let (tl, _) = edit::move_clip(&tl, &mv).unwrap();
     assert_eq!(start_of(&tl, &s[2].0), sec(10));
     assert_eq!(start_of(&tl, &s[2].1), sec(10));
@@ -368,10 +368,10 @@ fn push_move_only_pushes_as_far_as_needed() {
     let (tl, s) = three_shots();
     // Lift shot 2 so there is a 10 s hole, then nudge shot 1 five seconds into it: nothing needs to move.
     let tl = edit::delete(&tl, &edit::Delete { clips: vec![s[1].0.clone()], linked: true }).unwrap().0;
-    let (tl, _) = edit::move_clip(&tl, &Move { clip: s[0].0.clone(), to: sec(5), track: None, linked: true, push: true }).unwrap();
+    let (tl, _) = edit::move_clip(&tl, &Move { clip: s[0].0.clone(), to: sec(5), track: None, linked: true, push: true, reorder: false }).unwrap();
     assert_eq!(start_of(&tl, &s[2].0), sec(20));
     // Twelve seconds in overlaps shot 3 by 2 s, so it (and its sound) moves 2 s.
-    let (tl, _) = edit::move_clip(&tl, &Move { clip: s[0].0.clone(), to: sec(12), track: None, linked: true, push: true }).unwrap();
+    let (tl, _) = edit::move_clip(&tl, &Move { clip: s[0].0.clone(), to: sec(12), track: None, linked: true, push: true, reorder: false }).unwrap();
     assert_eq!(start_of(&tl, &s[2].0), sec(22));
     assert_eq!(start_of(&tl, &s[2].1), sec(22));
 }
@@ -382,12 +382,53 @@ fn push_move_of_video_only_drags_linked_audio_along() {
     // A video-only B-roll clip at the end, moved in front of shot 2.
     let tl = edit::insert(&tl, &insert_video(sec(30), 4)).unwrap().0;
     let broll = rows(&tl).into_iter().find(|r| r.link.is_none()).unwrap().id;
-    let (tl, _) = edit::move_clip(&tl, &Move { clip: broll.clone(), to: sec(10), track: None, linked: true, push: true }).unwrap();
+    let (tl, _) = edit::move_clip(&tl, &Move { clip: broll.clone(), to: sec(10), track: None, linked: true, push: true, reorder: false }).unwrap();
     assert_eq!(start_of(&tl, &broll), sec(10));
     for (v, a) in &s[1..] {
         assert_eq!(start_of(&tl, v), start_of(&tl, a));
     }
     assert_eq!(start_of(&tl, &s[1].0), sec(14));
+}
+
+#[test]
+fn reorder_swaps_neighbours_both_ways() {
+    let (tl, s) = three_shots();
+    let mv = |clip: &Id, to: Q| Move { clip: clip.clone(), to, track: None, linked: true, push: false, reorder: true };
+    // Shot 2 left past shot 1: they trade places, shot 3 stays.
+    let (a, _) = edit::move_clip(&tl, &mv(&s[1].0, sec(0))).unwrap();
+    assert_eq!([start_of(&a, &s[1].0), start_of(&a, &s[0].0), start_of(&a, &s[2].0)], [sec(0), sec(10), sec(20)]);
+    assert_eq!([start_of(&a, &s[1].1), start_of(&a, &s[0].1)], [sec(0), sec(10)]);
+    // Shot 1 right past shot 2: same result, no hole left behind.
+    let (b, _) = edit::move_clip(&tl, &mv(&s[0].0, sec(10))).unwrap();
+    assert_eq!(rows(&a), rows(&b));
+    // Shot 1 to the end, past both.
+    let (c, _) = edit::move_clip(&tl, &mv(&s[0].0, sec(20))).unwrap();
+    assert_eq!([start_of(&c, &s[1].0), start_of(&c, &s[2].0), start_of(&c, &s[0].0)], [sec(0), sec(10), sec(20)]);
+    assert_eq!(start_of(&c, &s[0].1), sec(20));
+}
+
+#[test]
+fn reorder_moves_video_only_broll_with_linked_shots_in_sync() {
+    let (tl, s) = three_shots();
+    // B-roll (no sound) inserted between shots 1 and 2 leaves a hole on A1 under it.
+    let tl = edit::insert(&tl, &insert_video(sec(10), 4)).unwrap().0;
+    let broll = rows(&tl).into_iter().find(|r| r.link.is_none()).unwrap().id;
+    let (tl, _) = edit::move_clip(&tl, &Move { clip: broll.clone(), to: sec(0), track: None, linked: true, push: false, reorder: true }).unwrap();
+    assert_eq!(start_of(&tl, &broll), sec(0));
+    for (v, a) in &s {
+        assert_eq!(start_of(&tl, v), start_of(&tl, a));
+    }
+    assert_eq!(start_of(&tl, &s[0].0), sec(4));
+    assert_eq!(start_of(&tl, &s[1].0), sec(14));
+}
+
+#[test]
+fn reorder_refuses_to_pull_links_apart() {
+    let (tl, s) = three_shots();
+    // Lengthen shot 1's audio 10 frames into shot 2 (L cut); swapping shot 2 past shot 1 now cuts through it.
+    let tl = edit::trim(&tl, &Trim { clip: s[0].1.clone(), in_delta: None, out_delta: Some(fr(10)), roll: true, linked: false }).unwrap().0;
+    let err = edit::move_clip(&tl, &Move { clip: s[2].0.clone(), to: sec(10), track: None, linked: true, push: false, reorder: true });
+    assert!(err.is_err());
 }
 
 // --- property tests ---
@@ -399,6 +440,7 @@ enum Op {
     Trim { pick: usize, din: i64, dout: i64, roll: bool },
     Speed { pick: usize, num: i64, den: i64 },
     Move { pick: usize, by: i64, push: bool },
+    Reorder { pick: usize, to: usize },
     Insert { at: i64, len: i64, audio: bool },
 }
 
@@ -412,6 +454,7 @@ fn arb_op() -> impl Strategy<Value = Op> {
         // Only A/V inserts here: ripple trims and speed changes on an unlinked
         // clip still push its own track only, which would pull later pairs apart.
         (0i64..9000, 1i64..300).prop_map(|(at, len)| Op::Insert { at, len, audio: true }),
+        (0usize..8, 0usize..8).prop_map(|(pick, to)| Op::Reorder { pick, to }),
     ]
 }
 
@@ -435,7 +478,16 @@ fn apply(tl: &Timeline, op: &Op) -> Result<Timeline, ve_ops::EditError> {
         Op::Move { pick: i, by, push } => {
             let Some(clip) = pick(*i) else { return Ok(tl.clone()) };
             let start = rows(tl).iter().find(|r| r.id == clip).unwrap().start;
-            edit::move_clip(tl, &Move { clip, to: start + fr(*by), track: None, linked: true, push: *push })?
+            edit::move_clip(tl, &Move { clip, to: start + fr(*by), track: None, linked: true, push: *push, reorder: false })?
+        }
+        Op::Reorder { pick: i, to } => {
+            // Land at another video clip's start (moving left) or end (moving right), as the UI does.
+            let Some(clip) = pick(*i) else { return Ok(tl.clone()) };
+            let r = rows(tl);
+            let me = r.iter().find(|x| x.id == clip).unwrap().clone();
+            let Some(other) = pick(*to).and_then(|o| r.iter().find(|x| x.id == o).cloned()) else { return Ok(tl.clone()) };
+            let dest = if other.start < me.start { other.start } else { other.start + other.dur - me.dur };
+            edit::move_clip(tl, &Move { clip, to: dest, track: None, linked: true, push: false, reorder: true })?
         }
         Op::Insert { at, len, audio } => {
             let mut p = insert_video(fr(*at), 0);

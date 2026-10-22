@@ -170,12 +170,16 @@ mutation_params! {
         /// Push what is in the way instead of overwriting it.
         #[serde(default)]
         pub push: bool,
+        /// Swap places: what lies between the old and new place slides over
+        /// to fill the old one. Nothing else moves.
+        #[serde(default)]
+        pub reorder: bool,
     }
 }
 
 pub fn move_clip(p: &mut OpenProject, a: MoveParams) -> Result<Committed<EditReport>, RpcError> {
     commit(p, a.mutation(), "edit.move", |tl| {
-        let op = Move { clip: a.clip.clone(), to: time(tl, "to", &a.to)?, track: a.track.clone(), linked: a.linked, push: a.push };
+        let op = Move { clip: a.clip.clone(), to: time(tl, "to", &a.to)?, track: a.track.clone(), linked: a.linked, push: a.push, reorder: a.reorder };
         edit::move_clip(tl, &op).map_err(edit_err)
     })
 }

@@ -780,6 +780,10 @@ pub struct Move {
     /// Push what is at the destination right (just far enough to fit, with
     /// its linked clips) instead of overwriting it.
     pub push: bool,
+    /// Swap places instead: the clip ends up at `to` and what lay between
+    /// its old and new place slides over to fill its old place. Nothing
+    /// outside that span moves.
+    pub reorder: bool,
 }
 
 /// Moves leave a gap behind and overwrite whatever is at the destination,
@@ -787,6 +791,13 @@ pub struct Move {
 pub fn move_clip(tl: &Timeline, p: &Move) -> Result<(Timeline, EditReport)> {
     let mut d = Doc::new(tl)?;
     let to = d.snap(p.to);
+    if p.reorder {
+        if p.push || p.track.is_some() {
+            return Err(EditError::new("reorder works within the clip's own tracks; leave out push and track"));
+        }
+        reorder(&mut d, &p.clip, to, p.linked)?;
+        return d.finish();
+    }
     let delta = to - d.placed(&p.clip)?.start;
     let dest = p.track.as_deref().map(|r| d.find_track(r)).transpose()?;
     let mut moving = Vec::new();
@@ -819,6 +830,117 @@ pub fn move_clip(tl: &Timeline, p: &Move) -> Result<(Timeline, EditReport)> {
         d.mark_changed(&id);
     }
     d.finish()
+}
+
+/// Rotate the span between a clip's old and new place: the clip lands at
+/// `to` and what it passed slides over by the clip's length. The same span
+/// rotates on every track of the clip's link group and on every track that
+/// holds a partner of something in the span, so links stay in sync; if a
+/// clip crosses an edge of the span, or a link would be pulled apart, the
+/// move is refused.
+fn reorder(d: &mut Doc, clip: &Id, to: Q, linked: bool) -> Result<()> {
+    let (lane0, j) = d.locate(clip)?;
+    let o = d.lane_ref(lane0).items[j].start;
+    let len = d.lane_ref(lane0).items[j].duration();
+    if to == o {
+        return Ok(());
+    }
+    need_positive("the new position", to)?;
+    // [lo, mid) and [mid, hi) trade places.
+    let (lo, mid, hi) = if to < o { (to, o, o + len) } else { (o, o + len, to + len) };
+    let delta = |start: Q| -> Q {
+        let first = start < mid;
+        match (to < o, first) {
+            (true, true) => len,     // what the clip passed moves right
+            (true, false) => to - o, // the clip
+            (false, true) => to - o, // the clip
+            (false, false) => -len,  // what the clip passed moves left
+        }
+    };
+    let inside = |p: &Placed| p.start >= lo && p.start < hi && !(p.duration() == Q::from_integer(0) && p.start == lo);
+
+    let mut lanes: Vec<usize> = Vec::new();
+    for (l, _) in d.group(clip, linked)? {
+        if !lanes.contains(&l) {
+            lanes.push(l);
+        }
+    }
+    loop {
+        let links: HashSet<Id> = lanes
+            .iter()
+            .flat_map(|&l| d.lane_ref(l).items.iter().filter(|p| inside(p)).filter_map(|p| p.clip().and_then(clip_link).cloned()))
+            .collect();
+        let more: Vec<usize> = d
+            .track_indices()
+            .into_iter()
+            .filter(|l| !lanes.contains(l))
+            .filter(|&l| d.lane_ref(l).items.iter().any(|p| p.clip().and_then(clip_link).is_some_and(|k| links.contains(k))))
+            .collect();
+        if more.is_empty() {
+            break;
+        }
+        lanes.extend(more);
+    }
+
+    // Gaps across an edge of the span are cut; clips across one cannot move.
+    let mut ids = std::mem::replace(&mut d.ids, Ids::new(HashSet::new()));
+    for &l in &lanes {
+        for b in [lo, mid, hi] {
+            let straddler = d.lane_ref(l).items.iter().find(|p| p.start < b && b < p.end()).map(|p| p.clip().and_then(clip_id).cloned());
+            match straddler {
+                None => {}
+                Some(None) => {
+                    d.lane(l).split_at(b, &mut ids);
+                }
+                Some(Some(id)) => {
+                    d.ids = ids;
+                    return Err(EditError::new(format!(
+                        "cannot swap: {id} on track {} runs across {}",
+                        d.track_name(l),
+                        tc(b, d.rate)
+                    )));
+                }
+            }
+        }
+    }
+    d.ids = ids;
+
+    // Every member of a link must move by the same amount.
+    let mut by_link: HashMap<Id, Q> = HashMap::new();
+    for l in d.track_indices() {
+        let rotating = lanes.contains(&l);
+        for p in &d.lane_ref(l).items {
+            let Some(link) = p.clip().and_then(clip_link) else { continue };
+            let dt = if rotating && inside(p) { delta(p.start) } else { Q::from_integer(0) };
+            if let Some(&other) = by_link.get(link)
+                && other != dt
+            {
+                let id = p.clip().and_then(clip_id).map_or("a clip".to_owned(), ToString::to_string);
+                return Err(EditError::new(format!("cannot swap: it would pull {id} away from its linked clips")));
+            }
+            by_link.insert(link.clone(), dt);
+        }
+    }
+
+    for &l in &lanes {
+        let mut moved = Vec::new();
+        let lane = d.lane(l);
+        // Transitions on the edges of the span would end up between the wrong clips.
+        lane.items.retain(|p| !(p.duration() == Q::from_integer(0) && [lo, mid, hi].contains(&p.start)));
+        for p in &mut lane.items {
+            if inside(p) {
+                p.start += delta(p.start);
+                if let Some(id) = p.clip().and_then(clip_id) {
+                    moved.push(id.clone());
+                }
+            }
+        }
+        lane.items.sort_by(|a, b| a.start.cmp(&b.start).then(a.duration().cmp(&b.duration())));
+        for id in moved {
+            d.mark_changed(&id);
+        }
+    }
+    Ok(())
 }
 
 // --- ripple delete ---
