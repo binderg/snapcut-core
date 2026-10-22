@@ -8,9 +8,9 @@
 //!    the `ffmpeg` binary ([`ffmpeg`]). `frame` is the same graph over a
 //!    one-frame range.
 //! 3. Phase 2 backend: wgpu compositor ([`gpu`], timeline frames in
-//!    [`compose`]), later running WGSL effect plugins; export will pipe
-//!    composited frames into the FFmpeg encoder so preview and export share
-//!    one graph. Today it renders single frames and matches the Phase 1 path.
+//!    [`compose`]) running WGSL effects and transitions. [`compose::encode`]
+//!    pipes composited frames into the same FFmpeg encoder settings, with
+//!    audio from the Phase 1 graph. [`needs_gpu`] says when a range needs it.
 //!
 //! Determinism rule: a frame is a pure function of (project, t). That is what
 //! makes the frame cache safe.
@@ -220,10 +220,20 @@ pub fn encode(tl: &Timeline, span: Span, s: &EncodeSettings, out: &Path, work: &
         Some(e) => e.clone(),
         None => ffmpeg::h264_encoder()?.to_owned(),
     };
+    let args = encode_args(s, &encoder, &format!("[{v}]"), &format!("[{a}]"), out);
+    ffmpeg::run(&g, &args, work, false)?;
+    let frames = ((span.end - span.start) * c.rate.as_ratio()).round().to_integer();
+    Ok(Encoded { frames, encoder, width: c.width, height: c.height, warnings: p.warnings })
+}
+
+/// ffmpeg output arguments for an MP4 from the video stream `v` and audio
+/// stream `a` (stream specifiers, e.g. `[v1]`), shared by both backends.
+pub(crate) fn encode_args(s: &EncodeSettings, encoder: &str, v: &str, a: &str, out: &Path) -> Vec<String> {
+    let c = &s.canvas;
     let fps = c.rate.to_f64();
     let bitrate = (f64::from(c.width) * f64::from(c.height) * fps * s.bits_per_pixel) as u64;
-    let mut args = strings(&["-map", &format!("[{v}]"), "-map", &format!("[{a}]"), "-c:v", &encoder]);
-    match encoder.as_str() {
+    let mut args = strings(&["-map", v, "-map", a, "-c:v", encoder]);
+    match encoder {
         "libx264" => args.extend(strings(&["-preset", &s.x264_preset, "-crf", &s.crf.to_string()])),
         "mpeg4" => args.extend(strings(&["-q:v", "3"])),
         _ => args.extend(strings(&["-b:v", &bitrate.to_string()])),
@@ -247,9 +257,13 @@ pub fn encode(tl: &Timeline, span: Span, s: &EncodeSettings, out: &Path, work: &
         "mp4",
     ]));
     args.push(out.to_string_lossy().into_owned());
-    ffmpeg::run(&g, &args, work, false)?;
-    let frames = ((span.end - span.start) * c.rate.as_ratio()).round().to_integer();
-    Ok(Encoded { frames, encoder, width: c.width, height: c.height, warnings: p.warnings })
+    args
+}
+
+/// Whether rendering `span` needs the GPU compositor (it has transitions or
+/// effects, which the ffmpeg graph cannot draw).
+pub fn needs_gpu(tl: &Timeline, span: Span) -> Result<bool> {
+    Ok(plan(tl, span)?.gpu_features > 0)
 }
 
 /// Run the timeline's mixed audio over `span` through `filter` (e.g.

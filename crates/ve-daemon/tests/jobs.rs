@@ -225,3 +225,37 @@ async fn at_most_two_jobs_run_at_once() {
         assert_eq!(wait(&r, id).await["state"], "cancelled");
     }
 }
+
+/// A clip with an effect exports through the GPU compositor on its own, as a
+/// job with progress, and the result shows the effect.
+#[tokio::test]
+async fn export_with_an_effect_runs_on_the_gpu_as_a_job() {
+    let (_session, r, dir) = project("jobs-gpu-export", 4).await;
+    let tl = ok(&r, "project.get", json!({})).await;
+    let id = tl["timeline"]["tracks"]["children"][0]["children"][0]["metadata"]["ve"]["clip"]["id"].clone();
+    assert!(id.as_str().is_some_and(|s| s.starts_with("clip_")), "{id}");
+    let base = ok(&r, "project.summary", json!({})).await["revision"].clone();
+
+    let plain = ok(&r, "render.export", json!({"preset": "draft-540p"})).await;
+    assert!(plain.get("warnings").is_none(), "{plain}");
+
+    let added = ok(&r, "effect.add", json!({"clip": id, "effect": "core.color/exposure@1", "params": {"stops": 1.5}, "base_rev": base})).await;
+    assert_eq!(added["changed"], true);
+    let started = ok(&r, "render.export", json!({"preset": "draft-540p", "background": true})).await;
+    let j = wait(&r, &started["job_id"]).await;
+    assert_eq!(j["state"], "done", "{j}");
+    assert_eq!(j["result"]["frames"], 120);
+    assert!(j["result"].get("warnings").is_none(), "{j}");
+
+    // Frame 30 of each export, mean luma of the whole picture: exposure brightens it.
+    let luma = |p: &Value| -> f64 {
+        let out = Command::new("ffmpeg")
+            .args(["-v", "error", "-i", p.as_str().unwrap(), "-vf", r"select=eq(n\,30),format=gray", "-frames:v", "1", "-f", "rawvideo", "-"])
+            .output()
+            .unwrap();
+        out.stdout.iter().map(|b| f64::from(*b)).sum::<f64>() / out.stdout.len().max(1) as f64
+    };
+    let (a, b) = (luma(&plain["path"]), luma(&j["result"]["path"]));
+    assert!(b > a + 1.5, "exposure missing: plain {a:.1}, gpu {b:.1}");
+    let _ = dir;
+}

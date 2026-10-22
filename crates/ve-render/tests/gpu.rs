@@ -279,12 +279,11 @@ fn enc(l: f64) -> f64 {
     255.0 * if l <= 0.003_130_8 { l * 12.92 } else { 1.055 * l.powf(1.0 / 2.4) - 0.055 }
 }
 
-#[test]
-fn effects_and_transitions_on_the_timeline() {
+/// Ramp frames 0-49 with +1 stop of exposure, a 20-frame dissolve at 50 into
+/// a color clip. Returns the timeline and both sources.
+fn fx_timeline(work: &Path) -> (Timeline, PathBuf, PathBuf) {
     use ve_ops::effects::{self, Align, NewTransition};
-    use ve_render::decoder::{DecoderPool, key};
-    let work = dir("gpu-fx");
-    let ramp_src = ramp(&work);
+    let ramp_src = ramp(work);
     let color_src = work.join("color.mkv");
     ffmpeg(&["-f", "lavfi", "-i", &format!("color=c=0xC04020:s={SIDE}x{SIDE}:r={FPS}"), "-t", "2", "-c:v", "ffv1", "-pix_fmt", "yuv420p", color_src.to_str().unwrap()]);
 
@@ -314,6 +313,14 @@ fn effects_and_transitions_on_the_timeline() {
         params: serde_json::Map::new(),
     };
     tl = effects::add_transition(&tl, &t).unwrap().0;
+    (tl, ramp_src, color_src)
+}
+
+#[test]
+fn effects_and_transitions_on_the_timeline() {
+    use ve_render::decoder::{DecoderPool, key};
+    let work = dir("gpu-fx");
+    let (tl, ramp_src, color_src) = fx_timeline(&work);
 
     // Source pixels, decoded the way the compositor decodes them.
     let mut pool = DecoderPool::default();
@@ -336,4 +343,181 @@ fn effects_and_transitions_on_the_timeline() {
     // The ffmpeg path still renders, as plain cuts, and says why.
     let plain = ve_render::frame(&tl, fr(45), SIDE, ImageFormat::Png, &work).unwrap();
     assert!(plain.warnings.iter().any(|w| w.contains("GPU compositor")), "{:?}", plain.warnings);
+}
+
+// ---- GPU export ----
+
+fn settings(tl: &Timeline) -> ve_render::EncodeSettings {
+    ve_render::EncodeSettings {
+        canvas: ve_render::project_canvas(tl),
+        encoder: None,
+        crf: 10,
+        x264_preset: "veryfast".into(),
+        bits_per_pixel: 0.3,
+        audio_kbps: 128,
+        crossfade: ve_render::default_crossfade(),
+    }
+}
+
+/// Every frame of a video file as RGB.
+fn decode_all(path: &Path) -> Vec<image::RgbImage> {
+    let (w, h) = (SIDE, SIDE);
+    let out = Command::new("ffmpeg")
+        .args(["-v", "error", "-i"])
+        .arg(path)
+        .args(["-f", "rawvideo", "-pix_fmt", "rgb24", "-"])
+        .output()
+        .expect("ffmpeg on PATH");
+    assert!(out.status.success());
+    out.stdout.chunks_exact((w * h * 3) as usize).map(|c| image::RgbImage::from_raw(w, h, c.to_vec()).unwrap()).collect()
+}
+
+fn span_all(tl: &Timeline) -> ve_render::Span {
+    ve_render::span_or_all(tl, None, None).unwrap()
+}
+
+#[test]
+fn gpu_export_matches_the_ffmpeg_export() {
+    let work = dir("gpu-export-parity");
+    let tl = timeline(&work);
+    assert!(!ve_render::needs_gpu(&tl, span_all(&tl)).unwrap(), "a plain project stays on ffmpeg");
+    let (a, b) = (work.join("ffmpeg.mp4"), work.join("gpu.mp4"));
+    let s = settings(&tl);
+    let ea = ve_render::encode(&tl, span_all(&tl), &s, &a, &work).unwrap();
+    let eb = ve_render::compose::encode(&tl, span_all(&tl), &s, &b, &work, &fx()).unwrap();
+    assert_eq!(ea.frames, eb.frames);
+    let (fa, fb) = (decode_all(&a), decode_all(&b));
+    assert_eq!(fa.len(), fb.len(), "same frame count");
+    assert_eq!(fa.len() as i64, ea.frames);
+    for (n, (x, y)) in fa.iter().zip(&fb).enumerate() {
+        let (mean, max) = diff(x, y);
+        // V2's color edges differ between a YUV and an RGB blend (plus codec noise).
+        let limit = if (10..30).contains(&n) { 3.0 } else { 1.05 };
+        assert!(mean < limit, "frame {n}: mean {mean:.3}, max {max}");
+        if !(10..30).contains(&n) {
+            assert!(max <= 4, "frame {n}: max {max}");
+        }
+    }
+}
+
+#[test]
+fn gpu_export_shows_effects_and_transitions() {
+    let work = dir("gpu-export-fx");
+    let (tl, _, _) = fx_timeline(&work);
+    assert!(ve_render::needs_gpu(&tl, span_all(&tl)).unwrap(), "effects and transitions pick the GPU");
+    let (plain, fancy) = (work.join("plain.mp4"), work.join("fancy.mp4"));
+    let s = settings(&tl);
+    ve_render::encode(&tl, span_all(&tl), &s, &plain, &work).unwrap();
+    ve_render::compose::encode(&tl, span_all(&tl), &s, &fancy, &work, &fx()).unwrap();
+    let (fp, ff) = (decode_all(&plain), decode_all(&fancy));
+    assert_eq!(fp.len(), ff.len());
+    // Golden: each exported frame equals the compositor's own frame, within codec noise.
+    for n in [30, 45, 50, 59, 60, 70] {
+        let golden = rgb(&ve_render::compose::frame(&tl, fr(n), SIDE, ImageFormat::Png, &fx()).unwrap().bytes);
+        let (mean, max) = diff(&golden, &ff[n as usize]);
+        assert!(mean < 1.5, "frame {n}: mean {mean:.3}, max {max}");
+    }
+    // Not vacuous: +1 stop of exposure brightens frame 30, and the dissolve
+    // is neither clip alone at its midpoint.
+    let center = |f: &image::RgbImage| f.get_pixel(32, 32).0[0];
+    assert!(i32::from(center(&ff[30])) > i32::from(center(&fp[30])) + 10, "exposure missing: {} vs {}", center(&ff[30]), center(&fp[30]));
+    let mid = ff[50].get_pixel(32, 32).0;
+    assert!(mid != fp[50].get_pixel(32, 32).0 && mid != ff[70].get_pixel(32, 32).0, "dissolve missing: {mid:?}");
+}
+
+#[test]
+fn gpu_export_progress_and_cancel() {
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant};
+    use ve_render::control::{Control, scoped};
+
+    let work = dir("gpu-export-cancel");
+    let tl = hd_project(&work); // 20 s of 1080p: far too long to finish in the test
+    let out = work.join("cancelled.mp4");
+    let cancel = Arc::new(AtomicBool::new(false));
+    let seen = Arc::new(Mutex::new(Vec::<f64>::new()));
+    let last = Arc::new(AtomicU64::new(0));
+    let ctrl = {
+        let (seen, last) = (seen.clone(), last.clone());
+        Control::new(cancel.clone(), move |secs| {
+            seen.lock().unwrap().push(secs);
+            last.store(secs.to_bits(), Ordering::SeqCst);
+        })
+    };
+    let flag = cancel.clone();
+    let seen2 = seen.clone();
+    let stopper = std::thread::spawn(move || {
+        // Cancel once some frames are through.
+        let t = Instant::now();
+        while seen2.lock().unwrap().len() < 15 && t.elapsed() < Duration::from_secs(60) {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        flag.store(true, Ordering::SeqCst);
+    });
+    let s = settings(&tl);
+    let started = Instant::now();
+    let r = scoped(Arc::new(ctrl), || ve_render::compose::encode(&tl, span_all(&tl), &s, &out, &work, &fx()));
+    stopper.join().unwrap();
+    assert!(matches!(r, Err(ve_render::RenderError::Cancelled)), "{:?}", r.err());
+    assert!(started.elapsed() < Duration::from_secs(30), "cancel took {:?}", started.elapsed());
+    assert!(!out.exists(), "a cancelled export leaves no file");
+    let seen = seen.lock().unwrap();
+    assert!(seen.windows(2).all(|w| w[1] > w[0]), "progress only moves forward");
+    assert!(seen.last().copied().unwrap_or(0.0) < 20.0, "stopped before the end");
+}
+
+/// 10-minute 1080p 29.97 talking-head stand-in with 160 jump cuts: ffmpeg
+/// export vs GPU export (same encoder settings), then GPU with an effect.
+/// `cargo test -p ve-render --test gpu bench_export -- --ignored --nocapture`
+#[test]
+#[ignore = "benchmark; takes many minutes"]
+fn bench_export() {
+    use std::time::Instant;
+    let work = std::env::temp_dir().join("ve-render-tests").join("bench-export");
+    fs::create_dir_all(&work).unwrap();
+    let src = work.join("talk.mp4");
+    if !src.exists() {
+        ffmpeg(&[
+            "-f", "lavfi", "-i", "testsrc2=s=1920x1080:r=30000/1001:d=600",
+            "-f", "lavfi", "-i", "sine=frequency=220:sample_rate=48000:d=600",
+            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "30", "-g", "60", "-pix_fmt", "yuv420p", "-c:a", "aac", src.to_str().unwrap(),
+        ]);
+    }
+    let rate = Rate::new(30000, 1001);
+    let output = OutputSettings { width: 1920, height: 1080, rate, sample_rate: 48_000, color_space: "bt709".into() };
+    let mut tl = ve_model::doc::new_project("bench", output);
+    add_asset(&mut tl, "asset_talk", &src);
+    let mut a = insert("asset_talk", None, None, None, false);
+    a.audio = true;
+    tl = edit::insert(&tl, &a).unwrap().0;
+    // 160 pauses of 15 frames, spread over the first ~9.5 minutes (cut back to front so times stay valid).
+    let ranges: Vec<(Q, Q)> = (1..=160).map(|k| (Q::new(k * 1001 * 107, 30000), Q::new(k * 1001 * 107 + 1001 * 15, 30000))).collect();
+    let rd = RippleDelete { ranges, markers: None, tracks: vec![], clips: vec![], linked: true };
+    tl = edit::ripple_delete(&tl, &rd).unwrap().0;
+    let span = span_all(&tl);
+    let frames = (span.duration() * rate.as_ratio()).round().to_integer();
+    eprintln!("timeline: {frames} frames ({:.1} s)", frames as f64 / rate.to_f64());
+
+    let mut s = settings(&tl);
+    s.crf = 20;
+    s.x264_preset = "medium".into();
+    let report = |name: &str, t: Instant, out: &Path| {
+        let secs = t.elapsed().as_secs_f64();
+        eprintln!("{name:<22} {secs:7.1} s  {:6.1} ms/frame  {:5.1} fps  {} MB", secs * 1000.0 / frames as f64, frames as f64 / secs, fs::metadata(out).map_or(0, |m| m.len() / 1_000_000));
+    };
+    let o1 = work.join("ffmpeg.mp4");
+    let t = Instant::now();
+    ve_render::encode(&tl, span, &s, &o1, &work).unwrap();
+    report("ffmpeg export", t, &o1);
+    let o2 = work.join("gpu.mp4");
+    let t = Instant::now();
+    ve_render::compose::encode(&tl, span, &s, &o2, &work, &fx()).unwrap();
+    report("gpu export", t, &o2);
+    // Encoder alone: what the GPU path can never beat.
+    let o3 = work.join("encode-only.mp4");
+    let t = Instant::now();
+    ffmpeg(&["-f", "lavfi", "-i", "testsrc2=s=1920x1080:r=30000/1001", "-frames:v", &frames.to_string(), "-c:v", "libx264", "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p", o3.to_str().unwrap()]);
+    report("x264 alone (floor)", t, &o3);
+    let _ = (fs::remove_file(&o1), fs::remove_file(&o2), fs::remove_file(&o3));
 }

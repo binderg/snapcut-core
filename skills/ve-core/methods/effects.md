@@ -5,11 +5,15 @@ one clip into the next at a cut (dissolve, wipe). Both are plugins: a
 manifest plus code, run by the GPU compositor. How to write your own:
 [../guides/writing-effects.md](../guides/writing-effects.md).
 
-**Where they show today.** Only the GPU frame path renders them:
-`render.frame` when the daemon runs with `VE_RENDERER=gpu`. Exports, range
-previews and contact sheets still use the ffmpeg renderer, which shows plain
-cuts and unprocessed clips and says so in `warnings`. GPU export is the next
-step.
+**Where they show.** `render.frame`, `render.range_preview` and
+`render.export` use the GPU compositor automatically when the range has an
+effect or a transition; every other range stays on the ffmpeg renderer, so
+plain projects render as before. Audio is the same either way (the ffmpeg
+graph, with its crossfades and J/L cuts), and the GPU export is one
+background-capable job with progress and cancel like any other. Contact
+sheets still use ffmpeg, which shows plain cuts and unprocessed clips and says
+so in `warnings`. `VE_RENDERER=gpu` or `ffmpeg` where the daemon starts forces
+a backend (for tests and debugging).
 
 ## `fx.list`
 

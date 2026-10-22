@@ -101,8 +101,10 @@ pub struct ImageResult {
 pub fn frame(p: &Snapshot, a: FrameParams) -> Result<ImageResult, RpcError> {
     let tl = &p.timeline;
     let at = parse_time("at", &a.at, tl.output_rate())?;
-    // VE_RENDERER=gpu (set where the daemon starts) tries the Phase 2 GPU compositor.
-    let gpu = std::env::var("VE_RENDERER").is_ok_and(|v| v.eq_ignore_ascii_case("gpu"));
+    let gpu = match renderer_override() {
+        Some(forced) => forced,
+        None => ve_render::needs_gpu(tl, ve_render::Span::new(at, at + tl.output_rate().as_ratio().recip())).map_err(render_error)?,
+    };
     let img = if gpu {
         let fx = ve_render::fx::Registry::for_project(Some(p.root()));
         ve_render::compose::frame(tl, at, a.width, a.format.into(), &fx)
@@ -118,6 +120,17 @@ pub fn frame(p: &Snapshot, a: FrameParams) -> Result<ImageResult, RpcError> {
         data: base64::engine::general_purpose::STANDARD.encode(img.bytes),
         warnings: img.warnings,
     })
+}
+
+/// `VE_RENDERER=gpu|ffmpeg` (set where the daemon starts) forces a backend;
+/// this is a test and debugging switch. Otherwise a range with effects or
+/// transitions renders on the GPU and everything else through ffmpeg.
+fn renderer_override() -> Option<bool> {
+    match std::env::var("VE_RENDERER") {
+        Ok(v) if v.eq_ignore_ascii_case("gpu") => Some(true),
+        Ok(v) if v.eq_ignore_ascii_case("ffmpeg") => Some(false),
+        _ => None,
+    }
 }
 
 fn default_count() -> u32 {
@@ -274,7 +287,17 @@ fn encode(p: &Snapshot, sp: Span, settings: ve_render::EncodeSettings, kind: &st
     let path = out_file(&work, kind, p.revision);
     let tl = &p.timeline;
     let rate = tl.output_rate();
-    let e = ve_render::encode(tl, sp, &settings, &path, &work).map_err(render_error)?;
+    let gpu = match renderer_override() {
+        Some(forced) => forced,
+        None => ve_render::needs_gpu(tl, sp).map_err(render_error)?,
+    };
+    let e = if gpu {
+        let fx = ve_render::fx::Registry::for_project(Some(p.root()));
+        ve_render::compose::encode(tl, sp, &settings, &path, &work, &fx)
+    } else {
+        ve_render::encode(tl, sp, &settings, &path, &work)
+    }
+    .map_err(render_error)?;
     let size_bytes = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
     let url = ve_media::file_url(&path).unwrap_or_default();
     Ok(VideoResult {

@@ -109,7 +109,7 @@ Any number of `src`/`outgoing`/`incoming` calls is fine, including in loops
 ve fx define effects-src/invert --dry-run     # validate and test-render only
 ve fx define effects-src/invert               # save to the project's effects/ folder
 ve effect add clip_7f3a project.invert --param amount=0.5
-ve frame --at 00:00:06:00 -o check.jpg          # with VE_RENDERER=gpu on the daemon
+ve frame --at 00:00:06:00 -o check.jpg          # renders on the GPU when the clip has the effect
 ```
 
 Errors name your file, line and column:

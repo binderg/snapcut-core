@@ -59,6 +59,8 @@ pub struct Output {
 /// arguments (`-i file ...`) for working on one media file directly.
 pub enum Inputs<'a> {
     Graph(&'a Graph),
+    /// A graph plus one more input after its files (raw frames on stdin for [`feed`]).
+    GraphPipe(&'a Graph, Vec<String>),
     Args(Vec<String>),
 }
 
@@ -148,6 +150,85 @@ fn exec(inputs: &Inputs<'_>, out: &[String], work: &Path, log_info: bool, sink: 
     }
     read?;
     check(status?, &stderr)?;
+    Ok(stderr)
+}
+
+/// What [`feed`] hands its producer: queue one chunk for ffmpeg's stdin.
+pub type Send<'a> = dyn FnMut(Vec<u8>) -> Result<(), RenderError> + 'a;
+
+/// Frames waiting for ffmpeg's stdin; bounds memory and lets the compositor
+/// run ahead of the encoder by a few frames.
+const FEED_QUEUE: usize = 4;
+
+/// Run ffmpeg with `produce` filling its stdin: it calls the given function
+/// with each chunk (a raw frame) in order. Stops with [`RenderError::Cancelled`]
+/// when this thread's job is cancelled (checked by `produce` through
+/// [`control::cancelled`], and here between frames). Returns ffmpeg's log.
+pub fn feed(
+    inputs: &Inputs<'_>,
+    out: &[String],
+    work: &Path,
+    produce: &mut dyn FnMut(&mut Send) -> Result<(), RenderError>,
+) -> Result<String, RenderError> {
+    if control::cancelled() {
+        return Err(RenderError::Cancelled);
+    }
+    let (mut cmd, script) = command(inputs, out, work, false, None)?;
+    let mut child = cmd.stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::piped()).spawn().map_err(spawn_error)?;
+    let mut err_pipe = child.stderr.take().expect("stderr is piped");
+    let err_thread = std::thread::spawn(move || {
+        let mut s = String::new();
+        let _ = std::io::Read::read_to_string(&mut err_pipe, &mut s);
+        s
+    });
+    let mut stdin = child.stdin.take().expect("stdin is piped");
+    let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(FEED_QUEUE);
+    let writer = std::thread::spawn(move || {
+        for chunk in rx {
+            if std::io::Write::write_all(&mut stdin, &chunk).is_err() {
+                return false;
+            }
+        }
+        true
+    });
+    let mut send = |chunk: Vec<u8>| -> Result<(), RenderError> {
+        if control::cancelled() {
+            return Err(RenderError::Cancelled);
+        }
+        tx.send(chunk).map_err(|_| RenderError::Io("ffmpeg stopped reading frames".into()))
+    };
+    let produced = produce(&mut send);
+    drop(tx);
+    let child = Mutex::new(child);
+    if matches!(produced, Err(RenderError::Cancelled)) {
+        kill_tree(&mut lock(&child));
+    }
+    let wrote = writer.join().unwrap_or(false);
+    let status = loop {
+        match lock(&child).try_wait() {
+            Ok(Some(s)) => break Ok(s),
+            Ok(None) => {}
+            Err(e) => break Err(RenderError::Io(e.to_string())),
+        }
+        if control::cancelled() {
+            kill_tree(&mut lock(&child));
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    let stderr = err_thread.join().unwrap_or_default();
+    drop(script);
+    if matches!(produced, Err(RenderError::Cancelled)) || control::cancelled() {
+        return Err(RenderError::Cancelled);
+    }
+    let status = status?;
+    // ffmpeg's own error is the useful one when the pipe broke.
+    if !status.success() {
+        check(status, &stderr)?;
+    }
+    produced?;
+    if !wrote {
+        return Err(RenderError::Io("ffmpeg closed its input early".into()));
+    }
     Ok(stderr)
 }
 
@@ -260,7 +341,7 @@ fn command(
         cmd.arg("-progress").arg(p);
     }
     let script = match inputs {
-        Inputs::Graph(graph) => {
+        Inputs::Graph(graph) | Inputs::GraphPipe(graph, _) => {
             std::fs::create_dir_all(work).map_err(|e| RenderError::Io(format!("{}: {e}", work.display())))?;
             let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_nanos());
             let script = work.join(format!("graph-{}-{nanos}.txt", std::process::id()));
@@ -271,6 +352,9 @@ fn command(
                 _ => "-/filter_complex",
             };
             cmd.args(graph.input_args());
+            if let Inputs::GraphPipe(_, pipe) = inputs {
+                cmd.args(pipe);
+            }
             cmd.arg(script_flag).arg(&script);
             Script(Some(script))
         }

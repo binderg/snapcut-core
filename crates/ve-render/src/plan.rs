@@ -103,6 +103,8 @@ pub struct Plan {
     pub video: Vec<TrackPlan>,
     pub audio: Vec<TrackPlan>,
     pub warnings: Vec<String>,
+    /// Transitions and effects in range: what only the GPU compositor renders.
+    pub gpu_features: usize,
 }
 
 /// End of the longest track, in seconds.
@@ -125,7 +127,7 @@ pub fn plan(tl: &Timeline, span: Span) -> Result<Plan, RenderError> {
     if span.end <= span.start {
         return Err(RenderError::Invalid("the render range is empty".into()));
     }
-    let mut out = Plan { span, video: Vec::new(), audio: Vec::new(), warnings: Vec::new() };
+    let mut out = Plan { span, video: Vec::new(), audio: Vec::new(), warnings: Vec::new(), gpu_features: 0 };
     let mut transitions = 0;
     let mut effects = 0;
     for c in &tl.tracks.children {
@@ -198,9 +200,10 @@ pub fn plan(tl: &Timeline, span: Span) -> Result<Plan, RenderError> {
             TrackKind::Audio => out.audio.push(t),
         }
     }
+    out.gpu_features = transitions + effects;
     if transitions + effects > 0 {
         out.warnings.push(format!(
-            "{transitions} transition(s) and {effects} effect(s) in range: {GPU_ONLY} them (frames with VE_RENDERER=gpu); this render shows plain cuts and unprocessed clips"
+            "{transitions} transition(s) and {effects} effect(s) in range: {GPU_ONLY} them; this render shows plain cuts and unprocessed clips"
         ));
     }
     Ok(out)

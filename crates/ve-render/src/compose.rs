@@ -10,16 +10,17 @@
 //! layer, at the size each layer is drawn.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use ve_model::Timeline;
 use ve_model::time::Q;
 
 use crate::decoder;
+use crate::ffmpeg::{self, Inputs};
 use crate::fx::{Kind, Registry};
 use crate::gpu::{Gpu, Item, Pass, Picture, Rect};
-use crate::plan::{GPU_ONLY, Segment, plan, timeline_end};
-use crate::{Fit, Image, ImageFormat, RenderError, Span, local_path, project_canvas};
+use crate::plan::{GPU_ONLY, Plan, Segment, plan, timeline_end};
+use crate::{Canvas, EncodeSettings, Encoded, Fit, Graph, Image, ImageFormat, RenderError, Span, encode_args, local_path, project_canvas};
 
 type Result<T> = std::result::Result<T, RenderError>;
 
@@ -127,21 +128,9 @@ enum Shown {
     Transition(Decoded, Decoded, Pass),
 }
 
-/// [`crate::frame`] through the GPU compositor: one frame at `at` (snapped
-/// down to its frame), `width` pixels wide, with clip effects and
-/// transitions from `fx`.
-pub fn frame(tl: &Timeline, at: Q, width: u32, format: ImageFormat, fx: &Registry) -> Result<Image> {
-    let canvas = project_canvas(tl).scaled_to_width(width);
-    let r = canvas.rate.as_ratio();
-    let at = (at * r).floor() / r;
-    let end = timeline_end(tl);
-    if at < Q::from_integer(0) || at >= end {
-        return Err(RenderError::Invalid(format!("no frame there: the timeline has {} frames", (end * r).to_integer())));
-    }
-    let p = plan(tl, Span::new(at, at + Q::from_integer(1) / r))?;
-    let sizes = source_sizes(tl);
+/// The composited RGBA of the frame at `at` from a plan that covers it.
+fn render_rgba(p: &Plan, sizes: &HashMap<PathBuf, (u32, u32)>, canvas: &Canvas, at: Q, fx: &Registry) -> Result<Vec<u8>> {
     let size = (canvas.width, canvas.height);
-
     // Each layer is decoded at the size it is drawn, by a warm decoder: one
     // stream per track, a second for the incoming clip of a transition.
     let mut shown = Vec::new();
@@ -155,11 +144,11 @@ pub fn frame(tl: &Timeline, at: Q, width: u32, format: ImageFormat, fx: &Registr
                 time: seconds(local),
                 progress: seconds(local / (tr.end - tr.start)),
             };
-            let a = decoded(&tr.outgoing, at, 2 * k, &sizes, canvas.fit, size, fx)?;
-            let b = decoded(&tr.incoming, at, 2 * k + 1, &sizes, canvas.fit, size, fx)?;
+            let a = decoded(&tr.outgoing, at, 2 * k, sizes, canvas.fit, size, fx)?;
+            let b = decoded(&tr.incoming, at, 2 * k + 1, sizes, canvas.fit, size, fx)?;
             shown.push(Shown::Transition(a, b, pass));
         } else if let Some(seg) = track.segments.iter().find(|s| s.start <= at && at < s.end) {
-            shown.push(Shown::Plain(decoded(seg, at, 2 * k, &sizes, canvas.fit, size, fx)?));
+            shown.push(Shown::Plain(decoded(seg, at, 2 * k, sizes, canvas.fit, size, fx)?));
         }
     }
     let items: Vec<Item<'_>> = shown
@@ -169,8 +158,22 @@ pub fn frame(tl: &Timeline, at: Q, width: u32, format: ImageFormat, fx: &Registr
             Shown::Transition(a, b, pass) => Item::Transition { outgoing: a.picture(), incoming: b.picture(), pass: pass.clone() },
         })
         .collect();
+    Gpu::shared()?.render(canvas.width, canvas.height, &items)
+}
 
-    let rgba = Gpu::shared()?.render(canvas.width, canvas.height, &items)?;
+/// [`crate::frame`] through the GPU compositor: one frame at `at` (snapped
+/// down to its frame), `width` pixels wide, with clip effects and
+/// transitions from `fx`.
+pub fn frame(tl: &Timeline, at: Q, width: u32, format: ImageFormat, fx: &Registry) -> Result<Image> {
+    let canvas = project_canvas(tl).scaled_to_width(width);
+    let r = canvas.rate.as_ratio();
+    let at = (at * r).floor() / r;
+    let end = timeline_end(tl);
+    if at < Q::from_integer(0) || at >= end {
+        return Err(RenderError::Invalid(format!("no frame there: the timeline has {} frames", (end * r).to_integer())));
+    }
+    let p = plan(tl, Span::new(at, at + Q::from_integer(1) / r))?;
+    let rgba = render_rgba(&p, &source_sizes(tl), &canvas, at, fx)?;
     let rgb = image::RgbImage::from_fn(canvas.width, canvas.height, |x, y| {
         let i = ((y * canvas.width + x) * 4) as usize;
         image::Rgb([rgba[i], rgba[i + 1], rgba[i + 2]])
@@ -184,6 +187,55 @@ pub fn frame(tl: &Timeline, at: Q, width: u32, format: ImageFormat, fx: &Registr
     rgb.write_to(&mut cursor, fmt).map_err(|e| RenderError::Io(format!("encoding the frame: {e}")))?;
     let warnings = p.warnings.into_iter().filter(|w| !w.contains(GPU_ONLY)).collect();
     Ok(Image { bytes, width: canvas.width, height: canvas.height, warnings })
+}
+
+/// [`crate::encode`] through the GPU compositor: every frame of `span` is
+/// composited here and piped as raw RGBA into one ffmpeg run, which also
+/// builds the audio from the Phase 1 graph (crossfades, J/L cuts) and encodes
+/// both with the same settings. Reports progress (seconds of output) and stops
+/// on cancel through the thread's [`crate::control::Control`]; a failed or
+/// cancelled run leaves no file at `out`.
+pub fn encode(tl: &Timeline, span: Span, s: &EncodeSettings, out: &Path, work: &Path, fx: &Registry) -> Result<Encoded> {
+    let p = plan(tl, span)?;
+    let c = &s.canvas;
+    let r = c.rate.as_ratio();
+    let total = ((span.end - span.start) * r).round().to_integer();
+    let encoder = match &s.encoder {
+        Some(e) => e.clone(),
+        None => ffmpeg::h264_encoder()?.to_owned(),
+    };
+    // Fail on a missing effect or GPU before an encoder is started.
+    Gpu::shared()?;
+    let sizes = source_sizes(tl);
+
+    let mut g = Graph::new();
+    let a = g.audio(&p, c, s.crossfade);
+    let pipe_index = g.input_count();
+    g.chain(format!("[{pipe_index}:v]format=yuv420p,setsar=1[gv]"));
+    let pipe = ["-f", "rawvideo", "-pix_fmt", "rgba", "-s", &format!("{}x{}", c.width, c.height), "-framerate", &c.rate.to_string(), "-i", "-"]
+        .iter()
+        .map(|a| (*a).to_owned())
+        .collect();
+    let args = encode_args(s, &encoder, "[gv]", &format!("[{a}]"), out);
+
+    let ctrl = crate::control::current();
+    let mut produce = |send: &mut ffmpeg::Send| -> Result<()> {
+        for k in 0..total {
+            let at = span.start + Q::from_integer(k) / r;
+            send(render_rgba(&p, &sizes, c, at, fx)?)?;
+            if let Some(ctrl) = &ctrl {
+                ctrl.progress(((k + 1) as f64) / c.rate.to_f64());
+            }
+        }
+        Ok(())
+    };
+    let run = ffmpeg::feed(&Inputs::GraphPipe(&g, pipe), &args, work, &mut produce);
+    if let Err(e) = run {
+        let _ = std::fs::remove_file(out);
+        return Err(e);
+    }
+    let warnings = p.warnings.into_iter().filter(|w| !w.contains(GPU_ONLY)).collect();
+    Ok(Encoded { frames: total, encoder, width: c.width, height: c.height, warnings })
 }
 
 #[cfg(test)]
