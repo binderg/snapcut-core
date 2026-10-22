@@ -90,3 +90,27 @@ fn agent_loop() {
 
     ok(&proj, &["daemon", "stop"]);
 }
+
+/// `ve describe | head -1`: a reader that leaves early must not make ve panic.
+#[test]
+fn closed_stdout_is_quiet() {
+    use std::io::{BufRead, BufReader};
+    use std::process::Stdio;
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_ve"))
+        .arg("describe")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut first = String::new();
+    BufReader::new(child.stdout.take().unwrap()).read_line(&mut first).unwrap();
+    assert_eq!(first.trim(), "{");
+    // The reader is dropped here; the rest of the output (far more than a
+    // 64 KB pipe buffer) has nowhere to go.
+    let out = child.wait_with_output().unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "status {:?}: {stderr}", out.status);
+    assert!(!stderr.contains("panicked"), "{stderr}");
+    assert!(stderr.is_empty(), "{stderr}");
+}

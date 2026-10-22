@@ -275,7 +275,7 @@ impl Fx {
             v.push(Slot { param: Some(p), ty: "f32" });
         }
         let mut size: usize = v.iter().map(Slot::bytes).sum();
-        while size == 0 || size % 16 != 0 {
+        while size == 0 || !size.is_multiple_of(16) {
             v.push(Slot { param: None, ty: "f32" });
             size += 4;
         }

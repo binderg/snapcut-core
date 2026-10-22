@@ -24,6 +24,32 @@ use ve_protocol::{ErrorCode, Registry};
 
 mod stdio;
 
+// All command output goes through these instead of `out!`/`outln!`, which
+// panic when the reader has gone away (`ve history | head`).
+macro_rules! out {
+    ($($arg:tt)*) => { write_stdout(format_args!($($arg)*), false) };
+}
+macro_rules! outln {
+    ($($arg:tt)*) => { write_stdout(format_args!($($arg)*), true) };
+}
+
+/// Write to stdout. If the reader closed the pipe, stop quietly with success,
+/// like a Unix tool killed by SIGPIPE but portable (Windows reports the same
+/// `BrokenPipe` kind for a closed pipe).
+fn write_stdout(args: std::fmt::Arguments<'_>, newline: bool) {
+    use std::io::{ErrorKind, Write as _};
+    let mut out = std::io::stdout().lock();
+    let written = out.write_fmt(args).and_then(|()| if newline { out.write_all(b"\n") } else { Ok(()) });
+    match written {
+        Ok(()) => {}
+        Err(e) if e.kind() == ErrorKind::BrokenPipe => std::process::exit(0),
+        Err(e) => {
+            eprintln!("error: writing to stdout: {e}");
+            std::process::exit(ErrorCode::Internal.exit_code());
+        }
+    }
+}
+
 #[derive(Parser)]
 #[command(name = "ve", version, about = "Headless, agent-friendly video engine")]
 struct Cli {
@@ -755,7 +781,7 @@ fn plan(cmd: &Command, json_output: bool) -> Plan {
             let source = std::fs::read_to_string(&sp).unwrap_or_else(|e| usage_error(format!("{}: {e}", sp.display()), json_output));
             // Images for image params travel with the shader.
             let mut files = serde_json::Map::new();
-            for e in std::fs::read_dir(&folder).into_iter().flatten().flatten() {
+            for e in std::fs::read_dir(folder).into_iter().flatten().flatten() {
                 let name = e.file_name().to_string_lossy().into_owned();
                 if [".png", ".jpg", ".jpeg"].iter().any(|x| name.to_ascii_lowercase().ends_with(x)) {
                     let bytes = std::fs::read(e.path()).unwrap_or_else(|err| usage_error(format!("{name}: {err}"), json_output));
@@ -971,15 +997,15 @@ fn print_commit(r: &Value) {
     };
     for (key, label) in [("created", "new"), ("modified", "changed")] {
         for c in r[key].as_array().into_iter().flatten() {
-            println!("{label:8} {}", place(c));
+            outln!("{label:8} {}", place(c));
         }
     }
     for id in r["removed"].as_array().into_iter().flatten() {
-        println!("removed  {}", id.as_str().unwrap_or("?"));
+        outln!("removed  {}", id.as_str().unwrap_or("?"));
     }
     for t in r["tracks"].as_array().into_iter().flatten() {
         let mark = if t["id"] == r["track"]["id"] { "*" } else { " " };
-        println!(
+        outln!(
             "{mark} {:8} {:12} {} #{}  clips {}",
             t["name"].as_str().unwrap_or("?"),
             t["id"].as_str().unwrap_or("?"),
@@ -989,18 +1015,18 @@ fn print_commit(r: &Value) {
         );
     }
     if let Some(list) = r["effects"].as_array() {
-        println!("effects on {}:", r["clip"].as_str().unwrap_or("?"));
+        outln!("effects on {}:", r["clip"].as_str().unwrap_or("?"));
         for (i, e) in list.iter().enumerate() {
             let mark = if e["id"] == r["effect"] { "*" } else { " " };
             let params = e.get("params").map_or(String::new(), |p| format!("  {p}"));
             let keyed = e["keyframed"]
                 .as_array()
                 .map_or(String::new(), |k| format!("  keyframed: {}", k.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(", ")));
-            println!("{mark} {i}  {}  {}{params}{keyed}", e["id"].as_str().unwrap_or("?"), e["effect"].as_str().unwrap_or("?"));
+            outln!("{mark} {i}  {}  {}{params}{keyed}", e["id"].as_str().unwrap_or("?"), e["effect"].as_str().unwrap_or("?"));
         }
     }
     if let Some(cut) = r["cut"].as_str() {
-        println!(
+        outln!(
             "transition {} {}  {}  {}-{} (cut {cut})  {} -> {}",
             r["id"].as_str().unwrap_or("?"),
             r["transition"].as_str().unwrap_or("?"),
@@ -1012,23 +1038,23 @@ fn print_commit(r: &Value) {
         );
     }
     for id in r["markers"].as_array().into_iter().flatten() {
-        println!("marker   {}", id.as_str().unwrap_or("?"));
+        outln!("marker   {}", id.as_str().unwrap_or("?"));
     }
     if let Some(step) = r.get("step") {
         let revs: Vec<String> = step["revs"].as_array().into_iter().flatten().map(Value::to_string).collect();
-        println!("{} (by {}, rev {})", step["what"].as_str().unwrap_or("?"), step["actor"].as_str().unwrap_or("?"), revs.join(","));
+        outln!("{} (by {}, rev {})", step["what"].as_str().unwrap_or("?"), step["actor"].as_str().unwrap_or("?"), revs.join(","));
     }
     if let Some(d) = r["duration"].as_str() {
-        println!("duration {d}");
+        outln!("duration {d}");
     }
     let rev = &r["revision"];
     match (r["dry_run"].as_bool(), r["changed"].as_bool()) {
         (Some(true), Some(true)) => {
-            println!("dry run: would make rev {}; project unchanged (rev {rev})", rev.as_u64().unwrap_or(0) + 1);
-            println!("patch: {}", r["patch"]);
+            outln!("dry run: would make rev {}; project unchanged (rev {rev})", rev.as_u64().unwrap_or(0) + 1);
+            outln!("patch: {}", r["patch"]);
         }
-        (_, Some(false)) => println!("no change (rev {rev})"),
-        _ => println!("rev {rev}"),
+        (_, Some(false)) => outln!("no change (rev {rev})"),
+        _ => outln!("rev {rev}"),
     }
 }
 
@@ -1041,9 +1067,9 @@ fn print_measure(cmd: &MeasureCmd, r: &Value) {
     let src = &r["source"];
     let what = src["asset"].as_str().map_or_else(|| "timeline".to_owned(), str::to_owned);
     let cached = if r["cached"] == true { "  (cached)" } else { "" };
-    println!("{what}  {}-{}{cached}", src["from"].as_str().unwrap_or("?"), src["to"].as_str().unwrap_or("?"));
+    outln!("{what}  {}-{}{cached}", src["from"].as_str().unwrap_or("?"), src["to"].as_str().unwrap_or("?"));
     match cmd {
-        MeasureCmd::Loudness { .. } => println!(
+        MeasureCmd::Loudness { .. } => outln!(
             "integrated {}  range {}  true peak {}",
             num(&r["integrated_lufs"], " LUFS"),
             num(&r["range_lu"], " LU"),
@@ -1051,7 +1077,7 @@ fn print_measure(cmd: &MeasureCmd, r: &Value) {
         ),
         MeasureCmd::Levels { .. } => {
             for (i, c) in r["channels"].as_array().into_iter().flatten().enumerate() {
-                println!(
+                outln!(
                     "ch{}  rms {}  peak {}  dc {}  clipped {}",
                     i + 1,
                     num(&c["rms_db"], " dB"),
@@ -1060,16 +1086,16 @@ fn print_measure(cmd: &MeasureCmd, r: &Value) {
                     c["clipped_samples"]
                 );
             }
-            println!("noise floor {}", num(&r["noise_floor_db"], " dB"));
+            outln!("noise floor {}", num(&r["noise_floor_db"], " dB"));
             if r.get("balance_db").is_some() {
-                println!("balance (L-R) {}  correlation {}", num(&r["balance_db"], " dB"), r["correlation"]);
+                outln!("balance (L-R) {}  correlation {}", num(&r["balance_db"], " dB"), r["correlation"]);
             }
         }
         MeasureCmd::Waveform { .. } => {
             let points = r["min"].as_array().map_or(0, Vec::len);
-            println!("{points} points over {} samples at {} Hz (--json for the arrays)", r["samples"], r["sample_rate"]);
+            outln!("{points} points over {} samples at {} Hz (--json for the arrays)", r["samples"], r["sample_rate"]);
         }
-        MeasureCmd::Pitch { .. } => println!(
+        MeasureCmd::Pitch { .. } => outln!(
             "median {} ({})  range {}-{}  voiced {:.0}%",
             num(&r["median_hz"], " Hz"),
             r["note"].as_str().unwrap_or("-"),
@@ -1082,15 +1108,15 @@ fn print_measure(cmd: &MeasureCmd, r: &Value) {
         let step = s.get("step").and_then(Value::as_str).unwrap_or("?");
         let cols: Vec<(&String, &Vec<Value>)> = s.iter().filter_map(|(k, v)| v.as_array().map(|a| (k, a))).collect();
         let names: Vec<&str> = cols.iter().map(|c| c.0.as_str()).collect();
-        println!("every {step}: {}", names.join("  "));
+        outln!("every {step}: {}", names.join("  "));
         let n = cols.iter().map(|c| c.1.len()).max().unwrap_or(0);
         for i in 0..n {
             let vals: Vec<String> = cols.iter().map(|c| num(c.1.get(i).unwrap_or(&Value::Null), "")).collect();
-            println!("  {i:5}  {}", vals.join("  "));
+            outln!("  {i:5}  {}", vals.join("  "));
         }
     }
     for w in r["warnings"].as_array().into_iter().flatten() {
-        println!("warning: {}", w.as_str().unwrap_or("?"));
+        outln!("warning: {}", w.as_str().unwrap_or("?"));
     }
 }
 
@@ -1153,9 +1179,9 @@ async fn daemon_command(cli: &Cli, cmd: &DaemonCmd) -> anyhow::Result<()> {
     };
     let Some(c) = client.as_mut() else {
         if cli.json {
-            println!("{}", json!({ "running": false, "project": loc.root }));
+            outln!("{}", json!({ "running": false, "project": loc.root }));
         } else {
-            println!("no ve daemon is running for {}", loc.root.display());
+            outln!("no ve daemon is running for {}", loc.root.display());
         }
         return Ok(());
     };
@@ -1170,15 +1196,15 @@ async fn daemon_command(cli: &Cli, cmd: &DaemonCmd) -> anyhow::Result<()> {
     if cli.json {
         let mut out = info.clone();
         out["running"] = json!(!stop);
-        println!("{}", serde_json::to_string_pretty(&out)?);
+        outln!("{}", serde_json::to_string_pretty(&out)?);
     } else if stop {
-        println!("stopped the ve daemon (pid {}) for {}", info["pid"], info["project"].as_str().unwrap_or("?"));
+        outln!("stopped the ve daemon (pid {}) for {}", info["pid"], info["project"].as_str().unwrap_or("?"));
     } else {
-        println!("running    pid {}, ve {}", info["pid"], info["engine"].as_str().unwrap_or("?"));
-        println!("project    {}", info["project"].as_str().unwrap_or("?"));
-        println!("socket     {}", info["socket"].as_str().unwrap_or("?"));
-        println!("websocket  {}", info["websocket"].as_str().unwrap_or("?"));
-        println!("idle exit  {}s", info["idle_timeout_secs"]);
+        outln!("running    pid {}, ve {}", info["pid"], info["engine"].as_str().unwrap_or("?"));
+        outln!("project    {}", info["project"].as_str().unwrap_or("?"));
+        outln!("socket     {}", info["socket"].as_str().unwrap_or("?"));
+        outln!("websocket  {}", info["websocket"].as_str().unwrap_or("?"));
+        outln!("idle exit  {}s", info["idle_timeout_secs"]);
     }
     Ok(())
 }
@@ -1266,30 +1292,30 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 o.insert("output".into(), json!(output.as_deref().map(absolute)));
             }
         }
-        println!("{}", serde_json::to_string_pretty(&shown)?);
+        outln!("{}", serde_json::to_string_pretty(&shown)?);
         return Ok(());
     }
 
     match &cli.command {
-        Command::Version => println!(
+        Command::Version => outln!(
             "ve {}  protocol {}  schema {}",
             result["engine"].as_str().unwrap_or("?"),
             result["protocol"],
             result["schema"].as_str().unwrap_or("?")
         ),
         Command::Init { .. } => {
-            println!("created {} ({})", result["path"].as_str().unwrap_or("?"), result["name"].as_str().unwrap_or("?"))
+            outln!("created {} ({})", result["path"].as_str().unwrap_or("?"), result["name"].as_str().unwrap_or("?"))
         }
-        Command::Summary => print!("{}", result["text"].as_str().unwrap_or_default()),
+        Command::Summary => out!("{}", result["text"].as_str().unwrap_or_default()),
         Command::Probe { .. } => {
-            println!("{}", result["url"].as_str().unwrap_or("?"));
-            println!("{}", media_text(&result["media"]));
+            outln!("{}", result["url"].as_str().unwrap_or("?"));
+            outln!("{}", media_text(&result["media"]));
         }
         Command::Import { .. } => {
             for a in result["assets"].as_array().into_iter().flatten() {
                 let file = a["url"].as_str().unwrap_or("?").rsplit('/').next().unwrap_or("?");
                 let state = if a["existing"].as_bool() == Some(true) { "already imported" } else { "new" };
-                println!("{}  {file}  ({state})  {}", a["id"].as_str().unwrap_or("?"), media_text(&a["media"]));
+                outln!("{}  {file}  ({state})  {}", a["id"].as_str().unwrap_or("?"), media_text(&a["media"]));
             }
             print_commit(&result);
         }
@@ -1298,33 +1324,33 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 let revs: Vec<String> = s["revs"].as_array().into_iter().flatten().map(Value::to_string).collect();
                 format!("rev {:8}  {:14}  {}", revs.join(","), s["actor"].as_str().unwrap_or("?"), s["what"].as_str().unwrap_or("?"))
             };
-            println!("project at rev {}", result["revision"]);
+            outln!("project at rev {}", result["revision"]);
             for s in result["undo"].as_array().into_iter().flatten() {
-                println!("undo  {}", line(s));
+                outln!("undo  {}", line(s));
             }
             for s in result["redo"].as_array().into_iter().flatten() {
-                println!("redo  {}", line(s));
+                outln!("redo  {}", line(s));
             }
             for g in result["open_groups"].as_array().into_iter().flatten() {
-                println!("open group  {}  {}  {:?}", g[0].as_str().unwrap_or("?"), g[1]["id"].as_str().unwrap_or("?"), g[1]["label"].as_str().unwrap_or(""));
+                outln!("open group  {}  {}  {:?}", g[0].as_str().unwrap_or("?"), g[1]["id"].as_str().unwrap_or("?"), g[1]["label"].as_str().unwrap_or(""));
             }
         }
-        Command::Group(GroupCmd::Begin { .. }) => println!("group {} open", result["id"].as_str().unwrap_or("?")),
-        Command::Group(GroupCmd::End) => println!(
+        Command::Group(GroupCmd::Begin { .. }) => outln!("group {} open", result["id"].as_str().unwrap_or("?")),
+        Command::Group(GroupCmd::End) => outln!(
             "group {} closed: {} edits undo as one step",
             result["group"]["id"].as_str().unwrap_or("?"),
             result["edits"]
         ),
-        Command::Frame { output, .. } => println!("{}  {}x{}  at {}", output.display(), result["width"], result["height"], result["at"].as_str().unwrap_or("?")),
+        Command::Frame { output, .. } => outln!("{}  {}x{}  at {}", output.display(), result["width"], result["height"], result["at"].as_str().unwrap_or("?")),
         Command::Sheet { output, .. } => {
             let times: Vec<&str> = result["times"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
-            println!("{}  {}x{} grid, row by row:", output.display(), result["columns"], result["rows"]);
+            outln!("{}  {}x{} grid, row by row:", output.display(), result["columns"], result["rows"]);
             for (i, t) in times.iter().enumerate() {
-                println!("  {:2}  {t}", i + 1);
+                outln!("  {:2}  {t}", i + 1);
             }
         }
         Command::Preview { output, .. } | Command::Export { output: Some(output), list_presets: false, .. } => {
-            println!(
+            outln!(
                 "{}  {}  {} frames  {}x{}  {}",
                 output.display(),
                 result["duration"].as_str().unwrap_or("?"),
@@ -1334,25 +1360,25 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 result["encoder"].as_str().unwrap_or("?")
             );
             for w in result["warnings"].as_array().into_iter().flatten() {
-                println!("warning: {}", w.as_str().unwrap_or("?"));
+                outln!("warning: {}", w.as_str().unwrap_or("?"));
             }
         }
         Command::Export { list_presets: true, .. } => {
             for p in result["presets"].as_array().into_iter().flatten() {
-                println!("{:16} {}", p["name"].as_str().unwrap_or("?"), p["description"].as_str().unwrap_or(""));
+                outln!("{:16} {}", p["name"].as_str().unwrap_or("?"), p["description"].as_str().unwrap_or(""));
             }
         }
         Command::Analyze(_) => {
             for r in result["ranges"].as_array().into_iter().flatten() {
-                println!("{}  {}-{}  {}", r["kind"].as_str().unwrap_or("?"), r["start"].as_str().unwrap_or("?"), r["end"].as_str().unwrap_or("?"), r["note"].as_str().unwrap_or(""));
+                outln!("{}  {}-{}  {}", r["kind"].as_str().unwrap_or("?"), r["start"].as_str().unwrap_or("?"), r["end"].as_str().unwrap_or("?"), r["note"].as_str().unwrap_or(""));
             }
-            println!("{} found", result["ranges"].as_array().map_or(0, Vec::len));
+            outln!("{} found", result["ranges"].as_array().map_or(0, Vec::len));
             print_commit(&result);
         }
         Command::Measure(cmd) => print_measure(cmd, &result),
         Command::Normalize { .. } => {
             let f = |v: &Value| v.as_f64().map_or("?".into(), |x| format!("{x:.1}"));
-            println!(
+            outln!(
                 "measured {} LUFS (true peak {} dBTP), gain {:+.1} dB -> {} LUFS (true peak {} dBTP)",
                 f(&result["measured_lufs"]),
                 f(&result["measured_true_peak_dbtp"]),
@@ -1361,14 +1387,14 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 f(&result["expected_true_peak_dbtp"])
             );
             for w in result["warnings"].as_array().into_iter().flatten() {
-                println!("warning: {}", w.as_str().unwrap_or("?"));
+                outln!("warning: {}", w.as_str().unwrap_or("?"));
             }
             print_commit(&result);
         }
         Command::Fx(FxCmd::List) => {
             for e in result["effects"].as_array().into_iter().flatten() {
                 let params: Vec<&str> = e["params"]["properties"].as_object().map(|o| o.keys().map(String::as_str).collect()).unwrap_or_default();
-                println!(
+                outln!(
                     "{:<10} {:<32} {:<14} {}",
                     e["kind"].as_str().unwrap_or("?"),
                     e["reference"].as_str().unwrap_or("?"),
@@ -1377,16 +1403,16 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 );
             }
             for p in result["problems"].as_array().into_iter().flatten() {
-                println!("problem: {}", p.as_str().unwrap_or("?"));
+                outln!("problem: {}", p.as_str().unwrap_or("?"));
             }
         }
         Command::Fx(FxCmd::Define { .. }) => {
             let e = &result["effect"];
             match result["path"].as_str() {
-                Some(path) => println!("defined {} ({}), saved to {path}", e["reference"].as_str().unwrap_or("?"), e["kind"].as_str().unwrap_or("?")),
-                None => println!("{} is valid (dry run; nothing saved)", e["reference"].as_str().unwrap_or("?")),
+                Some(path) => outln!("defined {} ({}), saved to {path}", e["reference"].as_str().unwrap_or("?"), e["kind"].as_str().unwrap_or("?")),
+                None => outln!("{} is valid (dry run; nothing saved)", e["reference"].as_str().unwrap_or("?")),
             }
-            println!("test render passed on {}", result["tested_on"].as_str().unwrap_or("?"));
+            outln!("test render passed on {}", result["tested_on"].as_str().unwrap_or("?"));
         }
         Command::Insert { .. }
         | Command::Split { .. }
@@ -1406,21 +1432,21 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Jobs { cmd: None } => {
             let jobs = result["jobs"].as_array().cloned().unwrap_or_default();
             if jobs.is_empty() {
-                println!("no jobs");
+                outln!("no jobs");
             }
             for j in &jobs {
-                println!("{}", job_line(j));
+                outln!("{}", job_line(j));
             }
         }
         Command::Jobs { cmd: Some(JobsCmd::Cancel { .. }) } => {
             let state = result["state"].as_str().unwrap_or("?");
             if ["done", "failed", "cancelled"].contains(&state) {
-                println!("{} already {state}", result["job_id"].as_str().unwrap_or("?"));
+                outln!("{} already {state}", result["job_id"].as_str().unwrap_or("?"));
             } else {
-                println!("cancelling {}", result["job_id"].as_str().unwrap_or("?"));
+                outln!("cancelling {}", result["job_id"].as_str().unwrap_or("?"));
             }
         }
-        _ => println!("{}", serde_json::to_string_pretty(&result)?),
+        _ => outln!("{}", serde_json::to_string_pretty(&result)?),
     }
     Ok(())
 }
