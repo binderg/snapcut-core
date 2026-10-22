@@ -99,7 +99,10 @@ pub struct ImageResult {
 pub fn frame(p: &mut OpenProject, a: FrameParams) -> Result<ImageResult, RpcError> {
     let tl = &p.timeline;
     let at = parse_time("at", &a.at, tl.output_rate())?;
-    let img = ve_render::frame(tl, at, a.width, a.format.into(), &work_dir(p)).map_err(render_error)?;
+    // VE_RENDERER=gpu (set where the daemon starts) tries the Phase 2 GPU compositor.
+    let gpu = std::env::var("VE_RENDERER").is_ok_and(|v| v.eq_ignore_ascii_case("gpu"));
+    let render = if gpu { ve_render::compose::frame } else { ve_render::frame };
+    let img = render(tl, at, a.width, a.format.into(), &work_dir(p)).map_err(render_error)?;
     Ok(ImageResult {
         at: tc(at, tl.output_rate()),
         width: img.width,

@@ -205,6 +205,19 @@ of video and audio tracks. Positions (`index`) count within a kind; for video
 that is the stacking order (0 is the bottom). Removing a track with clips
 needs `force`. CLI `ve track list|add|rm|rename|move`. Renders already skip a
 track with OTIO `enabled: false`; no method sets it yet.
+GPU compositor spike (`ve-render::gpu`, `::compose`; the Phase 0 gate):
+wgpu 30 device created once per process (prefers the discrete GPU, falls
+back to WARP/llvmpipe); layers upload as `Rgba8UnormSrgb`, blend
+premultiplied in linear light onto black, read back. `compose::frame`
+resolves each video track at a time, decodes the source frame with one
+ffmpeg run per layer (RGBA, seek half a frame early), places it with the
+Phase 1 fit rounding (even sizes and offsets; upper tracks' bars are
+transparent), and composites. `tests/gpu.rs` matches the ffmpeg renderer
+exactly (0 diff) across cuts, 2x speed and a pillarboxed V2. Try it with
+`VE_RENDERER=gpu` in the daemon's environment (`render.frame` only). About
+340 ms per 2-layer frame after a ~5 s first frame: decode dominates, so warm
+in-process decoders (`ffmpeg-the-third`) come next, then the WGSL effect
+contract.
 No CI yet; the Python check runs by hand.
 
 Phase 1 gate: **an agent cuts a 10-minute talking head end to end via the CLI only.**

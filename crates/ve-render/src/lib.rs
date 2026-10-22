@@ -7,14 +7,17 @@
 //!    scale/pad or crop, concat, overlay, amix, afade crossfades) and run
 //!    the `ffmpeg` binary ([`ffmpeg`]). `frame` is the same graph over a
 //!    one-frame range.
-//! 3. Phase 2 backend: wgpu compositor running WGSL effect plugins; export
-//!    pipes composited frames into the FFmpeg encoder so preview and export
-//!    share one graph.
+//! 3. Phase 2 backend: wgpu compositor ([`gpu`], timeline frames in
+//!    [`compose`]), later running WGSL effect plugins; export will pipe
+//!    composited frames into the FFmpeg encoder so preview and export share
+//!    one graph. Today it renders single frames and matches the Phase 1 path.
 //!
 //! Determinism rule: a frame is a pure function of (project, t). That is what
 //! makes the frame cache safe.
 
 pub mod ffmpeg;
+pub mod compose;
+pub mod gpu;
 pub mod graph;
 pub mod plan;
 pub mod source;

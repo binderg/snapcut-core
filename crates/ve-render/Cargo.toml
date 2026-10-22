@@ -15,10 +15,13 @@ url.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+wgpu.workspace = true
+image.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true
 ve-media.workspace = true
+image-compare.workspace = true
 
 [lints]
 workspace = true
