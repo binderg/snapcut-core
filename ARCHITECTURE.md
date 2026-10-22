@@ -274,7 +274,10 @@ fn transition(uv: vec2<f32>) -> vec4<f32> {
 
 `params` is plain JSON Schema. `x-animatable` marks params that accept keyframes. UIs build a settings panel straight from it.
 
-**Importing gl-transitions.** The gl-transitions library is GLSL with the same shape (`from`, `to`, `progress`, uniforms). An importer translates GLSL to WGSL with `naga` and generates the manifest from its uniform declarations, giving a large transition library on day one.
+**Importing gl-transitions.** The gl-transitions library is GLSL with the same shape (`from`, `to`, `progress`, uniforms). An importer translates GLSL to WGSL with `naga` and generates the manifest from its uniform declarations, giving a large transition library on day one. The library is not core: it is not compiled into the engine.
+
+- *Now (decided Oct 22 2026):* the editor (`ui/`, its own repo) ships the converted WGSL. On first use in a project it calls `fx.define` (id `project.gl-<name>`), then `transition.add`. No core change, and the shader lands in the project's `effects/` folder, so the project renders anywhere, including from the CLI.
+- *Later: effect packs.* Once the plugin host exists, a pack is a plugin folder with only effect manifests and WGSL (no code of its own), installed per user (e.g. `<data dir>/ve/plugins/gl-transitions/`) and scanned at startup. Using an effect from a pack still copies it into the project's `effects/` (copy on use), so a project never depends on what is installed on the machine that opens it. The gl-transitions set moves to a pack then, and so can the built-ins in `plugins/core`.
 
 **Agent-authored effects: the safety path**
 

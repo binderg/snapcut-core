@@ -295,6 +295,11 @@ Not done yet, and what the gate still needs (suggested order, not decided):
 - Per-clip transforms, transitions and effects wait for the wgpu compositor
   (owner's call, Oct 22 2026: no half-way ffmpeg versions).
 - `ve-plugin` host, then move the analyzers to `plugins/core` (dogfooding).
+- Effect packs (plugins with only effect manifests + WGSL), installed per user
+  and scanned at startup, with copy on use into the project's `effects/`.
+  Then move the gl-transitions set (today shipped by the editor and added
+  with `fx.define`) into a pack. See ARCHITECTURE.md, "Importing
+  gl-transitions". Transitions are not core and are never compiled in.
 
 ## Working style
 
