@@ -270,6 +270,17 @@ pub fn set_volume(p: &mut OpenProject, a: SetVolumeParams) -> Result<Committed<E
     })
 }
 
+mutation_params! {
+    /// `edit.unlink`: break a clip's link with its partners (video and its audio).
+    pub struct UnlinkParams {
+        pub clip: Id,
+    }
+}
+
+pub fn unlink(p: &mut OpenProject, a: UnlinkParams) -> Result<Committed<EditReport>, RpcError> {
+    commit(p, a.mutation(), "edit.unlink", |tl| edit::unlink(tl, &a.clip).map_err(edit_err))
+}
+
 // --- markers ---
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]

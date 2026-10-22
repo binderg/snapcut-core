@@ -199,6 +199,8 @@ enum Command {
         #[arg(long)]
         unlinked: bool,
     },
+    /// Break a clip's link with its partners (video and its audio): `ve unlink clip_7f3a`.
+    Unlink { clip: String },
     /// Timeline markers.
     #[command(subcommand)]
     Marker(MarkerCmd),
@@ -731,6 +733,7 @@ fn plan(cmd: &Command, json_output: bool) -> Plan {
             m("edit.set_speed", json!({ "clip": clip, "speed": speed, "linked": !unlinked, "ripple": !no_ripple }))
         }
         Command::Volume { clip, db, unlinked } => m("edit.set_volume", json!({ "clip": clip, "db": db, "linked": !unlinked })),
+        Command::Unlink { clip } => m("edit.unlink", json!({ "clip": clip })),
         Command::Marker(MarkerCmd::Add { at, duration, name, color, comment }) => {
             m("marker.add", json!({ "at": at, "duration": duration, "name": name, "color": color, "comment": comment }))
         }
@@ -1384,6 +1387,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         | Command::Delete { .. }
         | Command::Speed { .. }
         | Command::Volume { .. }
+        | Command::Unlink { .. }
         | Command::Marker(_)
         | Command::Track(_)
         | Command::Effect(_)

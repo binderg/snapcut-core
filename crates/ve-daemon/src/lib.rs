@@ -236,6 +236,7 @@ pub fn registry(session: Arc<Session>) -> Arc<Registry> {
     on_project!("edit.delete", "Remove clips and leave gaps", true, edit::delete);
     on_project!("edit.set_speed", "Change a clip's speed (exact ratio); writes OTIO LinearTimeWarp too", true, edit::set_speed);
     on_project!("edit.set_volume", "Set a clip's audio gain in dB", true, edit::set_volume);
+    on_project!("edit.unlink", "Break a clip's link with its partners so each is edited alone", true, edit::unlink);
     on_project!("track.add", "Add a video or audio track (any number of each)", true, edit::track_add);
     on_project!("track.remove", "Remove a track (with its clips only when forced)", true, edit::track_remove);
     on_project!("track.rename", "Rename a track", true, edit::track_rename);

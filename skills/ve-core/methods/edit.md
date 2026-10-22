@@ -119,6 +119,14 @@ speed`). Writes OTIO's `LinearTimeWarp` too. Audio is pitch-corrected
 `{"clip": id, "db": -6, "linked": true}`. Sets (not adds) the gain of the
 clip's audio, -100 to +30 dB. On a video clip it applies to its linked audio.
 
+## `edit.unlink`
+
+`{"clip": id}`. Breaks the link between a clip and its partners (a video clip
+and its audio), so later edits touch each alone. Nothing moves. Fails if the
+clip is not linked. Use it before an edit that should hit only one side; for
+a single J/L cut, `linked: false` on that edit is enough. There is no way to
+re-link yet.
+
 ## `edit.normalize`
 
 Loudness target for the whole mix. Documented with the measurements:

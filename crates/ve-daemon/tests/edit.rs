@@ -213,3 +213,28 @@ async fn markers_trim_roll_move_and_volume() {
     let mv = ok(&r, "edit.move", json!({"clip": clip, "to": "00:00:05:00", "base_rev": 7})).await;
     assert_eq!(mv["modified"][0]["start"], "00:00:05:00");
 }
+
+#[tokio::test]
+async fn unlink_makes_clips_independent() {
+    let (r, _project, clip) = setup("edit-unlink").await;
+    let before = clips(&summary(&r).await);
+    let audio = before.iter().find(|(t, _, _)| t == "A1").unwrap().1.clone();
+
+    let out = ok(&r, "edit.unlink", json!({"clip": clip, "base_rev": 2})).await;
+    assert_eq!(out["modified"].as_array().unwrap().len(), 2, "{out}");
+
+    // Now an edit with the default `linked: true` touches only the one clip.
+    let mv = ok(&r, "edit.move", json!({"clip": audio, "to": "00:00:01:00", "base_rev": 3})).await;
+    assert_eq!(mv["modified"].as_array().unwrap().len(), 1, "{mv}");
+
+    // Already unlinked: a clear error, nothing committed.
+    let resp = call(&r, "edit.unlink", json!({"clip": clip, "base_rev": 4})).await;
+    assert!(resp["error"]["message"].as_str().unwrap().contains("not linked"), "{resp}");
+    assert_eq!(rev(&r).await, 4);
+
+    // One undo step restores the link.
+    ok(&r, "history.undo", json!({"base_rev": 4})).await;
+    ok(&r, "history.undo", json!({"base_rev": 5})).await;
+    let mv = ok(&r, "edit.move", json!({"clip": audio, "to": "00:00:01:00", "base_rev": 6})).await;
+    assert_eq!(mv["modified"].as_array().unwrap().len(), 2, "{mv}");
+}

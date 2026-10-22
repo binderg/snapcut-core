@@ -927,6 +927,25 @@ pub fn set_volume(tl: &Timeline, p: &SetVolume) -> Result<(Timeline, EditReport)
     d.finish()
 }
 
+/// Break a clip's link with its partners (a video clip and its audio), so
+/// each is edited alone from now on. Positions and media do not change.
+pub fn unlink(tl: &Timeline, clip: &Id) -> Result<(Timeline, EditReport)> {
+    let mut d = Doc::new(tl)?;
+    let group = d.group(clip, true)?;
+    if group.len() < 2 {
+        return Err(EditError::new(format!("{clip} is not linked to any other clip")));
+    }
+    for (_, id) in group {
+        let (i, j) = d.locate(&id)?;
+        let c = d.lane(i).items[j].clip_mut().expect("located a clip");
+        if let Some(m) = c.metadata.ve.clip.as_mut() {
+            m.link = None;
+        }
+        d.mark_changed(&id);
+    }
+    d.finish()
+}
+
 /// Add `db` to the volume of every audio clip overlapping `range` (timeline
 /// seconds, `[from, to)`), or of every audio clip when `None`. Volumes stay
 /// within -100..+30 dB and are rounded to 0.1 dB. Returns the clips touched.

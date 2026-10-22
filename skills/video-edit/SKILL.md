@@ -80,6 +80,7 @@ Exit codes: 0 ok, 2 bad arguments (the message says what), 3 stale revision,
 | Move a clip (overwrites the destination) | `ve move clip_7f3a --to 00:00:42:00 [--track V2]` |
 | Speed | `ve speed clip_7f3a 3/2` (exact ratios; `1/2` is slow motion) |
 | Gain | `ve volume clip_7f3a -6` (dB) |
+| Unlink video from its audio (later edits touch one side) | `ve unlink clip_7f3a` |
 | Loudness to a target (one gain on every audio clip) | `ve normalize --target -14` (-16 podcasts, -23 broadcast) |
 | Insert part of a source | `ve insert asset_94b8 --in 00:03:10:00 --out 00:03:25:00 --at 00:01:00:00` |
 | Insert over existing material | `… --overwrite` |
