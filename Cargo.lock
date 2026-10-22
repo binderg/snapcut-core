@@ -3167,6 +3167,7 @@ dependencies = [
  "etcetera",
  "fs4",
  "futures",
+ "image",
  "indexmap",
  "interprocess",
  "json-patch",

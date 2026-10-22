@@ -54,13 +54,15 @@ Built-ins:
 | --- | --- | --- |
 | `manifest` | object | The `effect.json` (see the writing guide). `id` must start with `project.` |
 | `source` | string | The WGSL code |
+| `files` | object | Images for `"format": "image"` params: `{"luma.png": "<base64>"}`. PNG or JPEG, plain file names. Default `{}` |
 | `dry_run` | bool | Validate and test-render only |
 
-Checks the manifest, validates the shader with naga (errors name your file,
+Checks the manifest, decodes the images (every image param's `default` must
+name one of `files`), validates the shader with naga (errors name your file,
 line and column), compiles it on the GPU and renders three 64x64 test
 frames with a 2 s limit, failing on NaN or infinite output. On success it
-writes `<project>/effects/<name>/effect.json` and the code, and the effect
-is usable at once. Not undoable (it writes files, not the timeline); calling
+writes `<project>/effects/<name>/effect.json`, the code and the images, and
+the effect is usable at once. Not undoable (it writes files, not the timeline); calling
 it again with the same id replaces it.
 
 ```json

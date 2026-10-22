@@ -755,7 +755,7 @@ fn plan(cmd: &Command, json_output: bool) -> Plan {
             let source = std::fs::read_to_string(&sp).unwrap_or_else(|e| usage_error(format!("{}: {e}", sp.display()), json_output));
             // Images for image params travel with the shader.
             let mut files = serde_json::Map::new();
-            for e in std::fs::read_dir(&folder).into_iter().flatten().flatten() {
+            for e in std::fs::read_dir(folder).into_iter().flatten().flatten() {
                 let name = e.file_name().to_string_lossy().into_owned();
                 if [".png", ".jpg", ".jpeg"].iter().any(|x| name.to_ascii_lowercase().ends_with(x)) {
                     let bytes = std::fs::read(e.path()).unwrap_or_else(|err| usage_error(format!("{name}: {err}"), json_output));

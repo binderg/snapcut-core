@@ -275,7 +275,7 @@ impl Fx {
             v.push(Slot { param: Some(p), ty: "f32" });
         }
         let mut size: usize = v.iter().map(Slot::bytes).sum();
-        while size == 0 || size % 16 != 0 {
+        while size == 0 || !size.is_multiple_of(16) {
             v.push(Slot { param: None, ty: "f32" });
             size += 4;
         }
@@ -822,6 +822,211 @@ mod tests {
         assert_eq!(f(20), 1.0, "bool");
         assert!(fx.check_params(&serde_json::from_value(serde_json::json!({"amount": 2})).unwrap()).is_err());
         assert!(fx.check_params(&serde_json::from_value(serde_json::json!({"size": 2})).unwrap()).is_err());
+    }
+
+    fn obj(v: Value) -> Map<String, Value> {
+        v.as_object().cloned().unwrap_or_default()
+    }
+
+    fn f32_at(b: &[u8], i: usize) -> f32 {
+        f32::from_le_bytes([b[i], b[i + 1], b[i + 2], b[i + 3]])
+    }
+
+    /// Byte offset of each `VeParams` member as naga lays the struct out.
+    fn naga_offsets(fx: &Fx) -> BTreeMap<String, u32> {
+        let module = naga::front::wgsl::parse_str(&fx.wrapped().0).unwrap();
+        let mut layouter = naga::proc::Layouter::default();
+        layouter.update(module.to_ctx()).unwrap();
+        let (_, ty) = module.types.iter().find(|(_, t)| t.name.as_deref() == Some("VeParams")).unwrap();
+        let naga::TypeInner::Struct { members, span } = &ty.inner else { panic!("VeParams is a struct") };
+        assert_eq!(*span as usize, fx.params_size(), "struct size");
+        members.iter().map(|m| (m.name.clone().unwrap_or_default(), m.offset)).collect()
+    }
+
+    #[test]
+    fn vectors_mix_with_colors_and_scalars() {
+        // Names sort in the order written, whatever map order serde_json uses.
+        let schema = serde_json::json!({"properties": {
+            "a_col": {"type": "array", "format": "color", "default": [1, 0, 0]},
+            "b_v4": {"type": "array", "items": {"type": "number"}, "minItems": 4, "maxItems": 4, "default": [1, 2, 3, 4]},
+            "c_v3": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3, "default": [5, 6, 7]},
+            "d_v2": {"type": "array", "items": {"type": "integer"}, "minItems": 2, "maxItems": 2, "default": [8, 9]},
+            "e_n": {"type": "number", "default": 10},
+            "f_on": {"type": "boolean", "default": true},
+            "g_v3": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3, "default": [11, 12, 13]},
+            "h_v2": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2, "default": [14, 15]}
+        }});
+        let src = "fn effect(uv: vec2<f32>) -> vec4<f32> {\n    return src(uv) * p.a_col + p.b_v4 + vec4<f32>(p.c_v3 + p.g_v3, p.e_n * p.f_on) + vec4<f32>(p.d_v2, p.h_v2);\n}\n";
+        let fx = Fx::new(manifest(Kind::Effect, schema), src.into(), Origin::Project, None).unwrap();
+        // vec4s and colors, then each vec3 with a pad, then vec2s, then scalars, padded to 16.
+        let want = [("a_col", 0), ("b_v4", 16), ("c_v3", 32), ("g_v3", 48), ("d_v2", 64), ("h_v2", 72), ("e_n", 80), ("f_on", 84)];
+        let offsets = naga_offsets(&fx);
+        for (name, at) in want {
+            assert_eq!(offsets[name], at, "{name} in {offsets:?}");
+        }
+        assert_eq!(fx.params_size(), 96);
+        let b = fx.pack(&Map::new(), &indexmap::IndexMap::new(), Q::from_integer(0));
+        assert_eq!(b.len(), 96);
+        let read = |at: usize, n: usize| -> Vec<f32> { (0..n).map(|i| f32_at(&b, at + i * 4)).collect() };
+        assert_eq!(read(0, 4), [1.0, 0.0, 0.0, 1.0], "color: linear, alpha 1");
+        assert_eq!(read(16, 4), [1.0, 2.0, 3.0, 4.0]);
+        assert_eq!(read(32, 4), [5.0, 6.0, 7.0, 0.0], "vec3 then pad");
+        assert_eq!(read(48, 4), [11.0, 12.0, 13.0, 0.0]);
+        assert_eq!(read(64, 4), [8.0, 9.0, 14.0, 15.0]);
+        assert_eq!(read(80, 4), [10.0, 1.0, 0.0, 0.0], "scalars then pad");
+        // Set values win over defaults.
+        let b = fx.pack(&obj(serde_json::json!({"h_v2": [-1, 0.5]})), &indexmap::IndexMap::new(), Q::from_integer(0));
+        assert_eq!((f32_at(&b, 72), f32_at(&b, 76)), (-1.0, 0.5));
+    }
+
+    #[test]
+    fn a_lone_vec3_or_vec2_pads_to_16() {
+        for (n, size) in [(2u64, 16usize), (3, 16), (4, 16)] {
+            let schema = serde_json::json!({"properties": {"v": {"type": "array", "items": {"type": "number"}, "minItems": n, "maxItems": n}}});
+            let src = "fn effect(uv: vec2<f32>) -> vec4<f32> { return src(uv) * p.v.x; }";
+            let fx = Fx::new(manifest(Kind::Effect, schema), src.into(), Origin::Project, None).unwrap();
+            assert_eq!(fx.params_size(), size, "vec{n}");
+            assert_eq!(naga_offsets(&fx)["v"], 0);
+            assert_eq!(fx.pack(&Map::new(), &indexmap::IndexMap::new(), Q::from_integer(0)), vec![0u8; size], "default is zeros");
+        }
+    }
+
+    #[test]
+    fn vector_bounds_and_lengths_are_checked() {
+        let schema = serde_json::json!({"properties": {
+            "center": {"type": "array", "items": {"type": "number", "minimum": 0, "maximum": 1}, "minItems": 2, "maxItems": 2, "default": [0.5, 0.5]},
+            "offset": {"type": "array", "items": {"type": "number"}, "minimum": -2, "maximum": 2, "minItems": 3, "maxItems": 3}
+        }});
+        let src = "fn effect(uv: vec2<f32>) -> vec4<f32> { return src(uv + p.center + p.offset.xy); }";
+        let fx = Fx::new(manifest(Kind::Effect, schema), src.into(), Origin::Project, None).unwrap();
+        let check = |v: Value| fx.check_params(&obj(v));
+        assert!(check(serde_json::json!({"center": [0, 1], "offset": [-2, 0, 2]})).is_ok());
+        let e = check(serde_json::json!({"center": [0.5, 1.5]})).unwrap_err();
+        assert!(e.0.contains("within 0 to 1"), "bounds on items: {e}");
+        let e = check(serde_json::json!({"offset": [0, 3, 0]})).unwrap_err();
+        assert!(e.0.contains("within -2 to 2"), "bounds on the array: {e}");
+        for bad in [serde_json::json!([0.5]), serde_json::json!([0.5, 0.5, 0.5]), serde_json::json!(0.5), serde_json::json!([0.5, "x"])] {
+            let e = check(serde_json::json!({"center": bad})).unwrap_err();
+            assert!(e.0.contains("expected 2 numbers"), "{bad}: {e}");
+        }
+        // Defaults are checked against the bounds too.
+        let schema = serde_json::json!({"properties": {"c": {"type": "array", "items": {"type": "number", "maximum": 1}, "minItems": 2, "maxItems": 2, "default": [2, 0]}}});
+        let e = Fx::new(manifest(Kind::Effect, schema), "fn effect(uv: vec2<f32>) -> vec4<f32> { return src(uv); }".into(), Origin::Project, None).unwrap_err();
+        assert!(e.0.contains("default") && e.0.contains("within"), "{e}");
+        // Shapes that are not a vector.
+        let vector_err = |extra: Value| {
+            let mut s = serde_json::json!({"type": "array", "items": {"type": "number"}});
+            s.as_object_mut().unwrap().extend(obj(extra));
+            let schema = serde_json::json!({"properties": {"v": s}});
+            Fx::new(manifest(Kind::Effect, schema), "fn effect(uv: vec2<f32>) -> vec4<f32> { return src(uv); }".into(), Origin::Project, None).unwrap_err()
+        };
+        for extra in [
+            serde_json::json!({"minItems": 2, "maxItems": 3}),
+            serde_json::json!({"minItems": 5, "maxItems": 5}),
+            serde_json::json!({"minItems": 1, "maxItems": 1}),
+            serde_json::json!({"minItems": 2}),
+            serde_json::json!({"minItems": 2, "maxItems": 2, "items": {"type": "string"}}),
+        ] {
+            let e = vector_err(extra.clone());
+            assert!(e.0.contains("a vector is"), "{extra}: {e}");
+        }
+    }
+
+    #[test]
+    fn keyframed_vec2_interpolates() {
+        let schema = serde_json::json!({"properties": {
+            "pos": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2, "default": [0, 0], "x-animatable": true}
+        }});
+        let src = "fn effect(uv: vec2<f32>) -> vec4<f32> { return src(uv + p.pos); }";
+        let fx = Fx::new(manifest(Kind::Effect, schema), src.into(), Origin::Project, None).unwrap();
+        let r = Rate::integer(10);
+        let mut keys = indexmap::IndexMap::new();
+        keys.insert(
+            "pos".to_owned(),
+            vec![
+                Keyframe { t: RationalTime::from_frames(0, r), v: serde_json::json!([0, 0]), ease: "linear".into() },
+                Keyframe { t: RationalTime::from_frames(10, r), v: serde_json::json!([1, -2]), ease: "linear".into() },
+            ],
+        );
+        fx.check_keyframes(&keys).unwrap();
+        let at = |t: Q| {
+            let b = fx.pack(&Map::new(), &keys, t);
+            (f32_at(&b, 0), f32_at(&b, 4))
+        };
+        assert_eq!(at(Q::from_integer(0)), (0.0, 0.0));
+        assert_eq!(at(Q::new(1, 2)), (0.5, -1.0));
+        assert_eq!(at(Q::new(1, 4)), (0.25, -0.5));
+        assert_eq!(at(Q::from_integer(5)), (1.0, -2.0), "holds after the last key");
+        // A keyframe of the wrong length is refused.
+        keys.get_mut("pos").unwrap().push(Keyframe { t: RationalTime::from_frames(20, r), v: serde_json::json!([1]), ease: "linear".into() });
+        assert!(fx.check_keyframes(&keys).unwrap_err().0.contains("expected 2 numbers"));
+    }
+
+    fn png(w: u32, h: u32, px: &[[u8; 4]]) -> Vec<u8> {
+        let img = image::RgbaImage::from_fn(w, h, |x, y| image::Rgba(px[(y * w + x) as usize]));
+        let mut out = std::io::Cursor::new(Vec::new());
+        img.write_to(&mut out, image::ImageFormat::Png).unwrap();
+        out.into_inner()
+    }
+
+    fn images(names: &[&str]) -> BTreeMap<String, Arc<FxImage>> {
+        let bytes = png(2, 1, &[[0, 0, 0, 255], [255, 255, 255, 255]]);
+        names.iter().map(|n| ((*n).to_owned(), Arc::new(decode_image(n, &bytes).unwrap()))).collect()
+    }
+
+    const LUMA_SRC: &str = "fn transition(uv: vec2<f32>) -> vec4<f32> {\n    return mix(outgoing(uv), incoming(uv), step(luma(uv).r, u.progress));\n}\n";
+
+    #[test]
+    fn image_params_bind_by_name() {
+        let schema = serde_json::json!({"properties": {
+            "luma": {"type": "string", "format": "image", "default": "luma.png"},
+            "softness": {"type": "number", "default": 0.1}
+        }});
+        let fx = Fx::with_images(manifest(Kind::Transition, schema), LUMA_SRC.into(), Origin::Project, None, images(&["luma.png", "other.png"])).unwrap();
+        assert_eq!(fx.params_size(), 16, "images take no uniform space");
+        assert!(fx.wrapped().0.contains(&format!("@binding({FIRST_IMAGE_BINDING}) var ve_img0")));
+        let d = decode_image("x.png", &png(2, 1, &[[0, 0, 0, 255], [255, 255, 255, 255]])).unwrap();
+        assert_eq!((d.width, d.height, d.rgba.len()), (2, 1, 8));
+        assert_eq!(&d.rgba[4..], [255, 255, 255, 255]);
+        assert_eq!(fx.images_for(&Map::new())[0].name, "luma.png", "default");
+        assert_eq!(fx.images_for(&obj(serde_json::json!({"luma": "other.png"}))) [0].name, "other.png");
+        assert!(fx.check_params(&obj(serde_json::json!({"luma": "other.png"}))).is_ok());
+        let e = fx.check_params(&obj(serde_json::json!({"luma": "missing.png"}))).unwrap_err();
+        assert!(e.0.contains("no image `missing.png`") && e.0.contains("luma.png, other.png"), "{e}");
+        let e = fx.check_params(&obj(serde_json::json!({"luma": 3}))).unwrap_err();
+        assert!(e.0.contains("expected an image file name"), "{e}");
+        let mut keys = indexmap::IndexMap::new();
+        keys.insert("luma".to_owned(), vec![Keyframe { t: RationalTime::from_frames(0, Rate::integer(10)), v: Value::from("other.png"), ease: "hold".into() }]);
+        assert!(fx.check_keyframes(&keys).unwrap_err().0.contains("cannot be keyframed"));
+    }
+
+    #[test]
+    fn image_param_errors() {
+        let make = |param: Value, imgs: &[&str]| {
+            let schema = serde_json::json!({"properties": {"luma": param}});
+            Fx::with_images(manifest(Kind::Transition, schema), LUMA_SRC.into(), Origin::Project, None, images(imgs))
+        };
+        let e = make(serde_json::json!({"type": "string", "format": "image"}), &["luma.png"]).unwrap_err();
+        assert!(e.0.contains("needs a \"default\""), "missing default: {e}");
+        let e = make(serde_json::json!({"type": "string", "format": "image", "default": "luma.png"}), &[]).unwrap_err();
+        assert!(e.0.contains("no image `luma.png`"), "unknown file: {e}");
+        let e = make(serde_json::json!({"type": "string", "format": "image", "default": "noise.png"}), &["luma.png"]).unwrap_err();
+        assert!(e.0.contains("no image `noise.png`") && e.0.contains("it has luma.png"), "unknown file: {e}");
+        for bad in ["../luma.png", "maps/luma.png", "luma.gif", ".png", "lu ma.png"] {
+            let e = make(serde_json::json!({"type": "string", "format": "image", "default": bad}), &["luma.png"]).unwrap_err();
+            assert!(e.0.contains("ending in .png, .jpg or .jpeg"), "{bad}: {e}");
+        }
+        let e = make(serde_json::json!({"type": "string", "format": "image", "default": "luma.png", "x-animatable": true}), &["luma.png"]).unwrap_err();
+        assert!(e.0.contains("cannot be keyframed"), "keyframed image: {e}");
+        let e = make(serde_json::json!({"type": "string"}), &["luma.png"]).unwrap_err();
+        assert!(e.0.contains("not supported"), "plain string: {e}");
+        // Files themselves: bad names and bytes that are not a picture.
+        let ok = png(1, 1, &[[1, 2, 3, 4]]);
+        for bad in ["../x.png", "a/b.png", "x.bmp", ".hidden.png", ""] {
+            assert!(decode_image(bad, &ok).unwrap_err().0.contains("plain file name"), "{bad}");
+        }
+        assert!(decode_image("x.JPG", b"not a jpeg").is_err());
+        assert!(decode_image("x.png", &ok).is_ok());
     }
 
     #[test]

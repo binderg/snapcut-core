@@ -230,7 +230,13 @@ jumps ~120-200 ms (no better than restart). `ve-render` is opt-level 2 in dev.
 Benchmark: `cargo test --release -p ve-render --test gpu bench -- --ignored --nocapture`.
 Effects (`ve-render::fx`, `ve-ops::effects`, `ve-daemon::fx`): `wgsl`
 runtime done. Manifest (`effect.json`, `runtime` field), params from JSON
-Schema (number/integer/boolean as f32, `format: color` as linear vec4),
+Schema (number/integer/boolean as f32, `format: color` as linear vec4,
+vectors of 2 to 4 numbers as vec2..vec4 with bounds on the array or its
+items, keyframes per number; images as `"format": "image"` strings naming
+a PNG/JPEG in the effect folder, decoded to RGBA8, bound as `Rgba8Unorm`
+textures at binding 5+ in param order and sampled by a function named after
+the param, stored values not linearized, not keyframable; uniform layout
+vec4/colors, vec3 + pad, vec2, scalars, padded to 16),
 wrapper with `src`/`outgoing`/`incoming` (`from` is reserved in WGSL),
 `u.time/progress/resolution`, `p.<param>`; naga validation with errors on the
 author's line (position parsed from naga's report; `location()` was wrong);
@@ -238,8 +244,9 @@ GPU test render (3 frames, 2 s, NaN check). Built-ins in `plugins/core/effects`
 (5 effects, 4 transitions), compiled in; project effects in
 `<project>/effects/`. GPU pipeline: prep to Rgba16Float premultiplied
 linear, effect ping-pong at clip size, transitions on canvas-size textures,
-then composite (still 0-diff vs ffmpeg). Methods `fx.list|define`,
-`effect.add|set|remove` (keyframes linear/hold), `transition.add|set|remove`
+then composite (still 0-diff vs ffmpeg). Methods `fx.list|define`
+(`files` carries the images as base64; `ve fx define` sends every PNG/JPEG
+in the folder), `effect.add|set|remove` (keyframes linear/hold), `transition.add|set|remove`
 (OTIO Transition, handle checks, align center/start/end). GPU export
 (`ve-render::compose::encode`): every frame is composited on the GPU and piped
 as raw RGBA into one ffmpeg run (`ffmpeg::feed`, a writer thread behind a

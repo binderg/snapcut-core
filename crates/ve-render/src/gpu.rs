@@ -767,6 +767,70 @@ mod tests {
         }
     }
 
+    fn manifest(kind: Kind, params: serde_json::Value) -> Manifest {
+        Manifest {
+            id: "project.test".into(),
+            version: "1.0.0".into(),
+            kind,
+            runtime: "wgsl".into(),
+            name: "Test".into(),
+            description: String::new(),
+            shader: "effect.wgsl".into(),
+            params,
+            skill: None,
+        }
+    }
+
+    #[test]
+    fn image_param_drives_a_luma_wipe() {
+        let gpu = Gpu::shared().unwrap();
+        // A 2x1 luma map: black on the left, white on the right.
+        let map = image::RgbaImage::from_fn(2, 1, |x, _| if x == 0 { image::Rgba([0, 0, 0, 255]) } else { image::Rgba([255, 255, 255, 255]) });
+        let mut png = std::io::Cursor::new(Vec::new());
+        map.write_to(&mut png, image::ImageFormat::Png).unwrap();
+        let img = crate::fx::decode_image("luma.png", png.get_ref()).unwrap();
+        let images = std::collections::BTreeMap::from([("luma.png".to_owned(), Arc::new(img))]);
+        let params = serde_json::json!({"properties": {"luma": {"type": "string", "format": "image", "default": "luma.png"}}});
+        let src = "fn transition(uv: vec2<f32>) -> vec4<f32> {\n    return mix(outgoing(uv), incoming(uv), step(luma(uv).r, u.progress));\n}\n";
+        let fx = Arc::new(Fx::with_images(manifest(Kind::Transition, params), src.into(), Origin::Project, None, images).unwrap());
+        gpu.test_fx(&fx).unwrap();
+        let (red, blue) = (solid(8, 8, [255, 0, 0, 255]), solid(8, 8, [0, 0, 255, 255]));
+        let pic = |rgba| Picture { rgba, width: 8, height: 8, rect: full(8), effects: Vec::new() };
+        let run = |progress| gpu.render(8, 8, &[Item::Transition { outgoing: pic(&red), incoming: pic(&blue), pass: pass(&fx, serde_json::json!({}), progress) }]).unwrap();
+        // Halfway: where the map is dark (left) the incoming clip shows, where it is light the outgoing.
+        let out = run(0.5);
+        for y in [0, 7] {
+            for x in 0..8 {
+                let want = if x < 4 { [0, 0, 255, 255] } else { [255, 0, 0, 255] };
+                assert_eq!(at(&out, 8, x, y), want, "x {x} y {y}");
+            }
+        }
+        // At the end, all incoming.
+        assert!(run(1.0).chunks(4).all(|p| p == [0, 0, 255, 255]));
+    }
+
+    #[test]
+    fn vec2_params_reach_the_shader() {
+        let gpu = Gpu::shared().unwrap();
+        let params = serde_json::json!({"properties": {
+            "rg": {"type": "array", "items": {"type": "number", "minimum": 0, "maximum": 1}, "minItems": 2, "maxItems": 2, "default": [0, 0]},
+            "z": {"type": "number", "default": 0}
+        }});
+        let src = "fn effect(uv: vec2<f32>) -> vec4<f32> {\n    return vec4<f32>(p.rg, p.z, 1.0) * src(uv).a;\n}\n";
+        let fx = Arc::new(Fx::new(manifest(Kind::Effect, params), src.into(), Origin::Project, None).unwrap());
+        let white = solid(4, 4, [255, 255, 255, 255]);
+        let run = |values| {
+            let out = gpu.render(4, 4, &[Item::Picture(Picture { rgba: &white, width: 4, height: 4, rect: full(4), effects: vec![pass(&fx, values, 0.0)] })]).unwrap();
+            at(&out, 4, 2, 2)
+        };
+        assert_eq!(run(serde_json::json!({})), [0, 0, 0, 255]);
+        assert_eq!(run(serde_json::json!({"rg": [1, 0], "z": 1})), [255, 0, 255, 255]);
+        assert_eq!(run(serde_json::json!({"rg": [0, 1]})), [0, 255, 0, 255]);
+        // 0.5 linear is about 188 once encoded to sRGB.
+        let px = run(serde_json::json!({"rg": [0.5, 1]}));
+        assert!((186..=189).contains(&px[0]) && px[1] == 255 && px[2] == 0, "{px:?}");
+    }
+
     #[test]
     fn test_render_catches_nan() {
         let gpu = Gpu::shared().unwrap();
