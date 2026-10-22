@@ -13,6 +13,8 @@ pub enum ErrorCode {
     PluginError,
     /// The project is open in another engine process.
     ProjectLocked,
+    /// The job was cancelled (`jobs.cancel`, or Ctrl+C in the CLI).
+    Cancelled,
     Internal,
 }
 
@@ -25,6 +27,7 @@ impl ErrorCode {
             Self::RenderFailure => -31001,
             Self::PluginError => -31002,
             Self::ProjectLocked => -31003,
+            Self::Cancelled => -31004,
         }
     }
 
@@ -36,6 +39,8 @@ impl ErrorCode {
             Self::RenderFailure => 4,
             Self::PluginError => 5,
             Self::ProjectLocked => 6,
+            // What shells report for a process stopped by Ctrl+C.
+            Self::Cancelled => 130,
             Self::Internal => 1,
         }
     }
@@ -47,6 +52,7 @@ impl ErrorCode {
             -31001 => Self::RenderFailure,
             -31002 => Self::PluginError,
             -31003 => Self::ProjectLocked,
+            -31004 => Self::Cancelled,
             _ => Self::Internal,
         }
     }

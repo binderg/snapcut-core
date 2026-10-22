@@ -11,11 +11,14 @@
 //!   loopback origin, so a web page elsewhere cannot drive the engine.
 //!
 //! Both transports call [`Registry::dispatch`]. Calls run on the blocking
-//! pool, so a long render does not stall other connections' I/O (they still
-//! wait for the project lock until jobs exist). A connection that calls
-//! `events.subscribe` also gets `project.changed` notifications.
+//! pool, and slow ones (renders, analysis) work on a snapshot without the
+//! project lock, so an export does not hold up other calls; with
+//! `background: true` they run as jobs. A connection that calls
+//! `events.subscribe` also gets `project.changed`, `job.progress` and
+//! `job.finished` notifications.
 //!
-//! The daemon exits after `idle` with no open connections, or on `daemon.stop`.
+//! The daemon exits after `idle` with no open connections and no running
+//! jobs, or on `daemon.stop`; jobs still running then are cancelled.
 
 use std::io;
 use std::net::Ipv4Addr;
@@ -142,6 +145,8 @@ pub async fn run(opts: Options) -> io::Result<()> {
             tracing::info!("stopped by daemon.stop");
         }
     }
+    // Stop ffmpeg runs nobody will collect.
+    session.jobs.cancel_all();
     Ok(())
 }
 
@@ -170,11 +175,18 @@ impl Ctx {
     }
 }
 
+/// Resolve once there have been no connections and no running jobs for
+/// `timeout`. A job finishing restarts the clock, so whoever started it has
+/// time to come back for the result.
 async fn idle(ctx: Arc<Ctx>, timeout: Duration) {
     let tick = Duration::from_millis(250).min(timeout);
     loop {
         tokio::time::sleep(tick).await;
-        let since = ctx.last.lock().unwrap_or_else(|e| e.into_inner()).elapsed();
+        let Some(job_finished) = ctx.session.jobs.idle_since() else { continue };
+        let mut since = ctx.last.lock().unwrap_or_else(|e| e.into_inner()).elapsed();
+        if let Some(t) = job_finished {
+            since = since.min(t.elapsed());
+        }
         if ctx.active.load(Ordering::SeqCst) == 0 && since >= timeout {
             return;
         }

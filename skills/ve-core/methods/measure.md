@@ -29,8 +29,9 @@ keyed by method and settings, so the same file is measured once however many
 projects or calls ask; `cached: true` says it came from there. Timeline
 results are always computed fresh.
 
-**Cost.** Audio measurements of a 10-minute file take a few seconds and hold
-up other calls meanwhile (no background jobs yet).
+**Cost.** Audio measurements of a 10-minute file take a few seconds; other
+calls keep working meanwhile. Every `measure.*` and `edit.normalize` takes
+`background: true` to run as a job ([jobs.md](jobs.md)).
 
 ## `measure.loudness`
 

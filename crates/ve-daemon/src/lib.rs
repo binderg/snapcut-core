@@ -14,6 +14,7 @@ pub mod commit;
 pub mod edit;
 pub mod events;
 pub mod fx;
+pub mod jobs;
 pub mod measure;
 pub mod media;
 pub mod project;
@@ -33,25 +34,72 @@ use crate::project::{OpenProject, ProjectError};
 
 pub const ENGINE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// State shared by every method: the one open project, if any, and the
-/// event stream its changes go out on.
-#[derive(Default)]
+/// State shared by every method: the one open project, if any, the event
+/// stream its changes go out on, and background jobs.
 pub struct Session {
     project: Mutex<Option<OpenProject>>,
     pub events: events::Events,
+    pub jobs: jobs::Jobs,
     /// Set when this session is served by a daemon (`server::run`).
     daemon: OnceLock<DaemonInfo>,
     /// Signalled by `daemon.stop`.
     pub(crate) shutdown: tokio::sync::Notify,
 }
 
+impl Default for Session {
+    fn default() -> Self {
+        let events = events::Events::default();
+        Self {
+            project: Mutex::default(),
+            jobs: jobs::Jobs::new(events.clone()),
+            events,
+            daemon: OnceLock::new(),
+            shutdown: tokio::sync::Notify::new(),
+        }
+    }
+}
+
+/// A copy of the open project, taken under the lock, for slow work (renders,
+/// analysis, measurements) that then runs without holding it. Work that ends
+/// in an edit commits through the normal path, whose `base_rev` check fails
+/// if someone else edited in the meantime.
+pub struct Snapshot {
+    pub timeline: ve_model::Timeline,
+    pub revision: u64,
+    root: PathBuf,
+    cache: PathBuf,
+}
+
+impl Snapshot {
+    pub fn root(&self) -> &std::path::Path {
+        &self.root
+    }
+
+    /// The project's folder in the OS cache dir.
+    pub fn cache_dir(&self) -> &std::path::Path {
+        &self.cache
+    }
+}
+
 impl Session {
+    /// Copy the open project for work that runs without the lock.
+    pub fn snapshot(&self) -> Result<Snapshot, RpcError> {
+        self.with_project(|p| {
+            Ok(Snapshot {
+                timeline: p.timeline.clone(),
+                revision: p.revision(),
+                root: p.root().to_owned(),
+                cache: p.cache_dir().to_owned(),
+            })
+        })
+    }
+
     fn lock(&self) -> MutexGuard<'_, Option<OpenProject>> {
         // A panic mid-call must not wedge the session; the data is still usable.
         self.project.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    fn with_project<R>(&self, f: impl FnOnce(&mut OpenProject) -> Result<R, RpcError>) -> Result<R, RpcError> {
+    pub(crate) fn with_project<R>(&self, f: impl FnOnce(&mut OpenProject) -> Result<R, RpcError>) -> Result<R, RpcError> {
         let mut guard = self.lock();
         let p = guard
             .as_mut()
@@ -182,7 +230,6 @@ pub fn registry(session: Arc<Session>) -> Arc<Registry> {
     on_project!("edit.delete", "Remove clips and leave gaps", true, edit::delete);
     on_project!("edit.set_speed", "Change a clip's speed (exact ratio); writes OTIO LinearTimeWarp too", true, edit::set_speed);
     on_project!("edit.set_volume", "Set a clip's audio gain in dB", true, edit::set_volume);
-    on_project!("edit.normalize", "Measure the timeline's loudness and add one gain to its audio clips to hit a LUFS target", true, measure::normalize);
     on_project!("track.add", "Add a video or audio track (any number of each)", true, edit::track_add);
     on_project!("track.remove", "Remove a track (with its clips only when forced)", true, edit::track_remove);
     on_project!("track.rename", "Rename a track", true, edit::track_rename);
@@ -204,23 +251,69 @@ pub fn registry(session: Arc<Session>) -> Arc<Registry> {
     on_project!("history.begin_group", "Start an undo group: the actor's next edits undo as one step", false, edit::begin_group);
     on_project!("history.end_group", "End the actor's undo group", false, edit::end_group);
 
-    on_project!("render.frame", "One frame of the timeline as JPEG/PNG (base64)", false, render::frame);
-    on_project!("render.contact_sheet", "A grid of evenly spaced frames from a range (base64 image)", false, render::contact_sheet);
-    on_project!("render.range_preview", "A low-res MP4 of a range, written to the engine cache", false, render::range_preview);
-    on_project!("render.export", "Render the timeline (or a range) with a preset to an MP4 in the engine cache", false, render::export);
+    // Slow work runs on a snapshot, so it never holds the project lock: other
+    // calls (scrubbing, edits) go on while an export runs. `long!` methods
+    // also take `background: true` and then answer `{job_id}` at once.
+    macro_rules! long {
+        ($name:literal, $summary:literal, $mutates:expr, $p:ty, $f:expr) => {{
+            let s = session.clone();
+            let f = $f;
+            r.method($name, $summary, $mutates, move |p: $p| {
+                let snap = s.snapshot()?;
+                if !jobs::Background::background(&p) {
+                    return f(&s, &snap, p).map(jobs::MaybeJob::Done);
+                }
+                let expected = jobs::Background::expected_secs(&p, &snap);
+                let s2 = s.clone();
+                Ok(jobs::MaybeJob::Started(s.jobs.start($name, expected, move || {
+                    let r = f(&s2, &snap, p)?;
+                    serde_json::to_value(r).map_err(|e| RpcError::new(ErrorCode::Internal, e.to_string()))
+                })))
+            });
+        }};
+    }
+
+    let s = session.clone();
+    r.method("render.frame", "One frame of the timeline as JPEG/PNG (base64)", false, move |p: render::FrameParams| {
+        render::frame(&s.snapshot()?, p)
+    });
+    long!("render.contact_sheet", "A grid of evenly spaced frames from a range (base64 image)", false, render::SheetParams,
+        |_: &Session, snap: &Snapshot, p| render::contact_sheet(snap, p));
+    long!("render.range_preview", "A low-res MP4 of a range, written to the engine cache", false, render::PreviewParams,
+        |_: &Session, snap: &Snapshot, p| render::range_preview(snap, p));
+    long!("render.export", "Render the timeline (or a range) with a preset to an MP4 in the engine cache", false, render::ExportParams,
+        |_: &Session, snap: &Snapshot, p| render::export(snap, p));
     r.method("render.presets", "Export presets", false, |_: NoParams| Ok(render::presets()));
 
-    on_project!("analyze.silence", "Find quiet stretches in the timeline audio; writes `silence` markers", true, analyze::silence);
-    on_project!("measure.loudness", "EBU R128 loudness (LUFS, range, true peak) of an asset's file or the timeline mix", false, measure::loudness);
-    on_project!("measure.levels", "RMS, peak, clipping, DC offset, noise floor, stereo balance and phase", false, measure::levels);
-    on_project!("measure.waveform", "Waveform peaks (min, max, RMS per point) for drawing", false, measure::waveform);
-    on_project!("measure.pitch", "Pitch (fundamental frequency) of voices and instruments: median, range, contour", false, measure::pitch);
-    on_project!("analyze.scenes", "Find hard cuts in the timeline picture; writes `scene` markers", true, analyze::scenes);
+    long!("analyze.silence", "Find quiet stretches in the timeline audio; writes `silence` markers", true, analyze::SilenceParams, analyze::silence);
+    long!("measure.loudness", "EBU R128 loudness (LUFS, range, true peak) of an asset's file or the timeline mix", false, measure::MeasureParams,
+        |_: &Session, snap: &Snapshot, p| measure::loudness(snap, p));
+    long!("measure.levels", "RMS, peak, clipping, DC offset, noise floor, stereo balance and phase", false, measure::MeasureParams,
+        |_: &Session, snap: &Snapshot, p| measure::levels(snap, p));
+    long!("measure.waveform", "Waveform peaks (min, max, RMS per point) for drawing", false, measure::WaveformParams,
+        |_: &Session, snap: &Snapshot, p| measure::waveform(snap, p));
+    long!("measure.pitch", "Pitch (fundamental frequency) of voices and instruments: median, range, contour", false, measure::MeasureParams,
+        |_: &Session, snap: &Snapshot, p| measure::pitch(snap, p));
+    long!("analyze.scenes", "Find hard cuts in the timeline picture; writes `scene` markers", true, analyze::ScenesParams, analyze::scenes);
+    long!("edit.normalize", "Measure the timeline's loudness and add one gain to its audio clips to hit a LUFS target", true, measure::NormalizeParams, measure::normalize);
+
+    let s = session.clone();
+    r.method("jobs.list", "Background jobs, oldest first, without their results", false, move |_: NoParams| {
+        Ok(JobList { jobs: s.jobs.list() })
+    });
+    let s = session.clone();
+    r.method("jobs.get", "One background job: state, progress, and its result or error once finished", false, move |p: JobParams| {
+        s.jobs.get(&p.job_id)
+    });
+    let s = session.clone();
+    r.method("jobs.cancel", "Stop a background job (queued: at once; running: its ffmpeg run is killed)", false, move |p: JobParams| {
+        s.jobs.cancel(&p.job_id)
+    });
 
     let s = session.clone();
     r.method(
         "events.subscribe",
-        "Get `project.changed` notifications on this connection (daemon transports only).          Each carries {revision, actor, command, patch}; `events.lagged` means refetch with project.get",
+        "Get `project.changed` notifications on this connection (daemon transports only).          Each carries {revision, actor, command, patch}; `events.lagged` means refetch with project.get.          Background jobs send `job.progress` {job_id, state, progress} and `job.finished` {job_id, state, result | error}",
         false,
         move |_: NoParams| Ok(Subscribed { revision: s.revision() }),
     );
@@ -306,6 +399,18 @@ pub struct ProjectDoc {
     pub revision: u64,
     /// The `Timeline.1` OTIO document.
     pub timeline: serde_json::Value,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct JobParams {
+    /// The `job_id` a `background: true` call answered with.
+    pub job_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct JobList {
+    pub jobs: Vec<jobs::JobInfo>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

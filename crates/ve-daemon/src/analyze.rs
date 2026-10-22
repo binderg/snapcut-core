@@ -16,8 +16,8 @@ use ve_ops::markers::{self, NewMarker};
 use ve_protocol::RpcError;
 
 use crate::commit::{Committed, commit, mutation_params, parse_time};
-use crate::project::OpenProject;
 use crate::render::{render_error, span, work_dir};
+use crate::{Session, Snapshot};
 
 fn yes() -> bool {
     true
@@ -78,6 +78,9 @@ mutation_params! {
         /// Write `silence` markers (default true).
         #[serde(default = "yes")]
         pub markers: bool,
+        /// Run as a background job: answer `{job_id}` at once (see `jobs.*`).
+        #[serde(default)]
+        pub background: bool,
     }
 }
 
@@ -89,49 +92,74 @@ fn parse_db(s: &str) -> Result<f64, RpcError> {
         .ok_or_else(|| RpcError::invalid_params(format!("threshold `{s}`: use a negative level like -35dB")))
 }
 
-pub fn silence(p: &mut OpenProject, a: SilenceParams) -> Result<Committed<AnalyzeResult>, RpcError> {
-    let work = work_dir(p);
+pub fn silence(s: &Session, snap: &Snapshot, a: SilenceParams) -> Result<Committed<AnalyzeResult>, RpcError> {
     let threshold = parse_db(&a.threshold)?;
-    commit(p, a.mutation(), "analyze.silence", |tl| {
-        let rate = tl.output_rate();
-        let r = rate.as_ratio();
-        let sp = span(tl, a.from.as_ref(), a.to.as_ref())?;
-        let min = parse_time("min_duration", &a.min_duration, rate)?;
-        let pad = parse_time("pad", &a.pad, rate)?;
-        if min <= Q::from_integer(0) || pad < Q::from_integer(0) {
-            return Err(RpcError::invalid_params("min_duration must be positive and pad 0 or more"));
+    if a.base_rev != snap.revision {
+        return Err(RpcError::stale_revision(snap.revision));
+    }
+    let work = work_dir(snap);
+    let tl = &snap.timeline;
+    let rate = tl.output_rate();
+    let r = rate.as_ratio();
+    let sp = span(tl, a.from.as_ref(), a.to.as_ref())?;
+    let min = parse_time("min_duration", &a.min_duration, rate)?;
+    let pad = parse_time("pad", &a.pad, rate)?;
+    if min <= Q::from_integer(0) || pad < Q::from_integer(0) {
+        return Err(RpcError::invalid_params("min_duration must be positive and pad 0 or more"));
+    }
+    let (found, warnings) = ve_analyze::silence(tl, sp, threshold, min, &work).map_err(render_error)?;
+    let mut ranges = Vec::new();
+    let mut new = Vec::new();
+    for s in found {
+        // Inward to whole frames, after the pad.
+        let start = ((s.start + pad) * r).ceil() / r;
+        let end = ((s.end - pad) * r).floor() / r;
+        if end <= start {
+            continue;
         }
-        let (found, warnings) = ve_analyze::silence(tl, sp, threshold, min, &work).map_err(render_error)?;
-        let mut ranges = Vec::new();
-        let mut new = Vec::new();
-        for s in found {
-            // Inward to whole frames, after the pad.
-            let start = ((s.start + pad) * r).ceil() / r;
-            let end = ((s.end - pad) * r).floor() / r;
-            if end <= start {
-                continue;
+        ranges.push(Finding {
+            kind: "silence".into(),
+            start: tc(start, rate),
+            end: tc(end, rate),
+            note: format!("{}f", ((end - start) * r).to_integer()),
+        });
+        new.push(NewMarker {
+            start,
+            duration: end - start,
+            name: "silence".into(),
+            color: Some("purple".into()),
+            comment: String::new(),
+            source: MarkerSource::Analyzer,
+            payload: json!({"analyzer": "silence", "threshold_db": threshold, "min_duration": a.min_duration, "pad": a.pad}),
+        });
+    }
+    write_markers(s, &a.mutation(), "analyze.silence", "silence", sp, a.markers, new, AnalyzeResult { ranges, markers: vec![], warnings })
+}
+
+/// Commit what an analyzer found: its markers replace its earlier ones in
+/// `sp`. The detection ran on a snapshot, so an edit made meanwhile fails the
+/// commit with `stale_revision` instead of placing markers at old positions.
+#[allow(clippy::too_many_arguments)]
+fn write_markers(
+    s: &Session,
+    m: &crate::commit::Mutation<'_>,
+    command: &str,
+    analyzer: &str,
+    sp: ve_render::Span,
+    write: bool,
+    new: Vec<NewMarker>,
+    mut result: AnalyzeResult,
+) -> Result<Committed<AnalyzeResult>, RpcError> {
+    let m = crate::commit::Mutation { base_rev: m.base_rev, dry_run: m.dry_run, actor: m.actor };
+    s.with_project(|p| {
+        commit(p, m, command, |tl| {
+            if !write {
+                return Ok((tl.clone(), result));
             }
-            ranges.push(Finding {
-                kind: "silence".into(),
-                start: tc(start, rate),
-                end: tc(end, rate),
-                note: format!("{}f", ((end - start) * r).to_integer()),
-            });
-            new.push(NewMarker {
-                start,
-                duration: end - start,
-                name: "silence".into(),
-                color: Some("purple".into()),
-                comment: String::new(),
-                source: MarkerSource::Analyzer,
-                payload: json!({"analyzer": "silence", "threshold_db": threshold, "min_duration": a.min_duration, "pad": a.pad}),
-            });
-        }
-        if !a.markers {
-            return Ok((tl.clone(), AnalyzeResult { ranges, markers: vec![], warnings }));
-        }
-        let (next, ids) = markers::replace_analyzer(tl, "silence", sp.start, sp.end, new).map_err(|e| RpcError::invalid_params(e.0))?;
-        Ok((next, AnalyzeResult { ranges, markers: ids, warnings }))
+            let (next, ids) = markers::replace_analyzer(tl, analyzer, sp.start, sp.end, new).map_err(|e| RpcError::invalid_params(e.0))?;
+            result.markers = ids;
+            Ok((next, result))
+        })
     })
 }
 
@@ -148,11 +176,13 @@ mutation_params! {
         /// Write `scene` markers (default true).
         #[serde(default = "yes")]
         pub markers: bool,
+        /// Run as a background job: answer `{job_id}` at once (see `jobs.*`).
+        #[serde(default)]
+        pub background: bool,
     }
 }
 
-pub fn scenes(p: &mut OpenProject, a: ScenesParams) -> Result<Committed<AnalyzeResult>, RpcError> {
-    let work = work_dir(p);
+pub fn scenes(s: &Session, snap: &Snapshot, a: ScenesParams) -> Result<Committed<AnalyzeResult>, RpcError> {
     let threshold: f64 = a
         .threshold
         .trim()
@@ -160,30 +190,47 @@ pub fn scenes(p: &mut OpenProject, a: ScenesParams) -> Result<Committed<AnalyzeR
         .ok()
         .filter(|v: &f64| (0.0..=100.0).contains(v))
         .ok_or_else(|| RpcError::invalid_params(format!("threshold `{}`: use a number from 0 to 100", a.threshold)))?;
-    commit(p, a.mutation(), "analyze.scenes", |tl| {
-        let rate = tl.output_rate();
-        let r = rate.as_ratio();
-        let sp = span(tl, a.from.as_ref(), a.to.as_ref())?;
-        let (found, warnings) = ve_analyze::scenes(tl, sp, threshold, &work).map_err(render_error)?;
-        let mut ranges = Vec::new();
-        let mut new = Vec::new();
-        for c in found {
-            let at = (c.at * r).round() / r;
-            ranges.push(Finding { kind: "scene".into(), start: tc(at, rate), end: tc(at, rate), note: format!("score {:.1}", c.score) });
-            new.push(NewMarker {
-                start: at,
-                duration: Q::from_integer(0),
-                name: "scene".into(),
-                color: Some("cyan".into()),
-                comment: String::new(),
-                source: MarkerSource::Analyzer,
-                payload: json!({"analyzer": "scenes", "score": (c.score * 1000.0).round() / 1000.0}),
-            });
-        }
-        if !a.markers {
-            return Ok((tl.clone(), AnalyzeResult { ranges, markers: vec![], warnings }));
-        }
-        let (next, ids) = markers::replace_analyzer(tl, "scenes", sp.start, sp.end, new).map_err(|e| RpcError::invalid_params(e.0))?;
-        Ok((next, AnalyzeResult { ranges, markers: ids, warnings }))
-    })
+    if a.base_rev != snap.revision {
+        return Err(RpcError::stale_revision(snap.revision));
+    }
+    let work = work_dir(snap);
+    let tl = &snap.timeline;
+    let rate = tl.output_rate();
+    let r = rate.as_ratio();
+    let sp = span(tl, a.from.as_ref(), a.to.as_ref())?;
+    let (found, warnings) = ve_analyze::scenes(tl, sp, threshold, &work).map_err(render_error)?;
+    let mut ranges = Vec::new();
+    let mut new = Vec::new();
+    for c in found {
+        let at = (c.at * r).round() / r;
+        ranges.push(Finding { kind: "scene".into(), start: tc(at, rate), end: tc(at, rate), note: format!("score {:.1}", c.score) });
+        new.push(NewMarker {
+            start: at,
+            duration: Q::from_integer(0),
+            name: "scene".into(),
+            color: Some("cyan".into()),
+            comment: String::new(),
+            source: MarkerSource::Analyzer,
+            payload: json!({"analyzer": "scenes", "score": (c.score * 1000.0).round() / 1000.0}),
+        });
+    }
+    write_markers(s, &a.mutation(), "analyze.scenes", "scenes", sp, a.markers, new, AnalyzeResult { ranges, markers: vec![], warnings })
+}
+
+impl crate::jobs::Background for SilenceParams {
+    fn background(&self) -> bool {
+        self.background
+    }
+    fn expected_secs(&self, s: &Snapshot) -> Option<f64> {
+        crate::render::span_secs(&s.timeline, self.from.as_ref(), self.to.as_ref())
+    }
+}
+
+impl crate::jobs::Background for ScenesParams {
+    fn background(&self) -> bool {
+        self.background
+    }
+    fn expected_secs(&self, s: &Snapshot) -> Option<f64> {
+        crate::render::span_secs(&s.timeline, self.from.as_ref(), self.to.as_ref())
+    }
 }

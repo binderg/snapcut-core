@@ -51,6 +51,7 @@ Tell them apart from responses by the missing `id`.
 | -31001 | render_failure | ffmpeg failed, or media is missing or unreadable | 4 |
 | -31002 | plugin_error | A plugin failed (no plugins exist yet) | 5 |
 | -31003 | project_locked | Another engine process holds the project | 6 |
+| -31004 | cancelled | A background job was cancelled (`jobs.cancel`, or Ctrl+C in the CLI) | 130 |
 
 Messages are written for people and agents: show them as they are.
 

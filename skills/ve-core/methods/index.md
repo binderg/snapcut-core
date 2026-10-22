@@ -3,8 +3,9 @@
 Every method the engine has. "Edits" means it takes `base_rev` / `dry_run` /
 `actor`, returns a patch and emits `project.changed`
 ([../editing/revisions-and-undo.md](../editing/revisions-and-undo.md)).
-"No project" means it works before any project is open. Exact schemas:
-`system.describe`.
+"No project" means it works before any project is open. "Job" means it can
+run in the background with `background: true` ([jobs.md](jobs.md)). Exact
+schemas: `system.describe`.
 
 | Method | Edits | Does | Details |
 | --- | --- | --- | --- |
@@ -12,7 +13,10 @@ Every method the engine has. "Edits" means it takes `base_rev` / `dry_run` /
 | `system.describe` | | OpenRPC document for every method (no project) | [system.md](system.md) |
 | `daemon.info` | | Running daemon: pid, project, socket, WebSocket URL | [system.md](system.md) |
 | `daemon.stop` | | Stop the daemon | [system.md](system.md) |
-| `events.subscribe` | | Receive `project.changed` on this connection | [system.md](system.md) |
+| `events.subscribe` | | Receive `project.changed` and job events on this connection | [system.md](system.md) |
+| `jobs.list` | | Background jobs, without results | [jobs.md](jobs.md) |
+| `jobs.get` | | One job: state, progress, result or error | [jobs.md](jobs.md) |
+| `jobs.cancel` | | Stop a job | [jobs.md](jobs.md) |
 | `project.init` | | Create a project folder and open it (no project) | [project.md](project.md) |
 | `project.open` | | Open (and lock) a project folder | [project.md](project.md) |
 | `project.save` | | Write the project to disk (edits already save) | [project.md](project.md) |
@@ -29,7 +33,7 @@ Every method the engine has. "Edits" means it takes `base_rev` / `dry_run` /
 | `edit.delete` | yes | Remove clips, leave gaps | [edit.md](edit.md) |
 | `edit.set_speed` | yes | Change a clip's speed (exact ratio) | [edit.md](edit.md) |
 | `edit.set_volume` | yes | Set a clip's audio gain | [edit.md](edit.md) |
-| `edit.normalize` | yes | Hit a loudness target with one gain on the audio clips | [measure.md](measure.md) |
+| `edit.normalize` | yes | Hit a loudness target with one gain on the audio clips (job) | [measure.md](measure.md) |
 | `track.add` | yes | Add a video or audio track (any number of each) | [tracks.md](tracks.md) |
 | `track.remove` | yes | Remove a track (with its clips only when forced) | [tracks.md](tracks.md) |
 | `track.rename` | yes | Rename a track | [tracks.md](tracks.md) |
@@ -51,16 +55,16 @@ Every method the engine has. "Edits" means it takes `base_rev` / `dry_run` /
 | `history.begin_group` | | Start an undo group for an actor | [history.md](history.md) |
 | `history.end_group` | | End it | [history.md](history.md) |
 | `render.frame` | | One frame as JPEG/PNG (base64) | [render.md](render.md) |
-| `render.contact_sheet` | | A grid of frames from a range | [render.md](render.md) |
-| `render.range_preview` | | Low-res MP4 of a range, in the engine cache | [render.md](render.md) |
-| `render.export` | | Final MP4 with a preset, in the engine cache | [render.md](render.md) |
+| `render.contact_sheet` | | A grid of frames from a range (job) | [render.md](render.md) |
+| `render.range_preview` | | Low-res MP4 of a range, in the engine cache (job) | [render.md](render.md) |
+| `render.export` | | Final MP4 with a preset, in the engine cache (job) | [render.md](render.md) |
 | `render.presets` | | Export presets (no project) | [render.md](render.md) |
-| `analyze.silence` | yes | Find quiet stretches; writes `silence` markers | [analyze.md](analyze.md) |
-| `analyze.scenes` | yes | Find hard picture cuts; writes `scene` markers | [analyze.md](analyze.md) |
-| `measure.loudness` | | LUFS, loudness range, true peak | [measure.md](measure.md) |
-| `measure.levels` | | RMS, peak, clipping, DC, noise floor, balance, phase | [measure.md](measure.md) |
-| `measure.waveform` | | Min/max/RMS peaks for drawing | [measure.md](measure.md) |
-| `measure.pitch` | | Pitch: median, range, note, contour | [measure.md](measure.md) |
+| `analyze.silence` | yes | Find quiet stretches; writes `silence` markers (job) | [analyze.md](analyze.md) |
+| `analyze.scenes` | yes | Find hard picture cuts; writes `scene` markers (job) | [analyze.md](analyze.md) |
+| `measure.loudness` | | LUFS, loudness range, true peak (job) | [measure.md](measure.md) |
+| `measure.levels` | | RMS, peak, clipping, DC, noise floor, balance, phase (job) | [measure.md](measure.md) |
+| `measure.waveform` | | Min/max/RMS peaks for drawing (job) | [measure.md](measure.md) |
+| `measure.pitch` | | Pitch: median, range, note, contour (job) | [measure.md](measure.md) |
 
 The `ve` CLI has a subcommand for most of these (`ve trim`, `ve measure
 loudness`, ...) and `ve call <method> '<json>'` for any of them; `--json`

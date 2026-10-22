@@ -65,9 +65,11 @@ after a day. (The CLI does this for you with `-o`.) A browser page cannot
 open `file://` paths; a desktop shell (Tauri, Electron) can. Encoder: libx264
 when the local ffmpeg has it, else a hardware encoder, openh264 or mpeg4.
 
-Exports are **synchronous**: the call returns when the file is done (a 10
-minute 1080p export took about 4.5 minutes on 4 cores), and other calls wait
-meanwhile. There is no progress or cancel yet.
+By default the call returns when the file is done (a 10 minute 1080p export
+took about 4.5 minutes on 4 cores). Other calls keep working meanwhile: the
+export renders a copy of the timeline taken when it started. With
+`background: true` (also on `render.contact_sheet`) it answers `{job_id}` at
+once, with progress and cancel: see [jobs.md](jobs.md).
 
 ## `render.presets` (no project needed)
 

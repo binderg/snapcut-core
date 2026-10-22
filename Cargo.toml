@@ -65,7 +65,7 @@ ebur128 = "0.1.10"              # (Phase 2)
 cpal = "0.18.2"                 # (Phase 4) playback
 
 # --- runtime, plugins, tooling ---
-tokio = { version = "1.54.0", features = ["rt-multi-thread", "macros", "process", "io-util", "sync", "time", "fs", "net"] }
+tokio = { version = "1.54.0", features = ["rt-multi-thread", "macros", "process", "io-util", "sync", "time", "fs", "net", "signal"] }
 tokio-util = { version = "0.7.20", features = ["codec"] }
 futures = "0.3.34"
 interprocess = { version = "2.4.6", features = ["tokio"] }

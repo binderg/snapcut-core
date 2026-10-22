@@ -74,8 +74,9 @@ a daemon.
 ## Concurrency
 
 Requests on one connection may be sent without waiting; responses carry the
-request `id` and can come back in any order. Calls on the project run one at
-a time (the project has one lock), so a long call (`render.export`,
-`analyze.*`, `measure.*` on a long file) makes every other call wait until it
-finishes. There are no background jobs yet; see
-[../guides/status-and-limits.md](../guides/status-and-limits.md).
+request `id` and can come back in any order. Slow calls (`render.*`,
+`analyze.*`, `measure.*`, `edit.normalize`) work on a copy of the project, so
+they do not make other calls wait; with `background: true` they run as jobs
+with progress and cancel ([../methods/jobs.md](../methods/jobs.md)). At most
+2 jobs run at once. `media.import` of large files still holds the project
+until it is done.

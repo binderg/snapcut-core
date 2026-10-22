@@ -71,6 +71,15 @@ fn agent_loop() {
     assert!(proj.join("out.mp4").is_file());
     assert!(v.get("data").is_none() && v["output"].as_str().unwrap().ends_with("out.mp4"), "{v}");
 
+    // The export ran as a daemon job, which `ve jobs` lists.
+    let jobs: serde_json::Value = serde_json::from_str(&ok(&proj, &["--json", "jobs"])).unwrap();
+    let export = jobs["jobs"].as_array().unwrap().iter().find(|j| j["method"] == "render.export").expect("export job");
+    assert_eq!(export["state"], "done", "{jobs}");
+    let line = ok(&proj, &["jobs"]);
+    assert!(line.contains("render.export") && line.contains("done"), "{line}");
+    let o = ve(&proj, &["jobs", "cancel", "job_nope"]);
+    assert_eq!(o.status.code(), Some(2));
+
     // Errors map to exit codes: stale revision is 3, bad params 2.
     let o = ve(&proj, &["split", "--at", "1s", "--base-rev", "1"]);
     assert_eq!(o.status.code(), Some(3), "{}", String::from_utf8_lossy(&o.stderr));

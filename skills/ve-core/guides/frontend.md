@@ -5,7 +5,8 @@ does not have, and an agent can make the same edits at the same time. This
 guide is the order to build things in. Check
 [status-and-limits.md](status-and-limits.md) first so you do not design
 around features that do not exist yet (notably: no video playback stream,
-no background jobs, no effects or transitions).
+no effects or transitions in exports). Run exports and analysis with
+`background: true` and show `job.progress` ([../methods/jobs.md](../methods/jobs.md)).
 
 ## 1. Pick a shell
 

@@ -3,11 +3,13 @@
 
 use std::io;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::sync::OnceLock;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::RenderError;
+use crate::control::{self, Control};
 use crate::graph::Graph;
 
 pub fn ffmpeg_path() -> PathBuf {
@@ -68,19 +70,31 @@ pub fn run(graph: &Graph, out: &[String], work: &Path, log_info: bool) -> Result
 
 /// [`run`] for any [`Inputs`].
 pub fn run_inputs(inputs: &Inputs<'_>, out: &[String], work: &Path, log_info: bool) -> Result<Output, RenderError> {
-    let (mut cmd, script) = command(inputs, out, work, log_info)?;
-    let result = cmd.stdin(Stdio::null()).output();
-    drop(script);
-    let output = result.map_err(spawn_error)?;
-    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
-    check(output.status, &stderr)?;
-    Ok(Output { stdout: output.stdout, stderr })
+    let mut stdout = Vec::new();
+    let stderr = exec(inputs, out, work, log_info, &mut |b| stdout.extend_from_slice(b))?;
+    Ok(Output { stdout, stderr })
 }
 
 /// Run and hand stdout to `sink` as it arrives, for outputs too big to hold
 /// (decoded samples of a long file). Returns the log.
 pub fn stream(inputs: &Inputs<'_>, out: &[String], work: &Path, sink: &mut dyn FnMut(&[u8])) -> Result<String, RenderError> {
-    let (mut cmd, script) = command(inputs, out, work, false)?;
+    exec(inputs, out, work, false, sink)
+}
+
+/// Spawn ffmpeg, feed its stdout to `sink` on this thread and return its log.
+/// With a [`Control`] installed for this thread, a watcher thread reports
+/// progress from ffmpeg's `-progress` file and kills the run when the job is
+/// cancelled.
+fn exec(inputs: &Inputs<'_>, out: &[String], work: &Path, log_info: bool, sink: &mut dyn FnMut(&[u8])) -> Result<String, RenderError> {
+    let ctrl = control::current();
+    if ctrl.as_ref().is_some_and(|c| c.cancelled()) {
+        return Err(RenderError::Cancelled);
+    }
+    let progress = match &ctrl {
+        Some(_) => Some(TempFile::new(work, "progress")?),
+        None => None,
+    };
+    let (mut cmd, script) = command(inputs, out, work, log_info, progress.as_ref().map(|p| p.0.as_path()))?;
     let mut child = cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(spawn_error)?;
     // Drain stderr on its own thread so a chatty ffmpeg never blocks on a full pipe.
     let mut err_pipe = child.stderr.take().expect("stderr is piped");
@@ -90,20 +104,132 @@ pub fn stream(inputs: &Inputs<'_>, out: &[String], work: &Path, sink: &mut dyn F
         s
     });
     let mut out_pipe = child.stdout.take().expect("stdout is piped");
+    let child = Arc::new(Mutex::new(child));
+    let done = Arc::new(AtomicBool::new(false));
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let watcher = match (&ctrl, &progress) {
+        (Some(ctrl), Some(file)) => {
+            let (ctrl, child, done, cancelled, file) = (ctrl.clone(), child.clone(), done.clone(), cancelled.clone(), file.0.clone());
+            Some(std::thread::spawn(move || watch(&ctrl, &child, &done, &cancelled, &file)))
+        }
+        _ => None,
+    };
     let mut buf = vec![0u8; 1 << 16];
-    loop {
+    let read = loop {
         match std::io::Read::read(&mut out_pipe, &mut buf) {
-            Ok(0) => break,
+            Ok(0) => break Ok(()),
             Ok(n) => sink(&buf[..n]),
             Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
-            Err(e) => return Err(RenderError::Io(format!("reading ffmpeg output: {e}"))),
+            Err(e) => break Err(RenderError::Io(format!("reading ffmpeg output: {e}"))),
         }
+    };
+    if read.is_err() {
+        kill_tree(&mut lock(&child));
     }
-    let status = child.wait().map_err(|e| RenderError::Io(e.to_string()))?;
+    // Poll rather than block in `wait()` holding the lock, so the watcher can
+    // still kill the run (ffmpeg may close stdout long before it exits).
+    let status = loop {
+        match lock(&child).try_wait() {
+            Ok(Some(s)) => break Ok(s),
+            Ok(None) => {}
+            Err(e) => break Err(RenderError::Io(e.to_string())),
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    done.store(true, Ordering::SeqCst);
+    if let Some(w) = watcher {
+        let _ = w.join();
+    }
     let stderr = err_thread.join().unwrap_or_default();
     drop(script);
-    check(status, &stderr)?;
+    drop(progress);
+    if cancelled.load(Ordering::SeqCst) {
+        return Err(RenderError::Cancelled);
+    }
+    read?;
+    check(status?, &stderr)?;
     Ok(stderr)
+}
+
+fn lock(child: &Mutex<Child>) -> std::sync::MutexGuard<'_, Child> {
+    child.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Stop a run and anything it started. On Windows `ffmpeg` is often a
+/// package manager's shim (Chocolatey, Scoop) that runs the real ffmpeg as a
+/// child: killing only the shim leaves the encode running and the pipes open.
+fn kill_tree(child: &mut Child) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let _ = Command::new("taskkill")
+            .args(["/T", "/F", "/PID", &child.id().to_string()])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .creation_flags(CREATE_NO_WINDOW)
+            .status();
+    }
+    let _ = child.kill();
+}
+
+/// Report progress and honour cancel until the run is done.
+fn watch(ctrl: &Control, child: &Mutex<Child>, done: &AtomicBool, cancelled: &AtomicBool, progress: &Path) {
+    let mut offset = 0u64;
+    let mut last = None;
+    while !done.load(Ordering::SeqCst) {
+        if ctrl.cancelled() {
+            cancelled.store(true, Ordering::SeqCst);
+            kill_tree(&mut lock(child));
+            return;
+        }
+        if let Some(secs) = read_progress(progress, &mut offset)
+            && last != Some(secs)
+        {
+            last = Some(secs);
+            ctrl.progress(secs);
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+/// The newest `out_time_us` in ffmpeg's progress file, reading on from `offset`.
+fn read_progress(path: &Path, offset: &mut u64) -> Option<f64> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut f = std::fs::File::open(path).ok()?;
+    f.seek(SeekFrom::Start(*offset)).ok()?;
+    let mut text = String::new();
+    f.read_to_string(&mut text).ok()?;
+    // Only whole lines; a half-written one is read next time.
+    let complete = text.rfind('\n').map_or(0, |i| i + 1);
+    *offset += complete as u64;
+    parse_out_time(&text[..complete])
+}
+
+/// Seconds from the last `out_time_us=` (or the older, misnamed `out_time_ms=`, also microseconds).
+fn parse_out_time(text: &str) -> Option<f64> {
+    text.lines().rev().find_map(|l| {
+        let v = l.strip_prefix("out_time_us=").or_else(|| l.strip_prefix("out_time_ms="))?;
+        v.trim().parse::<i64>().ok().filter(|us| *us >= 0).map(|us| us as f64 / 1e6)
+    })
+}
+
+/// A file in the work folder, removed when dropped.
+struct TempFile(PathBuf);
+
+impl TempFile {
+    fn new(work: &Path, kind: &str) -> Result<Self, RenderError> {
+        std::fs::create_dir_all(work).map_err(|e| RenderError::Io(format!("{}: {e}", work.display())))?;
+        let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_nanos());
+        Ok(Self(work.join(format!("{kind}-{}-{nanos}.txt", std::process::id()))))
+    }
+}
+
+impl Drop for TempFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
 }
 
 /// A filter script file, removed when dropped (unless `VE_KEEP_GRAPH` is set).
@@ -121,9 +247,18 @@ impl Drop for Script {
     }
 }
 
-fn command(inputs: &Inputs<'_>, out: &[String], work: &Path, log_info: bool) -> Result<(Command, Script), RenderError> {
+fn command(
+    inputs: &Inputs<'_>,
+    out: &[String],
+    work: &Path,
+    log_info: bool,
+    progress: Option<&Path>,
+) -> Result<(Command, Script), RenderError> {
     let mut cmd = Command::new(ffmpeg_path());
     cmd.args(["-hide_banner", "-nostdin", "-nostats", "-y", "-loglevel", if log_info { "info" } else { "error" }]);
+    if let Some(p) = progress {
+        cmd.arg("-progress").arg(p);
+    }
     let script = match inputs {
         Inputs::Graph(graph) => {
             std::fs::create_dir_all(work).map_err(|e| RenderError::Io(format!("{}: {e}", work.display())))?;
@@ -167,4 +302,17 @@ fn check(status: std::process::ExitStatus, stderr: &str) -> Result<(), RenderErr
     let tail: Vec<&str> = tail.into_iter().rev().collect();
     Err(RenderError::Ffmpeg { message: "ffmpeg failed".into(), stderr: tail.join("
 ") })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reads_the_newest_out_time() {
+        let text = "frame=10\nout_time_us=400000\nprogress=continue\nframe=20\nout_time_ms=900000\nprogress=continue\n";
+        assert_eq!(parse_out_time(text), Some(0.9));
+        assert_eq!(parse_out_time("out_time_us=N/A\n"), None);
+        assert_eq!(parse_out_time(""), None);
+    }
 }

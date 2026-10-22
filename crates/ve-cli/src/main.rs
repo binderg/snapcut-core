@@ -292,9 +292,23 @@ enum Command {
     /// Send a raw JSON-RPC method call, e.g. `ve call project.get '{}'`.
     Call { method: String, params: Option<String> },
 
+    /// Background jobs (exports, previews, analysis): list them, or `ve jobs cancel <id>`.
+    Jobs {
+        #[command(subcommand)]
+        cmd: Option<JobsCmd>,
+    },
+
     /// The project's background engine process (started on demand by other commands).
     #[command(subcommand)]
     Daemon(DaemonCmd),
+}
+
+#[derive(Subcommand)]
+enum JobsCmd {
+    /// One job: state, progress, and its result or error.
+    Get { job_id: String },
+    /// Stop a job (a running export stops within a second).
+    Cancel { job_id: String },
 }
 
 #[derive(Subcommand)]
@@ -835,7 +849,96 @@ fn plan(cmd: &Command, json_output: bool) -> Plan {
             p["ceiling"] = json!(ceiling);
             m("edit.normalize", p)
         }
+        Command::Jobs { cmd: None } => q("jobs.list", json!({})),
+        Command::Jobs { cmd: Some(JobsCmd::Get { job_id }) } => q("jobs.get", json!({ "job_id": job_id })),
+        Command::Jobs { cmd: Some(JobsCmd::Cancel { job_id }) } => q("jobs.cancel", json!({ "job_id": job_id })),
         Command::Call { .. } | Command::Daemon(_) => unreachable!("planned in main"),
+    }
+}
+
+/// `job_3f2a  render.export  running  42%`
+fn job_line(j: &Value) -> String {
+    let progress = match (j["state"].as_str(), j["progress"].as_f64()) {
+        (Some("running"), Some(p)) => format!("  {:.0}%", p * 100.0),
+        _ => String::new(),
+    };
+    let error = j["error"]["message"].as_str().map_or(String::new(), |m| format!("  ({m})"));
+    format!(
+        "{}  {:22} {}{progress}{error}",
+        j["job_id"].as_str().unwrap_or("?"),
+        j["method"].as_str().unwrap_or("?"),
+        j["state"].as_str().unwrap_or("?")
+    )
+}
+
+/// Commands whose work can take minutes, run as background jobs.
+fn runs_as_job(cmd: &Command) -> bool {
+    matches!(
+        cmd,
+        Command::Export { list_presets: false, .. }
+            | Command::Preview { .. }
+            | Command::Sheet { .. }
+            | Command::Analyze(_)
+            | Command::Measure(_)
+            | Command::Normalize { .. }
+    )
+}
+
+/// Wait for a job, showing its progress on stderr when that is a terminal.
+/// Ctrl+C cancels the job (the CLI then exits with the `cancelled` code).
+async fn wait_for_job(engine: &mut Engine, job_id: &Value, method: &str, json_output: bool) -> Value {
+    use std::io::{IsTerminal, Write};
+    let show = std::io::stderr().is_terminal();
+    let label = method.rsplit('.').next().unwrap_or(method).replace('_', " ");
+    let clear = || {
+        if show {
+            eprint!("\r{:40}\r", "");
+        }
+    };
+    let ctrl_c = tokio::signal::ctrl_c();
+    tokio::pin!(ctrl_c);
+    let mut cancelling = false;
+    loop {
+        let job = match engine.call("jobs.get", json!({ "job_id": job_id })).await {
+            Ok(j) => j,
+            Err(CallError(e)) => {
+                clear();
+                fail(&e, json_output)
+            }
+        };
+        match job["state"].as_str() {
+            Some("done") => {
+                clear();
+                return job["result"].clone();
+            }
+            Some("failed" | "cancelled") => {
+                clear();
+                fail(&job["error"], json_output)
+            }
+            _ => {}
+        }
+        if show {
+            let state = if cancelling {
+                "cancelling".to_owned()
+            } else {
+                match job["progress"].as_f64() {
+                    Some(p) => format!("{:3.0}%", p * 100.0),
+                    None if job["state"] == "queued" => "waiting for another job".to_owned(),
+                    None => "running".to_owned(),
+                }
+            };
+            eprint!("\r{label}  {state}   ");
+            let _ = std::io::stderr().flush();
+        }
+        tokio::select! {
+            () = tokio::time::sleep(Duration::from_millis(200)) => {}
+            r = &mut ctrl_c, if !cancelling => {
+                if r.is_ok() {
+                    cancelling = true;
+                    let _ = engine.call("jobs.cancel", json!({ "job_id": job_id })).await;
+                }
+            }
+        }
     }
 }
 
@@ -1118,7 +1221,13 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         params["actor"] = actor;
     }
 
+    // Long work runs as a daemon job: a progress line, and Ctrl+C cancels it.
+    let as_job = matches!(engine, Engine::Daemon(_)) && runs_as_job(&cli.command);
+    if as_job {
+        params["background"] = json!(true);
+    }
     let result = match engine.call(&method, params).await {
+        Ok(r) if as_job => wait_for_job(&mut engine, &r["job_id"], &method, cli.json).await,
         Ok(r) => r,
         Err(CallError(e)) => fail(&e, cli.json),
     };
@@ -1281,6 +1390,23 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         | Command::Transition(_)
         | Command::Undo
         | Command::Redo => print_commit(&result),
+        Command::Jobs { cmd: None } => {
+            let jobs = result["jobs"].as_array().cloned().unwrap_or_default();
+            if jobs.is_empty() {
+                println!("no jobs");
+            }
+            for j in &jobs {
+                println!("{}", job_line(j));
+            }
+        }
+        Command::Jobs { cmd: Some(JobsCmd::Cancel { .. }) } => {
+            let state = result["state"].as_str().unwrap_or("?");
+            if ["done", "failed", "cancelled"].contains(&state) {
+                println!("{} already {state}", result["job_id"].as_str().unwrap_or("?"));
+            } else {
+                println!("cancelling {}", result["job_id"].as_str().unwrap_or("?"));
+            }
+        }
         _ => println!("{}", serde_json::to_string_pretty(&result)?),
     }
     Ok(())

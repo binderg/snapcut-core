@@ -32,8 +32,9 @@ use ve_protocol::{ErrorCode, RpcError};
 use ve_render::{AudioSource, Span};
 
 use crate::commit::{Committed, commit, mutation_params, parse_time};
-use crate::project::{OpenProject, cache_base};
+use crate::project::cache_base;
 use crate::render::{render_error, span, work_dir};
+use crate::{Session, Snapshot};
 
 /// Bump when any measurement's method or output changes, so stale cache entries are ignored.
 const CACHE_VERSION: u32 = 1;
@@ -55,6 +56,9 @@ pub struct MeasureParams {
     /// Also return a series, one value per this much time (`1s`, `10f`, `0.5s`).
     #[serde(default)]
     pub resolution: Option<String>,
+    /// Run as a background job: answer `{job_id}` at once (see `jobs.*`).
+    #[serde(default)]
+    pub background: bool,
 }
 
 fn default_buckets() -> usize {
@@ -73,6 +77,37 @@ pub struct WaveformParams {
     /// Number of points (default 1000, max 100000), e.g. the pixel width to draw.
     #[serde(default = "default_buckets")]
     pub buckets: usize,
+    /// Run as a background job: answer `{job_id}` at once (see `jobs.*`).
+    #[serde(default)]
+    pub background: bool,
+}
+
+/// Seconds a measurement covers: the asset's length, or the timeline range.
+fn measured_secs(s: &Snapshot, asset: Option<&Id>, from: Option<&String>, to: Option<&String>) -> Option<f64> {
+    let Some(id) = asset else {
+        return crate::render::span_secs(&s.timeline, from, to);
+    };
+    let a = s.timeline.metadata.ve.assets.iter().find(|a| &a.id == id)?;
+    let d = a.media.as_ref()?.duration.seconds();
+    Some(*d.numer() as f64 / *d.denom() as f64)
+}
+
+impl crate::jobs::Background for MeasureParams {
+    fn background(&self) -> bool {
+        self.background
+    }
+    fn expected_secs(&self, s: &Snapshot) -> Option<f64> {
+        measured_secs(s, self.asset.as_ref(), self.from.as_ref(), self.to.as_ref())
+    }
+}
+
+impl crate::jobs::Background for WaveformParams {
+    fn background(&self) -> bool {
+        self.background
+    }
+    fn expected_secs(&self, s: &Snapshot) -> Option<f64> {
+        measured_secs(s, self.asset.as_ref(), self.from.as_ref(), self.to.as_ref())
+    }
 }
 
 /// What was measured.
@@ -323,7 +358,7 @@ fn measure_loudness(src: &AudioSource<'_>, work: &Path) -> Result<(Loudness, Vec
     Ok((loudness::parse_ebur128(&log), warnings))
 }
 
-pub fn loudness(p: &mut OpenProject, a: MeasureParams) -> Result<LoudnessResult, RpcError> {
+pub fn loudness(p: &Snapshot, a: MeasureParams) -> Result<LoudnessResult, RpcError> {
     let work = work_dir(p);
     let tl = &p.timeline;
     let r = resolve(tl, a.asset.as_ref(), a.from.as_ref(), a.to.as_ref())?;
@@ -345,7 +380,7 @@ pub fn loudness(p: &mut OpenProject, a: MeasureParams) -> Result<LoudnessResult,
     Ok(out)
 }
 
-pub fn levels(p: &mut OpenProject, a: MeasureParams) -> Result<LevelsResult, RpcError> {
+pub fn levels(p: &Snapshot, a: MeasureParams) -> Result<LevelsResult, RpcError> {
     let work = work_dir(p);
     let tl = &p.timeline;
     let r = resolve(tl, a.asset.as_ref(), a.from.as_ref(), a.to.as_ref())?;
@@ -383,7 +418,7 @@ pub fn levels(p: &mut OpenProject, a: MeasureParams) -> Result<LevelsResult, Rpc
     Ok(out)
 }
 
-pub fn waveform(p: &mut OpenProject, a: WaveformParams) -> Result<WaveformResult, RpcError> {
+pub fn waveform(p: &Snapshot, a: WaveformParams) -> Result<WaveformResult, RpcError> {
     if a.buckets == 0 || a.buckets > MAX_POINTS {
         return Err(RpcError::invalid_params(format!("buckets must be 1 to {MAX_POINTS}")));
     }
@@ -411,7 +446,7 @@ pub fn waveform(p: &mut OpenProject, a: WaveformParams) -> Result<WaveformResult
     Ok(out)
 }
 
-pub fn pitch(p: &mut OpenProject, a: MeasureParams) -> Result<PitchResult, RpcError> {
+pub fn pitch(p: &Snapshot, a: MeasureParams) -> Result<PitchResult, RpcError> {
     let work = work_dir(p);
     let tl = &p.timeline;
     let r = resolve(tl, a.asset.as_ref(), a.from.as_ref(), a.to.as_ref())?;
@@ -464,6 +499,18 @@ mutation_params! {
         pub from: Option<String>,
         #[serde(default)]
         pub to: Option<String>,
+        /// Run as a background job: answer `{job_id}` at once (see `jobs.*`).
+        #[serde(default)]
+        pub background: bool,
+    }
+}
+
+impl crate::jobs::Background for NormalizeParams {
+    fn background(&self) -> bool {
+        self.background
+    }
+    fn expected_secs(&self, s: &Snapshot) -> Option<f64> {
+        crate::render::span_secs(&s.timeline, self.from.as_ref(), self.to.as_ref())
     }
 }
 
@@ -485,49 +532,57 @@ pub struct NormalizeResult {
     pub report: EditReport,
 }
 
-pub fn normalize(p: &mut OpenProject, a: NormalizeParams) -> Result<Committed<NormalizeResult>, RpcError> {
+/// Measures from the snapshot without the lock, then commits; an edit made
+/// meanwhile makes the commit fail with `stale_revision`.
+pub fn normalize(s: &Session, snap: &Snapshot, a: NormalizeParams) -> Result<Committed<NormalizeResult>, RpcError> {
     if !(-70.0..=0.0).contains(&a.target) {
         return Err(RpcError::invalid_params("target must be between -70 and 0 LUFS"));
     }
     if !(-20.0..=0.0).contains(&a.ceiling) {
         return Err(RpcError::invalid_params("ceiling must be between -20 and 0 dBTP"));
     }
-    let work = work_dir(p);
-    commit(p, a.mutation(), "edit.normalize", |tl| {
-        let sp = span(tl, a.from.as_ref(), a.to.as_ref())?;
-        let (l, mut warnings) = measure_loudness(&AudioSource::Timeline { tl, span: sp }, &work)?;
-        let measured = l
-            .integrated
-            .ok_or_else(|| RpcError::invalid_params("nothing loud enough to measure there (all below -70 LUFS)"))?;
-        let mut gain = a.target - measured;
-        if let Some(tp) = l.true_peak
-            && tp + gain > a.ceiling
-        {
-            let limited = a.ceiling - tp;
-            warnings.push(format!(
-                "gain limited to {limited:+.1} dB (not {gain:+.1}) so true peak stays at {} dBTP; reaching {} LUFS needs a limiter",
-                a.ceiling, a.target
-            ));
-            gain = limited;
-        }
-        let gain = round1(gain);
-        let mut result = NormalizeResult {
-            measured_lufs: measured,
-            measured_true_peak_dbtp: l.true_peak,
-            gain_db: gain,
-            expected_lufs: round1(measured + gain),
-            expected_true_peak_dbtp: l.true_peak.map(|t| round1(t + gain)),
-            clips: Vec::new(),
-            warnings,
-            report: ve_ops::edit::report_for(tl),
-        };
-        if gain == 0.0 {
-            return Ok((tl.clone(), result));
-        }
-        let range = (a.from.is_some() || a.to.is_some()).then_some((sp.start, sp.end));
-        let (next, report, clips) = ve_ops::edit::add_gain(tl, range, gain).map_err(|e| RpcError::invalid_params(e.0))?;
-        result.report = report;
-        result.clips = clips;
-        Ok((next, result))
+    if a.base_rev != snap.revision {
+        return Err(RpcError::stale_revision(snap.revision));
+    }
+    let work = work_dir(snap);
+    let tl = &snap.timeline;
+    let sp = span(tl, a.from.as_ref(), a.to.as_ref())?;
+    let (l, mut warnings) = measure_loudness(&AudioSource::Timeline { tl, span: sp }, &work)?;
+    let measured = l
+        .integrated
+        .ok_or_else(|| RpcError::invalid_params("nothing loud enough to measure there (all below -70 LUFS)"))?;
+    let mut gain = a.target - measured;
+    if let Some(tp) = l.true_peak
+        && tp + gain > a.ceiling
+    {
+        let limited = a.ceiling - tp;
+        warnings.push(format!(
+            "gain limited to {limited:+.1} dB (not {gain:+.1}) so true peak stays at {} dBTP; reaching {} LUFS needs a limiter",
+            a.ceiling, a.target
+        ));
+        gain = limited;
+    }
+    let gain = round1(gain);
+    let mut result = NormalizeResult {
+        measured_lufs: measured,
+        measured_true_peak_dbtp: l.true_peak,
+        gain_db: gain,
+        expected_lufs: round1(measured + gain),
+        expected_true_peak_dbtp: l.true_peak.map(|t| round1(t + gain)),
+        clips: Vec::new(),
+        warnings,
+        report: ve_ops::edit::report_for(tl),
+    };
+    let range = (a.from.is_some() || a.to.is_some()).then_some((sp.start, sp.end));
+    s.with_project(|p| {
+        commit(p, a.mutation(), "edit.normalize", |tl| {
+            if gain == 0.0 {
+                return Ok((tl.clone(), result));
+            }
+            let (next, report, clips) = ve_ops::edit::add_gain(tl, range, gain).map_err(|e| RpcError::invalid_params(e.0))?;
+            result.report = report;
+            result.clips = clips;
+            Ok((next, result))
+        })
     })
 }

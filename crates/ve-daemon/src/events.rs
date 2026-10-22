@@ -1,4 +1,5 @@
-//! `project.changed`: one JSON-RPC notification per committed revision.
+//! `project.changed`: one JSON-RPC notification per committed revision, plus
+//! `job.progress` / `job.finished` for background jobs (see `jobs`).
 //!
 //! `commit::commit_doc` queues a [`Change`] on the open project; the session
 //! drains the queue after each call and broadcasts the notifications. Every
@@ -54,6 +55,12 @@ impl Events {
     pub(crate) fn publish(&self, change: &Change) {
         let msg = json!({ "jsonrpc": "2.0", "method": "project.changed", "params": change }).to_string();
         // No subscribers is fine: nobody is watching.
+        let _ = self.tx.send(msg.into());
+    }
+
+    /// `job.progress` or `job.finished` (see `jobs`).
+    pub(crate) fn publish_job(&self, method: &str, params: &Value) {
+        let msg = json!({ "jsonrpc": "2.0", "method": method, "params": params }).to_string();
         let _ = self.tx.send(msg.into());
     }
 

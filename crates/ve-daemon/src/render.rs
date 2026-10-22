@@ -3,8 +3,9 @@
 //!
 //! The protocol never writes where a client asked: images come back as
 //! base64 bytes, videos as a file in the project's cache folder that the
-//! client moves (the CLI puts it at `-o`). Synchronous for now; these become
-//! jobs once the daemon has a job queue.
+//! client moves (the CLI puts it at `-o`). Each works from a [`Snapshot`],
+//! so a long render never holds the project lock, and the slow ones can run
+//! as background jobs (`background: true`).
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -17,21 +18,22 @@ use ve_ops::edit::tc;
 use ve_protocol::{ErrorCode, RpcError};
 use ve_render::{ImageFormat, RenderError, Span};
 
+use crate::Snapshot;
 use crate::commit::parse_time;
-use crate::project::OpenProject;
 
 pub(crate) fn render_error(e: RenderError) -> RpcError {
     let code = match &e {
         RenderError::Invalid(_) => ErrorCode::InvalidParams,
         RenderError::Media(_) | RenderError::Ffmpeg { .. } => ErrorCode::RenderFailure,
         RenderError::Io(_) => ErrorCode::Internal,
+        RenderError::Cancelled => ErrorCode::Cancelled,
     };
     RpcError::new(code, e.to_string())
 }
 
 /// `<cache>/renders`, with files older than a day cleared out.
-pub(crate) fn work_dir(p: &OpenProject) -> PathBuf {
-    let dir = p.cache_dir().join("renders");
+pub(crate) fn work_dir(s: &Snapshot) -> PathBuf {
+    let dir = s.cache_dir().join("renders");
     if let Ok(entries) = std::fs::read_dir(&dir) {
         let old = SystemTime::now() - Duration::from_secs(24 * 3600);
         for e in entries.flatten() {
@@ -96,7 +98,7 @@ pub struct ImageResult {
     pub warnings: Vec<String>,
 }
 
-pub fn frame(p: &mut OpenProject, a: FrameParams) -> Result<ImageResult, RpcError> {
+pub fn frame(p: &Snapshot, a: FrameParams) -> Result<ImageResult, RpcError> {
     let tl = &p.timeline;
     let at = parse_time("at", &a.at, tl.output_rate())?;
     // VE_RENDERER=gpu (set where the daemon starts) tries the Phase 2 GPU compositor.
@@ -146,6 +148,9 @@ pub struct SheetParams {
     pub width: u32,
     #[serde(default)]
     pub format: Format,
+    /// Run as a background job: answer `{job_id}` at once (see `jobs.*`).
+    #[serde(default)]
+    pub background: bool,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
@@ -158,7 +163,7 @@ pub struct SheetResult {
     pub times: Vec<String>,
 }
 
-pub fn contact_sheet(p: &mut OpenProject, a: SheetParams) -> Result<SheetResult, RpcError> {
+pub fn contact_sheet(p: &Snapshot, a: SheetParams) -> Result<SheetResult, RpcError> {
     let tl = &p.timeline;
     let rate = tl.output_rate();
     let sp = span(tl, a.from.as_ref(), a.to.as_ref())?;
@@ -189,6 +194,9 @@ pub struct PreviewParams {
     /// Width in pixels. Default 640.
     #[serde(default = "default_width")]
     pub width: u32,
+    /// Run as a background job: answer `{job_id}` at once (see `jobs.*`).
+    #[serde(default)]
+    pub background: bool,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -201,6 +209,39 @@ pub struct ExportParams {
     pub from: Option<String>,
     #[serde(default)]
     pub to: Option<String>,
+    /// Run as a background job: answer `{job_id}` at once (see `jobs.*`).
+    #[serde(default)]
+    pub background: bool,
+}
+
+/// Seconds of output a range covers, for job progress.
+pub(crate) fn span_secs(tl: &Timeline, from: Option<&String>, to: Option<&String>) -> Option<f64> {
+    let d = span(tl, from, to).ok()?.duration();
+    Some(*d.numer() as f64 / *d.denom() as f64)
+}
+
+impl crate::jobs::Background for SheetParams {
+    fn background(&self) -> bool {
+        self.background
+    }
+}
+
+impl crate::jobs::Background for PreviewParams {
+    fn background(&self) -> bool {
+        self.background
+    }
+    fn expected_secs(&self, s: &Snapshot) -> Option<f64> {
+        span_secs(&s.timeline, self.from.as_ref(), self.to.as_ref())
+    }
+}
+
+impl crate::jobs::Background for ExportParams {
+    fn background(&self) -> bool {
+        self.background
+    }
+    fn expected_secs(&self, s: &Snapshot) -> Option<f64> {
+        span_secs(&s.timeline, self.from.as_ref(), self.to.as_ref())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
@@ -228,9 +269,9 @@ fn out_file(work: &Path, kind: &str, rev: u64) -> PathBuf {
     work.join(format!("{kind}-rev{rev}-{nanos}.mp4"))
 }
 
-fn encode(p: &mut OpenProject, sp: Span, settings: ve_render::EncodeSettings, kind: &str) -> Result<VideoResult, RpcError> {
+fn encode(p: &Snapshot, sp: Span, settings: ve_render::EncodeSettings, kind: &str) -> Result<VideoResult, RpcError> {
     let work = work_dir(p);
-    let path = out_file(&work, kind, p.revision());
+    let path = out_file(&work, kind, p.revision);
     let tl = &p.timeline;
     let rate = tl.output_rate();
     let e = ve_render::encode(tl, sp, &settings, &path, &work).map_err(render_error)?;
@@ -252,13 +293,13 @@ fn encode(p: &mut OpenProject, sp: Span, settings: ve_render::EncodeSettings, ki
     })
 }
 
-pub fn range_preview(p: &mut OpenProject, a: PreviewParams) -> Result<VideoResult, RpcError> {
+pub fn range_preview(p: &Snapshot, a: PreviewParams) -> Result<VideoResult, RpcError> {
     let sp = span(&p.timeline, a.from.as_ref(), a.to.as_ref())?;
     let settings = ve_export::preview_settings(&p.timeline, a.width);
     encode(p, sp, settings, "preview")
 }
 
-pub fn export(p: &mut OpenProject, a: ExportParams) -> Result<VideoResult, RpcError> {
+pub fn export(p: &Snapshot, a: ExportParams) -> Result<VideoResult, RpcError> {
     let name = a.preset.as_deref().unwrap_or("master");
     let preset = ve_export::preset(name).ok_or_else(|| {
         let names: Vec<&str> = ve_export::PRESETS.iter().map(|p| p.name).collect();

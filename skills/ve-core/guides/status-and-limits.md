@@ -7,7 +7,7 @@ plan around it. When something here gets built, this file changes.
 
 | Missing | What to do meanwhile |
 | --- | --- |
-| **Background jobs** (progress, cancel) | `render.export`, `analyze.*`, `measure.*` and big imports are synchronous and block other calls on the project until done. Show a busy state; do not fire many heavy calls at once |
+| **Imports as jobs** | `media.import` of big files still holds the project until done (renders, analysis and measurements run as jobs: [../methods/jobs.md](../methods/jobs.md)) |
 | **Video playback stream** / serving media over HTTP | `render.frame` for stills; `render.range_preview` MP4s; or a desktop shell plays source files directly |
 | **Track mute, hide, lock** | Remove clips or move them to another track |
 | **Effects and transitions in exports, previews and contact sheets** | They render only through the GPU frame path (`render.frame` with `VE_RENDERER=gpu`); other renders show plain cuts and unprocessed clips, with a warning. GPU export is next |

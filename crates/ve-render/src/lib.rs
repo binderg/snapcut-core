@@ -15,6 +15,7 @@
 //! Determinism rule: a frame is a pure function of (project, t). That is what
 //! makes the frame cache safe.
 
+pub mod control;
 pub mod ffmpeg;
 pub mod fx;
 pub mod compose;
@@ -45,6 +46,9 @@ pub enum RenderError {
     Ffmpeg { message: String, stderr: String },
     #[error("{0}")]
     Io(String),
+    /// The job running this render was cancelled.
+    #[error("cancelled")]
+    Cancelled,
 }
 
 type Result<T> = std::result::Result<T, RenderError>;
