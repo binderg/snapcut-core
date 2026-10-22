@@ -1,0 +1,22 @@
+{
+  "id": "core.look/blur",
+  "version": "1.0.0",
+  "kind": "effect",
+  "runtime": "wgsl",
+  "name": "Blur",
+  "description": "Soften the picture (disk blur).",
+  "shader": "effect.wgsl",
+  "params": {
+    "type": "object",
+    "properties": {
+      "radius": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 100,
+        "default": 8,
+        "description": "Blur radius in pixels of the clip's picture.",
+        "x-animatable": true
+      }
+    }
+  }
+}

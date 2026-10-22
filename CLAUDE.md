@@ -223,7 +223,21 @@ back or further restarts; idle 30 s closes. Optimized build, 1080p H.264:
 640 px in order 9 ms/frame, 1920 px 54 ms (ffmpeg path 130-140 ms); random
 jumps ~120-200 ms (no better than restart). `ve-render` is opt-level 2 in dev.
 Benchmark: `cargo test --release -p ve-render --test gpu bench -- --ignored --nocapture`.
-Next: the WGSL effect contract. In-process decoding (`ffmpeg-the-third`) is
+Effects (`ve-render::fx`, `ve-ops::effects`, `ve-daemon::fx`): `wgsl`
+runtime done. Manifest (`effect.json`, `runtime` field), params from JSON
+Schema (number/integer/boolean as f32, `format: color` as linear vec4),
+wrapper with `src`/`outgoing`/`incoming` (`from` is reserved in WGSL),
+`u.time/progress/resolution`, `p.<param>`; naga validation with errors on the
+author's line (position parsed from naga's report; `location()` was wrong);
+GPU test render (3 frames, 2 s, NaN check). Built-ins in `plugins/core/effects`
+(5 effects, 4 transitions), compiled in; project effects in
+`<project>/effects/`. GPU pipeline: prep to Rgba16Float premultiplied
+linear, effect ping-pong at clip size, transitions on canvas-size textures,
+then composite (still 0-diff vs ffmpeg). Methods `fx.list|define`,
+`effect.add|set|remove` (keyframes linear/hold), `transition.add|set|remove`
+(OTIO Transition, handle checks, align center/start/end). Only the GPU frame
+path renders them; exports/previews/sheets warn. Next: GPU export (pipe
+composited frames to the encoder) and GPU sheets/previews. In-process decoding (`ffmpeg-the-third`) is
 planned for fast random scrubbing (ARCHITECTURE.md, "Decoding for the
 compositor"); it needs LLVM and an LGPL shared FFmpeg build, decide first.
 No CI yet; the Python check runs by hand.

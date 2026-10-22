@@ -10,8 +10,8 @@ plan around it. When something here gets built, this file changes.
 | **Background jobs** (progress, cancel) | `render.export`, `analyze.*`, `measure.*` and big imports are synchronous and block other calls on the project until done. Show a busy state; do not fire many heavy calls at once |
 | **Video playback stream** / serving media over HTTP | `render.frame` for stills; `render.range_preview` MP4s; or a desktop shell plays source files directly |
 | **Track mute, hide, lock** | Remove clips or move them to another track |
-| **Transitions as an edit** | The model has OTIO `Transition.1`, but no method creates one and renders treat them as cuts (with a warning). Audio cuts get a 20 ms crossfade automatically |
-| **Effects, titles, text, shapes, masks, LUTs, color correction** | Data slots are reserved (`metadata.ve.effects`); nothing renders them. They come with the GPU compositor |
+| **Effects and transitions in exports, previews and contact sheets** | They render only through the GPU frame path (`render.frame` with `VE_RENDERER=gpu`); other renders show plain cuts and unprocessed clips, with a warning. GPU export is next |
+| **Titles, text, shapes, masks, LUTs, audio effects; `wasm` and `ofx` effect runtimes** | Write a `wgsl` effect ([writing-effects.md](writing-effects.md)); titles will come as generator plugins |
 | **Picture transforms** (scale, position, crop per clip) | Sources are fit to the project size (`master`) or cropped (vertical preset) only |
 | **Video measurements** (brightness, saturation, black or frozen frames, blur) | Not available; only audio measurements |
 | **Per-clip measurements** (`clip` param, a report of every clip) | Measure an asset (whole file) or a timeline range |

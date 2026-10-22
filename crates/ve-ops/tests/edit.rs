@@ -389,3 +389,101 @@ fn clips_go_on_added_tracks_and_leave_with_forced_removal() {
     let applied = ve_ops::commit_patches(&with_clips, &after).unwrap();
     assert_eq!(ve_ops::apply_patch(&after, &applied.inverse).unwrap(), with_clips);
 }
+
+fn video_clips(tl: &Timeline) -> Vec<Id> {
+    let Composable::Track(v1) = &tl.tracks.children[0] else { panic!() };
+    v1.children
+        .iter()
+        .filter_map(|c| match c {
+            Composable::Clip(c) => clip_id(c).cloned(),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn effects_stack_on_video_clips_and_undo() {
+    use serde_json::json;
+    use ve_ops::effects;
+    let tl = insert_all(&project());
+    let v = video_clips(&tl)[0].clone();
+    let params = |v: serde_json::Value| v.as_object().cloned().unwrap();
+    let (tl1, r) = effects::add(&tl, &v, "core.color/desaturate@1", params(json!({"amount": 0.5})), None).unwrap();
+    let fx = r.effect.clone();
+    let (tl2, r) = effects::add(&tl1, &v, "core.look/blur@1", params(json!({})), Some(0)).unwrap();
+    assert_eq!(r.effects.iter().map(|e| e.effect.as_str()).collect::<Vec<_>>(), ["core.look/blur@1", "core.color/desaturate@1"]);
+    let blur = r.effects[0].id.clone();
+    assert!(tl2.ids().contains(&fx) && tl2.ids().contains(&blur));
+    // Merge params; null removes one.
+    let (tl3, r) = effects::set(&tl2, &fx, Some(&params(json!({"amount": null}))), None, Some(0)).unwrap();
+    assert!(r.effects[0].params.is_empty());
+    assert_eq!(r.effects[0].id, fx, "moved to the front");
+    // Keyframes, sorted by time.
+    let rate = tl.output_rate();
+    let mut keys = indexmap::IndexMap::new();
+    keys.insert("amount".to_owned(), vec![effects::keyframe(sec(2), json!(1.0), None, rate), effects::keyframe(sec(0), json!(0.0), None, rate)]);
+    let (tl4, r) = effects::set(&tl3, &fx, None, Some(&keys), None).unwrap();
+    assert_eq!(r.effects[0].keyframed, ["amount"]);
+    let stored = effects::get(&tl4, &fx).unwrap();
+    assert!(stored.keyframes["amount"][0].t < stored.keyframes["amount"][1].t);
+    // Remove, and undo restores everything.
+    let (tl5, _) = effects::remove(&tl4, &blur).unwrap();
+    assert!(effects::get(&tl5, &blur).is_none());
+    let applied = ve_ops::commit_patches(&tl, &tl5).unwrap();
+    assert_eq!(ve_ops::apply_patch(&tl5, &applied.inverse).unwrap(), tl);
+    // Audio clips are refused.
+    let Composable::Track(a1) = &tl.tracks.children[1] else { panic!() };
+    let Composable::Clip(ac) = &a1.children[0] else { panic!() };
+    assert!(effects::add(&tl, clip_id(ac).unwrap(), "core.color/desaturate", params(json!({})), None).is_err());
+}
+
+#[test]
+fn transitions_sit_on_cuts_and_need_handles() {
+    use ve_ops::effects::{self, Align, NewTransition};
+    let tl = insert_all(&project());
+    // Cut at 5 s: both sides have media to spare.
+    let tl = edit::split(&tl, &Split { at: sec(5), clips: vec![], tracks: vec![], linked: true }).unwrap().0;
+    let new = |at: Q, align: Align| NewTransition {
+        clip: None,
+        at: Some(at),
+        track: None,
+        duration: sec(1),
+        align,
+        transition: "core.transition/dissolve@1".into(),
+        params: serde_json::Map::new(),
+    };
+    let (with, r) = effects::add_transition(&tl, &new(sec(5), Align::Center)).unwrap();
+    assert_eq!((r.start.as_str(), r.cut.as_str(), r.end.as_str()), ("00:00:04:15", "00:00:05:00", "00:00:05:15"));
+    assert_eq!(r.track, "V1");
+    assert!(effects::add_transition(&with, &new(sec(5), Align::Center)).is_err(), "one per cut");
+    // Lengthen it and make it start at the cut.
+    let (with2, r) = effects::set_transition(&with, &r.id, Some(sec(2)), Some(Align::Start), None, None).unwrap();
+    assert_eq!((r.start.as_str(), r.end.as_str()), ("00:00:05:00", "00:00:07:00"));
+    let (gone, _) = effects::remove_transition(&with2, &r.id).unwrap();
+    assert_eq!(gone, tl);
+    // Not a cut, and audio is not for transitions.
+    assert!(effects::add_transition(&tl, &new(sec(3), Align::Center)).is_err());
+    // A second copy of the file inside the first.
+    let mut p = Insert {
+        asset: Id::from_raw("asset_a"),
+        track: None,
+        audio_track: None,
+        at: None,
+        source_in: None,
+        source_out: None,
+        duration: None,
+        video: true,
+        audio: true,
+        overwrite: false,
+    };
+    p.at = Some(sec(10));
+    let tl = edit::insert(&tl, &p).unwrap().0;
+    // The fixture file is 300 s. The copy inserted at 10 s starts at media 0
+    // (no pre-roll) and ends at the file's end, at 310 s (no media after).
+    let e = effects::add_transition(&tl, &new(sec(10), Align::Center)).unwrap_err();
+    assert!(e.0.contains("before its in point"), "{e}");
+    assert!(effects::add_transition(&tl, &new(sec(10), Align::Start)).is_ok(), "starting at the cut needs no pre-roll");
+    let e = effects::add_transition(&tl, &new(sec(310), Align::Start)).unwrap_err();
+    assert!(e.0.contains("after its out point"), "{e}");
+    assert!(effects::add_transition(&tl, &new(sec(310), Align::End)).is_ok(), "ending at the cut needs no media after it");
+}

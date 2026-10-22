@@ -86,6 +86,9 @@ Exit codes: 0 ok, 2 bad arguments (the message says what), 3 stale revision,
 | Add a track (any number of each kind) | `ve track add video` (makes `V2`, drawn on top of `V1`), `ve track add audio --name Music` |
 | B-roll without its sound, over the main shot | `ve track add video`, then `ve insert asset_b --no-audio --track V2 --at 00:00:30:00 --overwrite` |
 | Tracks: list, rename, reorder, remove | `ve track list`, `ve track rename V2 Broll`, `ve track move V2 0`, `ve track rm V2 [--force]` |
+| Effects available | `ve fx list` |
+| Effect on a clip | `ve effect add clip_7f3a core.color/exposure --param stops=0.5`; change with `ve effect set fx_1a2b --param stops=1`, animate with `--key stops@0s=0 --key stops@2s=1`; `ve effect rm fx_1a2b` |
+| Transition on a cut | `ve transition add --at 00:00:42:10 [--type core.transition/wipe] [--duration 15f]`; `ve transition rm tr_1a2b` |
 | Markers | `ve marker add --at 00:01:00:00 --name chapter`, `ve marker rm --name silence` |
 | Undo / redo / what happened | `ve undo`, `ve redo`, `ve history` |
 

@@ -1,0 +1,628 @@
+//! Effects and transitions: manifests, params, the WGSL wrapper and validation.
+//!
+//! An effect or transition is a manifest (`effect.json`) plus code. The
+//! manifest names a `runtime`; only `wgsl` exists so far (ARCHITECTURE.md,
+//! "Effects and transitions"). A `wgsl` author writes one function:
+//!
+//! ```wgsl
+//! fn effect(uv: vec2<f32>) -> vec4<f32>      // kind "effect": src(uv) is the clip
+//! fn transition(uv: vec2<f32>) -> vec4<f32>  // kind "transition": outgoing(uv), incoming(uv)
+//! ```
+//!
+//! (`from` is a reserved word in WGSL, hence `outgoing`/`incoming`.)
+//!
+//! The engine wraps it into a full shader with `src`/`outgoing`/`incoming` (linear
+//! light, premultiplied alpha, `uv` 0..1 from the top left), `u.time`
+//! (seconds since the clip or transition starts), `u.progress` (0..1 across
+//! it), `u.resolution` (pixels), and `p.<param>` for each manifest param.
+//!
+//! Params are JSON Schema properties. Supported: `number` and `integer` (as
+//! `f32`), `boolean` (as `f32`, 0 or 1), and color arrays (`"format":
+//! "color"`, 3 or 4 numbers 0..1 in sRGB; the shader gets linear RGB as a
+//! `vec4<f32>` with straight alpha). `x-animatable: true` allows keyframes.
+//!
+//! Built-ins live in `plugins/core/effects/` and are compiled in. Project
+//! effects live in `<project>/effects/<name>/effect.json`.
+
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
+use ve_model::meta::Keyframe;
+use ve_model::time::Q;
+
+/// A manifest or shader that cannot be used. The message is written for
+/// the person or agent who wrote the effect, with line numbers in their file.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("{0}")]
+pub struct FxError(pub String);
+
+fn err(m: impl Into<String>) -> FxError {
+    FxError(m.into())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Kind {
+    Effect,
+    Transition,
+}
+
+/// `effect.json`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Manifest {
+    /// `core.color/desaturate`, `project.my_glow`.
+    pub id: String,
+    /// Semver. Clips may pin the major version: `core.color/desaturate@1`.
+    pub version: String,
+    pub kind: Kind,
+    /// `wgsl` (the only runtime so far; `wasm`, `ofx` and `process` come later).
+    #[serde(default = "wgsl")]
+    pub runtime: String,
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    /// The code file next to the manifest.
+    pub shader: String,
+    /// JSON Schema object whose `properties` are the params.
+    #[serde(default = "empty_schema")]
+    pub params: Value,
+    /// Optional `SKILL.md` that teaches agents when to use it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skill: Option<String>,
+}
+
+fn wgsl() -> String {
+    "wgsl".into()
+}
+
+fn empty_schema() -> Value {
+    serde_json::json!({"type": "object", "properties": {}})
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParamType {
+    Number,
+    Bool,
+    Color,
+}
+
+/// One param, parsed from the schema.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Param {
+    pub name: String,
+    pub ty: ParamType,
+    pub default: Value,
+    pub min: Option<f64>,
+    pub max: Option<f64>,
+    pub animatable: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Origin {
+    Builtin,
+    Project,
+}
+
+/// A loaded effect or transition.
+#[derive(Debug, Clone)]
+pub struct Fx {
+    pub manifest: Manifest,
+    pub params: Vec<Param>,
+    /// The author's code.
+    pub source: String,
+    pub origin: Origin,
+    /// Folder it was loaded from (project effects).
+    pub dir: Option<PathBuf>,
+    /// Hash of manifest and code: GPU pipelines are cached by it.
+    pub hash: u64,
+}
+
+const RESERVED: &[&str] = &["u", "p", "src", "outgoing", "incoming", "effect", "transition", "uv"];
+
+fn is_ident(s: &str) -> bool {
+    let mut cs = s.chars();
+    cs.next().is_some_and(|c| c.is_ascii_lowercase() || c == '_') && cs.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+}
+
+impl Fx {
+    /// Check a manifest and its code and build the effect. Does not touch
+    /// the GPU; [`crate::gpu::Gpu::test_fx`] does the test render.
+    pub fn new(manifest: Manifest, source: String, origin: Origin, dir: Option<PathBuf>) -> Result<Self, FxError> {
+        if manifest.runtime != "wgsl" {
+            return Err(err(format!(
+                "runtime `{}` is not supported yet; only `wgsl` runs today (wasm, ofx and process come later)",
+                manifest.runtime
+            )));
+        }
+        let id_ok = !manifest.id.is_empty()
+            && manifest.id.split(['.', '/']).all(|part| !part.is_empty() && part.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-'));
+        if !id_ok || !manifest.id.contains('.') {
+            return Err(err(format!("id `{}`: use lowercase dotted names like `project.my_glow` or `core.color/desaturate`", manifest.id)));
+        }
+        semver::Version::parse(&manifest.version).map_err(|e| err(format!("version `{}`: {e}", manifest.version)))?;
+        let params = parse_params(&manifest.params)?;
+        let mut h = DefaultHasher::new();
+        serde_json::to_string(&manifest).unwrap_or_default().hash(&mut h);
+        source.hash(&mut h);
+        let fx = Self { manifest, params, source, origin, dir, hash: h.finish() };
+        fx.validate()?;
+        Ok(fx)
+    }
+
+    /// `id@major`, the form clips store.
+    pub fn reference(&self) -> String {
+        let major = self.manifest.version.split('.').next().unwrap_or("0");
+        format!("{}@{major}", self.manifest.id)
+    }
+
+    pub fn kind(&self) -> Kind {
+        self.manifest.kind
+    }
+
+    /// Bytes of the params uniform: colors (vec4) first, then scalars, padded to 16.
+    pub fn params_size(&self) -> usize {
+        let colors = self.params.iter().filter(|p| p.ty == ParamType::Color).count();
+        let scalars = self.params.len() - colors;
+        (colors * 16 + (scalars * 4).div_ceil(16) * 16).max(16)
+    }
+
+    fn ordered(&self) -> Vec<&Param> {
+        let mut v: Vec<&Param> = self.params.iter().filter(|p| p.ty == ParamType::Color).collect();
+        v.extend(self.params.iter().filter(|p| p.ty != ParamType::Color));
+        v
+    }
+
+    /// The full shader: engine prelude, then the author's code. Returns it
+    /// with the number of prelude lines, to map errors back to the author's file.
+    pub fn wrapped(&self) -> (String, usize) {
+        let mut s = String::new();
+        s.push_str("struct VeTime {\n    time: f32,\n    progress: f32,\n    resolution: vec2<f32>,\n};\n");
+        s.push_str("struct VeParams {\n");
+        let ordered = self.ordered();
+        for p in &ordered {
+            let ty = if p.ty == ParamType::Color { "vec4<f32>" } else { "f32" };
+            s.push_str(&format!("    {}: {ty},\n", p.name));
+        }
+        let scalars = ordered.iter().filter(|p| p.ty != ParamType::Color).count();
+        let colors = ordered.len() - scalars;
+        let pad = (self.params_size() - colors * 16) / 4 - scalars;
+        for i in 0..pad {
+            s.push_str(&format!("    ve_pad{i}: f32,\n"));
+        }
+        s.push_str("};\n");
+        s.push_str("@group(0) @binding(0) var ve_a: texture_2d<f32>;\n");
+        s.push_str("@group(0) @binding(1) var ve_s: sampler;\n");
+        s.push_str("@group(0) @binding(2) var<uniform> u: VeTime;\n");
+        s.push_str("@group(0) @binding(3) var<uniform> p: VeParams;\n");
+        match self.kind() {
+            Kind::Effect => {
+                s.push_str("fn src(uv: vec2<f32>) -> vec4<f32> { return textureSampleLevel(ve_a, ve_s, uv, 0.0); }\n");
+            }
+            Kind::Transition => {
+                s.push_str("@group(0) @binding(4) var ve_b: texture_2d<f32>;\n");
+                s.push_str("fn outgoing(uv: vec2<f32>) -> vec4<f32> { return textureSampleLevel(ve_a, ve_s, uv, 0.0); }\n");
+                s.push_str("fn incoming(uv: vec2<f32>) -> vec4<f32> { return textureSampleLevel(ve_b, ve_s, uv, 0.0); }\n");
+            }
+        }
+        s.push_str("struct VeOut {\n    @builtin(position) pos: vec4<f32>,\n    @location(0) uv: vec2<f32>,\n};\n");
+        s.push_str("@vertex fn ve_vs(@builtin(vertex_index) i: u32) -> VeOut {\n");
+        s.push_str("    let xy = vec2<f32>(f32((i << 1u) & 2u), f32(i & 2u));\n");
+        s.push_str("    var o: VeOut;\n    o.pos = vec4<f32>(xy * 2.0 - 1.0, 0.0, 1.0);\n");
+        s.push_str("    o.uv = vec2<f32>(xy.x, 1.0 - xy.y);\n    return o;\n}\n");
+        let call = match self.kind() {
+            Kind::Effect => "effect",
+            Kind::Transition => "transition",
+        };
+        s.push_str(&format!("@fragment fn ve_fs(i: VeOut) -> @location(0) vec4<f32> {{ return {call}(i.uv); }}\n"));
+        let lines = s.lines().count();
+        s.push_str(&self.source);
+        (s, lines)
+    }
+
+    /// Parse and validate the wrapped shader with naga. Errors point at the
+    /// author's file and line.
+    pub fn validate(&self) -> Result<(), FxError> {
+        let (src, prelude) = self.wrapped();
+        let file = &self.manifest.shader;
+        let call = match self.kind() {
+            Kind::Effect => "fn effect(uv: vec2<f32>) -> vec4<f32>",
+            Kind::Transition => "fn transition(uv: vec2<f32>) -> vec4<f32>",
+        };
+        let place = |line: u32, col: u32| -> String {
+            let line = line as usize;
+            if line > prelude { format!("{file} line {}, column {col}", line - prelude) } else { format!("the engine wrapper (line {line})") }
+        };
+        let module = naga::front::wgsl::parse_str(&src).map_err(|e| {
+            // naga's report has the position of the first label (`wgsl:LINE:COL`).
+            let report = e.emit_to_string(&src);
+            let at = first_position(&report);
+            let msg = e.message().to_owned();
+            match at {
+                Some((line, col)) if line > prelude => err(format!("{}: {msg}", place(line as u32, col as u32))),
+                _ => err(format!(
+                    "{file}: {msg}. The code must define `{call}`, and must not redefine engine names ({}).",
+                    RESERVED.join(", ")
+                )),
+            }
+        })?;
+        let mut v = naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::default());
+        v.validate(&module).map_err(|e| {
+            let at = e.spans().next().map(|(span, _)| span.location(&src));
+            let inner = e.as_inner().to_string();
+            err(format!("{}: {inner}", at.map_or_else(|| file.clone(), |l| place(l.line_number, l.line_position))))
+        })?;
+        Ok(())
+    }
+
+    /// Check a set of param values (as a clip stores them) against the schema.
+    pub fn check_params(&self, values: &Map<String, Value>) -> Result<(), FxError> {
+        for (k, v) in values {
+            let p = self.params.iter().find(|p| &p.name == k).ok_or_else(|| {
+                let names: Vec<&str> = self.params.iter().map(|p| p.name.as_str()).collect();
+                err(format!(
+                    "{} has no param `{k}`; its params are {}",
+                    self.manifest.id,
+                    if names.is_empty() { "none".to_owned() } else { names.join(", ") }
+                ))
+            })?;
+            check_value(p, v)?;
+        }
+        Ok(())
+    }
+
+    /// Keyframes are only allowed on params marked `x-animatable`.
+    pub fn check_keyframes(&self, keys: &indexmap::IndexMap<String, Vec<Keyframe>>) -> Result<(), FxError> {
+        for (k, list) in keys {
+            let p = self.params.iter().find(|p| &p.name == k).ok_or_else(|| err(format!("{} has no param `{k}`", self.manifest.id)))?;
+            if !p.animatable && !list.is_empty() {
+                return Err(err(format!("param `{k}` of {} cannot be keyframed", self.manifest.id)));
+            }
+            for kf in list {
+                check_value(p, &kf.v)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// The params uniform at local time `t` (seconds since the clip or
+    /// transition starts): keyframes, then set values, then defaults.
+    pub fn pack(&self, values: &Map<String, Value>, keys: &indexmap::IndexMap<String, Vec<Keyframe>>, t: Q) -> Vec<u8> {
+        let mut out = Vec::with_capacity(self.params_size());
+        let ordered = self.ordered();
+        for p in &ordered {
+            let v = keys
+                .get(&p.name)
+                .filter(|k| !k.is_empty())
+                .map(|k| interpolate(k, t))
+                .or_else(|| values.get(&p.name).cloned())
+                .unwrap_or_else(|| p.default.clone());
+            match p.ty {
+                ParamType::Color => {
+                    let c = color(&v);
+                    for (i, x) in c.iter().enumerate() {
+                        let x = if i < 3 { srgb_to_linear(*x) } else { *x };
+                        out.extend_from_slice(&x.to_le_bytes());
+                    }
+                }
+                ParamType::Number => out.extend_from_slice(&(v.as_f64().unwrap_or(0.0) as f32).to_le_bytes()),
+                ParamType::Bool => out.extend_from_slice(&(if v.as_bool().unwrap_or(false) { 1.0f32 } else { 0.0 }).to_le_bytes()),
+            }
+        }
+        out.resize(self.params_size(), 0);
+        out
+    }
+}
+
+fn check_value(p: &Param, v: &Value) -> Result<(), FxError> {
+    let bad = |what: &str| err(format!("param `{}`: {what}, not {v}", p.name));
+    match p.ty {
+        ParamType::Number => {
+            let x = v.as_f64().ok_or_else(|| bad("expected a number"))?;
+            if p.min.is_some_and(|m| x < m) || p.max.is_some_and(|m| x > m) {
+                return Err(err(format!(
+                    "param `{}` is {x}; it must be within {} to {}",
+                    p.name,
+                    p.min.map_or("-inf".into(), |m| m.to_string()),
+                    p.max.map_or("inf".into(), |m| m.to_string())
+                )));
+            }
+        }
+        ParamType::Bool => {
+            v.as_bool().ok_or_else(|| bad("expected true or false"))?;
+        }
+        ParamType::Color => {
+            let a = v.as_array().ok_or_else(|| bad("expected a color like [1, 0.5, 0] (sRGB, 0 to 1)"))?;
+            if !(3..=4).contains(&a.len()) || a.iter().any(|x| !x.as_f64().is_some_and(|x| (0.0..=1.0).contains(&x))) {
+                return Err(bad("expected 3 or 4 numbers from 0 to 1"));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn color(v: &Value) -> [f32; 4] {
+    let a: Vec<f32> = v.as_array().map(|a| a.iter().map(|x| x.as_f64().unwrap_or(0.0) as f32).collect()).unwrap_or_default();
+    [a.first().copied().unwrap_or(0.0), a.get(1).copied().unwrap_or(0.0), a.get(2).copied().unwrap_or(0.0), a.get(3).copied().unwrap_or(1.0)]
+}
+
+fn srgb_to_linear(c: f32) -> f32 {
+    if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
+}
+
+/// `(line, column)` from the first `wgsl:LINE:COL` in a naga report.
+fn first_position(report: &str) -> Option<(usize, usize)> {
+    let i = report.find("wgsl:")?;
+    let mut parts = report[i + 5..].split(|c: char| !c.is_ascii_digit()).filter(|p| !p.is_empty());
+    Some((parts.next()?.parse().ok()?, parts.next()?.parse().ok()?))
+}
+
+/// Value of a keyframed param at `t`: holds before the first and after the
+/// last key; linear between keys (`ease: "hold"` keeps the earlier value).
+pub fn interpolate(keys: &[Keyframe], t: Q) -> Value {
+    let mut sorted: Vec<&Keyframe> = keys.iter().collect();
+    sorted.sort_by_key(|k| k.t);
+    let first = sorted[0];
+    if t <= first.t.seconds() {
+        return first.v.clone();
+    }
+    for w in sorted.windows(2) {
+        let (a, b) = (w[0], w[1]);
+        let (ta, tb) = (a.t.seconds(), b.t.seconds());
+        if t < tb {
+            if a.ease == "hold" || tb <= ta {
+                return a.v.clone();
+            }
+            let f = ((t - ta) / (tb - ta)).to_f64();
+            return lerp(&a.v, &b.v, f);
+        }
+    }
+    sorted.last().map_or(Value::Null, |k| k.v.clone())
+}
+
+trait ToF64 {
+    fn to_f64(self) -> f64;
+}
+
+impl ToF64 for Q {
+    fn to_f64(self) -> f64 {
+        *self.numer() as f64 / *self.denom() as f64
+    }
+}
+
+fn lerp(a: &Value, b: &Value, f: f64) -> Value {
+    match (a, b) {
+        (Value::Number(x), Value::Number(y)) => {
+            let (x, y) = (x.as_f64().unwrap_or(0.0), y.as_f64().unwrap_or(0.0));
+            Value::from(x + (y - x) * f)
+        }
+        (Value::Array(x), Value::Array(y)) if x.len() == y.len() => Value::Array(x.iter().zip(y).map(|(x, y)| lerp(x, y, f)).collect()),
+        _ => if f < 1.0 { a.clone() } else { b.clone() },
+    }
+}
+
+fn parse_params(schema: &Value) -> Result<Vec<Param>, FxError> {
+    let Some(props) = schema.get("properties") else { return Ok(Vec::new()) };
+    let props = props.as_object().ok_or_else(|| err("params.properties must be an object"))?;
+    let mut out = Vec::new();
+    for (name, s) in props {
+        if !is_ident(name) || RESERVED.contains(&name.as_str()) || name.starts_with("ve_") {
+            return Err(err(format!("param name `{name}`: use lowercase letters, digits and _, and not {} or a ve_ prefix", RESERVED.join(", "))));
+        }
+        let ty = match s.get("type").and_then(Value::as_str) {
+            Some("number" | "integer") => ParamType::Number,
+            Some("boolean") => ParamType::Bool,
+            Some("array") if s.get("format").and_then(Value::as_str) == Some("color") => ParamType::Color,
+            other => {
+                return Err(err(format!(
+                    "param `{name}`: type {other:?} is not supported; use number, integer, boolean, or an array with \"format\": \"color\""
+                )));
+            }
+        };
+        let min = s.get("minimum").and_then(Value::as_f64);
+        let max = s.get("maximum").and_then(Value::as_f64);
+        let default = match (s.get("default"), ty) {
+            (Some(d), _) => d.clone(),
+            (None, ParamType::Number) => Value::from(min.unwrap_or(0.0).max(0.0).min(max.unwrap_or(f64::MAX))),
+            (None, ParamType::Bool) => Value::Bool(false),
+            (None, ParamType::Color) => serde_json::json!([1.0, 1.0, 1.0]),
+        };
+        let p = Param { name: name.clone(), ty, default, min, max, animatable: s.get("x-animatable").and_then(Value::as_bool).unwrap_or(false) };
+        check_value(&p, &p.default).map_err(|e| err(format!("default: {e}")))?;
+        out.push(p);
+    }
+    Ok(out)
+}
+
+/// Built-ins, compiled in from `plugins/core/effects`.
+macro_rules! builtin {
+    ($dir:literal) => {
+        (
+            include_str!(concat!("../../../plugins/core/effects/", $dir, "/effect.json")),
+            include_str!(concat!("../../../plugins/core/effects/", $dir, "/effect.wgsl")),
+        )
+    };
+}
+
+const BUILTINS: &[(&str, &str)] = &[
+    builtin!("desaturate"),
+    builtin!("exposure"),
+    builtin!("tint"),
+    builtin!("vignette"),
+    builtin!("blur"),
+    builtin!("dissolve"),
+    builtin!("dip"),
+    builtin!("wipe"),
+    builtin!("slide"),
+];
+
+/// The effects and transitions a project can use.
+#[derive(Debug, Clone, Default)]
+pub struct Registry {
+    pub list: Vec<Arc<Fx>>,
+    /// Project effects that failed to load, with the reason.
+    pub problems: Vec<String>,
+}
+
+fn builtins() -> &'static [Arc<Fx>] {
+    static B: std::sync::OnceLock<Vec<Arc<Fx>>> = std::sync::OnceLock::new();
+    B.get_or_init(|| {
+        BUILTINS
+            .iter()
+            .map(|(json, wgsl)| {
+                let m: Manifest = serde_json::from_str(json).expect("built-in manifest parses");
+                Arc::new(Fx::new(m, (*wgsl).to_owned(), Origin::Builtin, None).expect("built-in effect validates"))
+            })
+            .collect()
+    })
+}
+
+/// Read `effect.json` and its code from a folder.
+pub fn load_dir(dir: &Path, origin: Origin) -> Result<Fx, FxError> {
+    let mp = dir.join("effect.json");
+    let text = std::fs::read_to_string(&mp).map_err(|e| err(format!("{}: {e}", mp.display())))?;
+    let m: Manifest = serde_json::from_str(&text).map_err(|e| err(format!("{}: {e}", mp.display())))?;
+    let sp = dir.join(&m.shader);
+    let source = std::fs::read_to_string(&sp).map_err(|e| err(format!("{}: {e}", sp.display())))?;
+    Fx::new(m, source, origin, Some(dir.to_path_buf()))
+}
+
+impl Registry {
+    /// Built-ins plus `<project>/effects/*/effect.json`.
+    pub fn for_project(root: Option<&Path>) -> Self {
+        let mut r = Self { list: builtins().to_vec(), problems: Vec::new() };
+        let Some(root) = root else { return r };
+        let Ok(entries) = std::fs::read_dir(root.join("effects")) else { return r };
+        let mut dirs: Vec<PathBuf> = entries.flatten().map(|e| e.path()).filter(|p| p.join("effect.json").is_file()).collect();
+        dirs.sort();
+        for d in dirs {
+            match load_dir(&d, Origin::Project) {
+                Ok(fx) if r.list.iter().any(|x| x.manifest.id == fx.manifest.id) => {
+                    r.problems.push(format!("{}: id {} is already taken", d.display(), fx.manifest.id));
+                }
+                Ok(fx) => r.list.push(Arc::new(fx)),
+                Err(e) => r.problems.push(format!("{}: {e}", d.display())),
+            }
+        }
+        r
+    }
+
+    /// Find by `id` or `id@major`.
+    pub fn get(&self, reference: &str) -> Option<Arc<Fx>> {
+        let (id, major) = match reference.split_once('@') {
+            Some((id, m)) => (id, Some(m)),
+            None => (reference, None),
+        };
+        self.list
+            .iter()
+            .filter(|f| f.manifest.id == id && major.is_none_or(|m| f.manifest.version.split('.').next() == Some(m)))
+            .max_by(|a, b| {
+                let va = semver::Version::parse(&a.manifest.version).ok();
+                let vb = semver::Version::parse(&b.manifest.version).ok();
+                va.cmp(&vb)
+            })
+            .cloned()
+    }
+
+    /// [`Self::get`] with a helpful error, checking the kind.
+    pub fn require(&self, reference: &str, kind: Kind) -> Result<Arc<Fx>, FxError> {
+        let fx = self.get(reference).ok_or_else(|| {
+            let names: Vec<String> = self.list.iter().filter(|f| f.kind() == kind).map(|f| f.manifest.id.clone()).collect();
+            err(format!("no {} `{reference}`; available: {}", kind_word(kind), names.join(", ")))
+        })?;
+        if fx.kind() != kind {
+            return Err(err(format!("{reference} is a {}, not a {}", kind_word(fx.kind()), kind_word(kind))));
+        }
+        Ok(fx)
+    }
+}
+
+pub fn kind_word(k: Kind) -> &'static str {
+    match k {
+        Kind::Effect => "effect",
+        Kind::Transition => "transition",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ve_model::time::{Rate, RationalTime};
+
+    fn manifest(kind: Kind, params: Value) -> Manifest {
+        Manifest {
+            id: "project.test".into(),
+            version: "1.0.0".into(),
+            kind,
+            runtime: "wgsl".into(),
+            name: "Test".into(),
+            description: String::new(),
+            shader: "effect.wgsl".into(),
+            params,
+            skill: None,
+        }
+    }
+
+    #[test]
+    fn builtins_load_and_validate() {
+        let r = Registry::for_project(None);
+        assert_eq!(r.list.len(), 9);
+        assert!(r.get("core.color/desaturate@1").is_some());
+        assert!(r.get("core.color/desaturate@2").is_none());
+        assert!(r.require("core.transition/wipe", Kind::Effect).is_err());
+    }
+
+    #[test]
+    fn errors_point_at_the_authors_line() {
+        let src = "fn effect(uv: vec2<f32>) -> vec4<f32> {\n    let c = src(uv);\n    return c * nope;\n}\n";
+        let e = Fx::new(manifest(Kind::Effect, empty_schema()), src.into(), Origin::Project, None).unwrap_err();
+        assert!(e.0.contains("effect.wgsl line 3"), "{e}");
+        let e = Fx::new(manifest(Kind::Effect, empty_schema()), "fn other() {}".into(), Origin::Project, None).unwrap_err();
+        assert!(e.0.contains("fn effect(uv: vec2<f32>) -> vec4<f32>"), "{e}");
+        let bad_type = "fn effect(uv: vec2<f32>) -> vec4<f32> {\n    return 1.0;\n}\n";
+        let e = Fx::new(manifest(Kind::Effect, empty_schema()), bad_type.into(), Origin::Project, None).unwrap_err();
+        assert!(e.0.contains("effect.wgsl line"), "{e}");
+    }
+
+    #[test]
+    fn params_pack_in_layout_order_with_keyframes() {
+        let schema = serde_json::json!({"properties": {
+            "amount": {"type": "number", "minimum": 0, "maximum": 1, "default": 0.5, "x-animatable": true},
+            "tint": {"type": "array", "format": "color", "default": [1, 1, 1]},
+            "on": {"type": "boolean", "default": true}
+        }});
+        let src = "fn effect(uv: vec2<f32>) -> vec4<f32> { return src(uv) * p.amount * p.tint * p.on; }";
+        let fx = Fx::new(manifest(Kind::Effect, schema), src.into(), Origin::Project, None).unwrap();
+        assert_eq!(fx.params_size(), 32);
+        let mut keys = indexmap::IndexMap::new();
+        let r = Rate::integer(10);
+        keys.insert(
+            "amount".to_owned(),
+            vec![
+                Keyframe { t: RationalTime::from_frames(0, r), v: Value::from(0.0), ease: "linear".into() },
+                Keyframe { t: RationalTime::from_frames(10, r), v: Value::from(1.0), ease: "linear".into() },
+            ],
+        );
+        let b = fx.pack(&Map::new(), &keys, Q::new(1, 4));
+        let f = |i: usize| f32::from_le_bytes([b[i], b[i + 1], b[i + 2], b[i + 3]]);
+        assert_eq!((f(0), f(12)), (1.0, 1.0), "color first, linear white");
+        assert!((f(16) - 0.25).abs() < 1e-6, "amount interpolated: {}", f(16));
+        assert_eq!(f(20), 1.0, "bool");
+        assert!(fx.check_params(&serde_json::from_value(serde_json::json!({"amount": 2})).unwrap()).is_err());
+        assert!(fx.check_params(&serde_json::from_value(serde_json::json!({"size": 2})).unwrap()).is_err());
+    }
+
+    #[test]
+    fn unsupported_runtimes_and_names_are_refused() {
+        let mut m = manifest(Kind::Effect, empty_schema());
+        m.runtime = "wasm".into();
+        assert!(Fx::new(m, String::new(), Origin::Project, None).unwrap_err().0.contains("not supported yet"));
+        let schema = serde_json::json!({"properties": {"src": {"type": "number"}}});
+        assert!(Fx::new(manifest(Kind::Effect, schema), String::new(), Origin::Project, None).is_err());
+    }
+}

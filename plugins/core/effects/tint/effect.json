@@ -1,0 +1,40 @@
+{
+  "id": "core.color/tint",
+  "version": "1.0.0",
+  "kind": "effect",
+  "runtime": "wgsl",
+  "name": "Tint",
+  "description": "Multiply the picture by a color.",
+  "shader": "effect.wgsl",
+  "params": {
+    "type": "object",
+    "properties": {
+      "color": {
+        "type": "array",
+        "format": "color",
+        "items": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "minItems": 3,
+        "maxItems": 4,
+        "default": [
+          1.0,
+          0.75,
+          0.5
+        ],
+        "description": "Tint color (sRGB, 0 to 1).",
+        "x-animatable": true
+      },
+      "amount": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1,
+        "default": 0.5,
+        "description": "How strong the tint is.",
+        "x-animatable": true
+      }
+    }
+  }
+}

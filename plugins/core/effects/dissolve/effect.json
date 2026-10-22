@@ -1,0 +1,13 @@
+{
+  "id": "core.transition/dissolve",
+  "version": "1.0.0",
+  "kind": "transition",
+  "runtime": "wgsl",
+  "name": "Dissolve",
+  "description": "Cross-fade from one shot to the next.",
+  "shader": "effect.wgsl",
+  "params": {
+    "type": "object",
+    "properties": {}
+  }
+}

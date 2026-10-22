@@ -16,6 +16,7 @@
 //! makes the frame cache safe.
 
 pub mod ffmpeg;
+pub mod fx;
 pub mod compose;
 pub mod decoder;
 pub mod gpu;

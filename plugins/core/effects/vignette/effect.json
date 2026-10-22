@@ -1,0 +1,38 @@
+{
+  "id": "core.look/vignette",
+  "version": "1.0.0",
+  "kind": "effect",
+  "runtime": "wgsl",
+  "name": "Vignette",
+  "description": "Darken the edges of the picture.",
+  "shader": "effect.wgsl",
+  "params": {
+    "type": "object",
+    "properties": {
+      "amount": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1,
+        "default": 0.5,
+        "description": "How dark the edges get.",
+        "x-animatable": true
+      },
+      "size": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1,
+        "default": 0.5,
+        "description": "Where darkening starts, from the center (0) to the corners (1).",
+        "x-animatable": true
+      },
+      "softness": {
+        "type": "number",
+        "minimum": 0.01,
+        "maximum": 1,
+        "default": 0.5,
+        "description": "Width of the falloff.",
+        "x-animatable": true
+      }
+    }
+  }
+}

@@ -35,6 +35,14 @@ Every method the engine has. "Edits" means it takes `base_rev` / `dry_run` /
 | `track.rename` | yes | Rename a track | [tracks.md](tracks.md) |
 | `track.move` | yes | Change a track's position (video: stacking order) | [tracks.md](tracks.md) |
 | `track.list` | | Every track with kind, position, clip count | [tracks.md](tracks.md) |
+| `fx.list` | | Effects and transitions available, with param schemas | [effects.md](effects.md) |
+| `fx.define` | | Validate (naga + GPU test render) and save a project effect | [effects.md](effects.md) |
+| `effect.add` | yes | Put an effect on a video clip | [effects.md](effects.md) |
+| `effect.set` | yes | Change params, keyframes or stack position | [effects.md](effects.md) |
+| `effect.remove` | yes | Remove an effect | [effects.md](effects.md) |
+| `transition.add` | yes | Put a transition on a cut | [effects.md](effects.md) |
+| `transition.set` | yes | Change a transition's length, alignment, kind or params | [effects.md](effects.md) |
+| `transition.remove` | yes | Back to a plain cut | [effects.md](effects.md) |
 | `marker.add` | yes | Add a timeline marker | [markers.md](markers.md) |
 | `marker.remove` | yes | Remove markers by ID or name | [markers.md](markers.md) |
 | `history.undo` | yes | Undo the last step | [history.md](history.md) |

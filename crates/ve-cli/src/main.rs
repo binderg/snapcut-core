@@ -205,6 +205,15 @@ enum Command {
     /// Tracks: any number of video and audio tracks.
     #[command(subcommand)]
     Track(TrackCmd),
+    /// Available effects and transitions; define new ones.
+    #[command(subcommand)]
+    Fx(FxCmd),
+    /// Effects on clips.
+    #[command(subcommand)]
+    Effect(EffectCmd),
+    /// Transitions on cuts.
+    #[command(subcommand)]
+    Transition(TransitionCmd),
     /// Undo the last step (one edit, or a whole group).
     Undo,
     /// Redo the last undone step.
@@ -300,6 +309,123 @@ enum DaemonCmd {
     /// `VE_DAEMON_IDLE_SECS` sets the idle timeout, `VE_WS_PORT` a fixed WebSocket port.
     #[command(hide = true)]
     Run,
+}
+
+#[derive(Subcommand)]
+enum FxCmd {
+    /// Every effect and transition with its params.
+    List,
+    /// `ve fx define my_glow/`: validate a folder with effect.json and its
+    /// .wgsl (naga, then a GPU test render) and save it to the project.
+    Define {
+        folder: PathBuf,
+        #[arg(long)]
+        dry_run: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum EffectCmd {
+    /// `ve effect add clip_7f3a core.color/exposure --param stops=1`.
+    Add {
+        clip: String,
+        effect: String,
+        /// `name=value` (value as JSON: `0.5`, `true`, `[1,0.5,0]`). Repeatable.
+        #[arg(long = "param", value_name = "NAME=VALUE")]
+        params: Vec<String>,
+        /// Position in the stack (0 runs first).
+        #[arg(long)]
+        index: Option<usize>,
+    },
+    /// `ve effect set fx_1a2b --param amount=0.3 --key amount@0s=0 --key amount@2s=1`.
+    Set {
+        id: String,
+        /// `name=value`; `name=null` resets to the default.
+        #[arg(long = "param", value_name = "NAME=VALUE")]
+        params: Vec<String>,
+        /// `name@time=value` keyframes (time from the clip start). Replaces that param's keys.
+        #[arg(long = "key", value_name = "NAME@TIME=VALUE")]
+        keys: Vec<String>,
+        /// Remove a param's keyframes.
+        #[arg(long = "clear-keys", value_name = "NAME")]
+        clear_keys: Vec<String>,
+        #[arg(long)]
+        index: Option<usize>,
+    },
+    /// `ve effect rm fx_1a2b`.
+    Rm { id: String },
+}
+
+#[derive(Subcommand)]
+enum TransitionCmd {
+    /// `ve transition add --at 00:00:10:00 [--type core.transition/wipe] [--duration 15f]`.
+    Add {
+        /// The outgoing clip (the transition goes on its end).
+        #[arg(long)]
+        clip: Option<String>,
+        /// Or the time of the cut.
+        #[arg(long)]
+        at: Option<String>,
+        #[arg(long)]
+        track: Option<String>,
+        /// Default core.transition/dissolve.
+        #[arg(long = "type")]
+        kind: Option<String>,
+        /// Default 0.5s.
+        #[arg(long)]
+        duration: Option<String>,
+        /// center (default), start or end.
+        #[arg(long)]
+        align: Option<String>,
+        #[arg(long = "param", value_name = "NAME=VALUE")]
+        params: Vec<String>,
+    },
+    /// `ve transition set tr_1a2b --duration 1s --type core.transition/slide`.
+    Set {
+        id: String,
+        #[arg(long)]
+        duration: Option<String>,
+        #[arg(long)]
+        align: Option<String>,
+        #[arg(long = "type")]
+        kind: Option<String>,
+        #[arg(long = "param", value_name = "NAME=VALUE")]
+        params: Vec<String>,
+    },
+    /// `ve transition rm tr_1a2b`.
+    Rm { id: String },
+}
+
+/// `name=value` pairs to a JSON object; values parse as JSON, else strings.
+fn param_map(pairs: &[String], json_output: bool) -> Value {
+    let mut m = serde_json::Map::new();
+    for p in pairs {
+        let Some((k, v)) = p.split_once('=') else {
+            usage_error(format!("--param `{p}`: use NAME=VALUE"), json_output)
+        };
+        m.insert(k.trim().to_owned(), serde_json::from_str(v.trim()).unwrap_or_else(|_| Value::String(v.trim().to_owned())));
+    }
+    Value::Object(m)
+}
+
+/// `name@time=value` keyframes grouped by param.
+fn key_map(keys: &[String], clear: &[String], json_output: bool) -> Value {
+    let mut m = serde_json::Map::new();
+    for k in keys {
+        let parsed = k.split_once('@').and_then(|(name, rest)| rest.split_once('=').map(|(t, v)| (name, t, v)));
+        let Some((name, t, v)) = parsed else {
+            usage_error(format!("--key `{k}`: use NAME@TIME=VALUE, e.g. amount@1s=0.5"), json_output)
+        };
+        let value = serde_json::from_str(v.trim()).unwrap_or_else(|_| Value::String(v.trim().to_owned()));
+        let list = m.entry(name.trim().to_owned()).or_insert_with(|| json!([]));
+        if let Some(a) = list.as_array_mut() {
+            a.push(json!({ "at": t.trim(), "value": value }));
+        }
+    }
+    for c in clear {
+        m.insert(c.clone(), json!([]));
+    }
+    Value::Object(m)
 }
 
 #[derive(Subcommand)]
@@ -602,6 +728,51 @@ fn plan(cmd: &Command, json_output: bool) -> Plan {
         Command::Track(TrackCmd::Rm { track, force }) => m("track.remove", json!({ "track": track, "force": force })),
         Command::Track(TrackCmd::Rename { track, name }) => m("track.rename", json!({ "track": track, "name": name })),
         Command::Track(TrackCmd::Move { track, index }) => m("track.move", json!({ "track": track, "index": index })),
+        Command::Fx(FxCmd::List) => q("fx.list", json!({})),
+        Command::Fx(FxCmd::Define { folder, dry_run }) => {
+            let mp = folder.join("effect.json");
+            let text = std::fs::read_to_string(&mp).unwrap_or_else(|e| usage_error(format!("{}: {e}", mp.display()), json_output));
+            let manifest: Value = serde_json::from_str(&text).unwrap_or_else(|e| usage_error(format!("{}: {e}", mp.display()), json_output));
+            let shader = manifest["shader"].as_str().unwrap_or("effect.wgsl").to_owned();
+            let sp = folder.join(&shader);
+            let source = std::fs::read_to_string(&sp).unwrap_or_else(|e| usage_error(format!("{}: {e}", sp.display()), json_output));
+            q("fx.define", json!({ "manifest": manifest, "source": source, "dry_run": dry_run }))
+        }
+        Command::Effect(EffectCmd::Add { clip, effect, params, index }) => {
+            m("effect.add", json!({ "clip": clip, "effect": effect, "params": param_map(params, json_output), "index": index }))
+        }
+        Command::Effect(EffectCmd::Set { id, params, keys, clear_keys, index }) => {
+            let mut p = json!({ "id": id, "index": index });
+            if !params.is_empty() {
+                p["params"] = param_map(params, json_output);
+            }
+            if !keys.is_empty() || !clear_keys.is_empty() {
+                p["keyframes"] = key_map(keys, clear_keys, json_output);
+            }
+            m("effect.set", p)
+        }
+        Command::Effect(EffectCmd::Rm { id }) => m("effect.remove", json!({ "id": id })),
+        Command::Transition(TransitionCmd::Add { clip, at, track, kind, duration, align, params }) => {
+            let mut p = json!({ "clip": clip, "at": at, "track": track, "params": param_map(params, json_output) });
+            if let Some(k) = kind {
+                p["transition"] = json!(k);
+            }
+            if let Some(d) = duration {
+                p["duration"] = json!(d);
+            }
+            if let Some(a) = align {
+                p["align"] = json!(a);
+            }
+            m("transition.add", p)
+        }
+        Command::Transition(TransitionCmd::Set { id, duration, align, kind, params }) => {
+            let mut p = json!({ "id": id, "duration": duration, "align": align, "transition": kind });
+            if !params.is_empty() {
+                p["params"] = param_map(params, json_output);
+            }
+            m("transition.set", p)
+        }
+        Command::Transition(TransitionCmd::Rm { id }) => m("transition.remove", json!({ "id": id })),
         Command::Undo => m("history.undo", json!({})),
         Command::Redo => m("history.redo", json!({})),
         Command::History { limit } => q("history.list", json!({ "limit": limit })),
@@ -700,6 +871,29 @@ fn print_commit(r: &Value) {
             t["kind"].as_str().unwrap_or("?"),
             t["index"],
             t["clips"]
+        );
+    }
+    if let Some(list) = r["effects"].as_array() {
+        println!("effects on {}:", r["clip"].as_str().unwrap_or("?"));
+        for (i, e) in list.iter().enumerate() {
+            let mark = if e["id"] == r["effect"] { "*" } else { " " };
+            let params = e.get("params").map_or(String::new(), |p| format!("  {p}"));
+            let keyed = e["keyframed"]
+                .as_array()
+                .map_or(String::new(), |k| format!("  keyframed: {}", k.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(", ")));
+            println!("{mark} {i}  {}  {}{params}{keyed}", e["id"].as_str().unwrap_or("?"), e["effect"].as_str().unwrap_or("?"));
+        }
+    }
+    if let Some(cut) = r["cut"].as_str() {
+        println!(
+            "transition {} {}  {}  {}-{} (cut {cut})  {} -> {}",
+            r["id"].as_str().unwrap_or("?"),
+            r["transition"].as_str().unwrap_or("?"),
+            r["track"].as_str().unwrap_or("?"),
+            r["start"].as_str().unwrap_or("?"),
+            r["end"].as_str().unwrap_or("?"),
+            r["outgoing"].as_str().unwrap_or("?"),
+            r["incoming"].as_str().unwrap_or("?")
         );
     }
     for id in r["markers"].as_array().into_iter().flatten() {
@@ -1050,6 +1244,29 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             }
             print_commit(&result);
         }
+        Command::Fx(FxCmd::List) => {
+            for e in result["effects"].as_array().into_iter().flatten() {
+                let params: Vec<&str> = e["params"]["properties"].as_object().map(|o| o.keys().map(String::as_str).collect()).unwrap_or_default();
+                println!(
+                    "{:<10} {:<32} {:<14} {}",
+                    e["kind"].as_str().unwrap_or("?"),
+                    e["reference"].as_str().unwrap_or("?"),
+                    e["name"].as_str().unwrap_or("?"),
+                    if params.is_empty() { "(no params)".to_owned() } else { params.join(", ") }
+                );
+            }
+            for p in result["problems"].as_array().into_iter().flatten() {
+                println!("problem: {}", p.as_str().unwrap_or("?"));
+            }
+        }
+        Command::Fx(FxCmd::Define { .. }) => {
+            let e = &result["effect"];
+            match result["path"].as_str() {
+                Some(path) => println!("defined {} ({}), saved to {path}", e["reference"].as_str().unwrap_or("?"), e["kind"].as_str().unwrap_or("?")),
+                None => println!("{} is valid (dry run; nothing saved)", e["reference"].as_str().unwrap_or("?")),
+            }
+            println!("test render passed on {}", result["tested_on"].as_str().unwrap_or("?"));
+        }
         Command::Insert { .. }
         | Command::Split { .. }
         | Command::Trim { .. }
@@ -1060,6 +1277,8 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         | Command::Volume { .. }
         | Command::Marker(_)
         | Command::Track(_)
+        | Command::Effect(_)
+        | Command::Transition(_)
         | Command::Undo
         | Command::Redo => print_commit(&result),
         _ => println!("{}", serde_json::to_string_pretty(&result)?),

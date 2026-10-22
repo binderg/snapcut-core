@@ -1,0 +1,22 @@
+{
+  "id": "core.transition/slide",
+  "version": "1.0.0",
+  "kind": "transition",
+  "runtime": "wgsl",
+  "name": "Slide",
+  "description": "The next shot pushes the current one out of frame.",
+  "shader": "effect.wgsl",
+  "params": {
+    "type": "object",
+    "properties": {
+      "angle": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 360,
+        "default": 0,
+        "description": "Direction of travel, in degrees: 0 moves right, 90 moves down.",
+        "x-animatable": false
+      }
+    }
+  }
+}

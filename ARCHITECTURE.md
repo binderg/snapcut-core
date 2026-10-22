@@ -243,12 +243,12 @@ fn effect(uv: vec2<f32>) -> vec4<f32> {
 **Transition contract** (mirrors gl-transitions)
 
 ```wgsl
-// from(uv), to(uv) -> vec4<f32>   outgoing and incoming frames
-// u.progress: f32                 0..1 across the transition
+// outgoing(uv), incoming(uv) -> vec4<f32>   the two clips (`from` is reserved in WGSL)
+// u.progress: f32                           0..1 across the transition
 
 fn transition(uv: vec2<f32>) -> vec4<f32> {
     let edge = smoothstep(p.softness * -1.0, 0.0, uv.x - u.progress * (1.0 + p.softness));
-    return mix(to(uv), from(uv), edge);
+    return mix(incoming(uv), outgoing(uv), edge);
 }
 ```
 

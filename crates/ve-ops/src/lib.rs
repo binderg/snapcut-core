@@ -18,6 +18,7 @@
 
 pub mod diff;
 pub mod edit;
+pub mod effects;
 pub mod lane;
 pub mod markers;
 pub mod tracks;

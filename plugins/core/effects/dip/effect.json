@@ -1,0 +1,32 @@
+{
+  "id": "core.transition/dip",
+  "version": "1.0.0",
+  "kind": "transition",
+  "runtime": "wgsl",
+  "name": "Dip to color",
+  "description": "Fade out to a color, then in to the next shot.",
+  "shader": "effect.wgsl",
+  "params": {
+    "type": "object",
+    "properties": {
+      "color": {
+        "type": "array",
+        "format": "color",
+        "items": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "minItems": 3,
+        "maxItems": 4,
+        "default": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "description": "The color in the middle (black by default).",
+        "x-animatable": true
+      }
+    }
+  }
+}

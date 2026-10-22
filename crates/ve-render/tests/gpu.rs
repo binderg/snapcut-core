@@ -95,6 +95,10 @@ fn timeline(work: &Path) -> Timeline {
     edit::insert(&tl, &insert("asset_bars", Some("V2"), Some(fr(10)), Some(fr(20)), true)).unwrap().0
 }
 
+fn fx() -> ve_render::fx::Registry {
+    ve_render::fx::Registry::for_project(None)
+}
+
 fn rgb(png: &[u8]) -> image::RgbImage {
     image::load_from_memory(png).unwrap().to_rgb8()
 }
@@ -119,7 +123,7 @@ fn gpu_frames_match_the_ffmpeg_renderer() {
     // V1 alone (0, 39), V2 over V1 (10, 20, 29), after the cut (40), sped up (45, 60).
     for n in [0, 10, 20, 29, 30, 39, 40, 45, 60] {
         let reference = ve_render::frame(&tl, fr(n), SIDE, ImageFormat::Png, &work).unwrap();
-        let gpu = ve_render::compose::frame(&tl, fr(n), SIDE, ImageFormat::Png, &work).unwrap();
+        let gpu = ve_render::compose::frame(&tl, fr(n), SIDE, ImageFormat::Png, &fx()).unwrap();
         let (a, b) = (rgb(&reference.bytes), rgb(&gpu.bytes));
         let (mean, max) = diff(&a, &b);
         let ssim = image_compare::rgb_hybrid_compare(&a, &b).unwrap().score;
@@ -231,7 +235,7 @@ fn scaled_hd_frames_match() {
     for n in [0, 31, 299] {
         let t = Q::new(n, 30);
         let a = rgb(&ve_render::frame(&tl, t, 640, ImageFormat::Png, &work).unwrap().bytes);
-        let b = rgb(&ve_render::compose::frame(&tl, t, 640, ImageFormat::Png, &work).unwrap().bytes);
+        let b = rgb(&ve_render::compose::frame(&tl, t, 640, ImageFormat::Png, &fx()).unwrap().bytes);
         let (mean, max) = diff(&a, &b);
         eprintln!("hd frame {n}: mean {mean:.3} max {max}");
         assert!(mean < 0.5, "hd frame {n}: mean {mean:.3}, max {max}");
@@ -245,7 +249,7 @@ fn bench_gpu_vs_ffmpeg() {
     use std::time::Instant;
     let work = dir("gpu-bench");
     let tl = hd_project(&work);
-    let _ = ve_render::compose::frame(&tl, Q::from_integer(0), 640, ImageFormat::Jpeg, &work).unwrap(); // GPU setup
+    let _ = ve_render::compose::frame(&tl, Q::from_integer(0), 640, ImageFormat::Jpeg, &fx()).unwrap(); // GPU setup
     for width in [640, 1920] {
         for (label, frames) in [("30 frames in a row", (300..330).collect::<Vec<i64>>()), ("10 random frames", vec![17, 412, 95, 333, 501, 8, 260, 577, 140, 455])] {
             for (name, gpu) in [("ffmpeg", false), ("gpu   ", true)] {
@@ -253,7 +257,7 @@ fn bench_gpu_vs_ffmpeg() {
                 for &n in &frames {
                     let t = Q::new(n, 30);
                     if gpu {
-                        ve_render::compose::frame(&tl, t, width, ImageFormat::Jpeg, &work).unwrap();
+                        ve_render::compose::frame(&tl, t, width, ImageFormat::Jpeg, &fx()).unwrap();
                     } else {
                         ve_render::frame(&tl, t, width, ImageFormat::Jpeg, &work).unwrap();
                     }
@@ -263,4 +267,73 @@ fn bench_gpu_vs_ffmpeg() {
             }
         }
     }
+}
+
+fn lin(c: u8) -> f64 {
+    let c = f64::from(c) / 255.0;
+    if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
+}
+
+fn enc(l: f64) -> f64 {
+    let l = l.clamp(0.0, 1.0);
+    255.0 * if l <= 0.003_130_8 { l * 12.92 } else { 1.055 * l.powf(1.0 / 2.4) - 0.055 }
+}
+
+#[test]
+fn effects_and_transitions_on_the_timeline() {
+    use ve_ops::effects::{self, Align, NewTransition};
+    use ve_render::decoder::{DecoderPool, key};
+    let work = dir("gpu-fx");
+    let ramp_src = ramp(&work);
+    let color_src = work.join("color.mkv");
+    ffmpeg(&["-f", "lavfi", "-i", &format!("color=c=0xC04020:s={SIDE}x{SIDE}:r={FPS}"), "-t", "2", "-c:v", "ffv1", "-pix_fmt", "yuv420p", color_src.to_str().unwrap()]);
+
+    let output = OutputSettings { width: SIDE, height: SIDE, rate: Rate::integer(FPS), sample_rate: 48_000, color_space: "bt709".into() };
+    let mut tl = ve_model::doc::new_project("fx", output);
+    add_asset(&mut tl, "asset_ramp", &ramp_src);
+    add_asset(&mut tl, "asset_color", &color_src);
+    // Ramp frames 0-49, then the color clip from its frame 25: both have handles.
+    let mut a = insert("asset_ramp", None, None, None, false);
+    a.source_out = Some(fr(50));
+    tl = edit::insert(&tl, &a).unwrap().0;
+    let mut b = insert("asset_color", None, Some(fr(50)), None, false);
+    b.source_in = Some(fr(25));
+    tl = edit::insert(&tl, &b).unwrap().0;
+    let ve_model::otio::Composable::Track(v1) = &tl.tracks.children[0] else { panic!() };
+    let ve_model::otio::Composable::Clip(first) = &v1.children[0] else { panic!() };
+    let first = ve_ops::lane::clip_id(first).unwrap().clone();
+    let stops = serde_json::json!({"stops": 1.0}).as_object().cloned().unwrap();
+    tl = effects::add(&tl, &first, "core.color/exposure@1", stops, None).unwrap().0;
+    let t = NewTransition {
+        clip: None,
+        at: Some(fr(50)),
+        track: None,
+        duration: fr(20),
+        align: Align::Center,
+        transition: "core.transition/dissolve@1".into(),
+        params: serde_json::Map::new(),
+    };
+    tl = effects::add_transition(&tl, &t).unwrap().0;
+
+    // Source pixels, decoded the way the compositor decodes them.
+    let mut pool = DecoderPool::default();
+    let mut px = |src: &Path, n: i64| -> [u8; 3] {
+        let f = pool.frame(&key(src, SIDE, SIDE, Rate::integer(FPS), 9), n).unwrap();
+        let i = (32 * SIDE as usize + 32) * 4;
+        [f[i], f[i + 1], f[i + 2]]
+    };
+    // (timeline frame, ramp frame, color frame, share of the color clip)
+    for (n, ramp_f, color_f, mix) in [(30, 30, 0, 0.0), (45, 45, 20, 0.25), (50, 50, 25, 0.5), (59, 59, 34, 0.95), (60, 0, 35, 1.0), (70, 0, 45, 1.0)] {
+        let (r, c) = (px(&ramp_src, ramp_f), px(&color_src, color_f));
+        let expected: Vec<f64> = (0..3).map(|ch| enc((1.0 - mix) * 2.0 * lin(r[ch]) + mix * lin(c[ch]))).collect();
+        let img = rgb(&ve_render::compose::frame(&tl, fr(n), SIDE, ImageFormat::Png, &fx()).unwrap().bytes);
+        let got = img.get_pixel(32, 32).0;
+        eprintln!("frame {n}: got {got:?}, expected {expected:.1?}");
+        for ch in 0..3 {
+            assert!((f64::from(got[ch]) - expected[ch]).abs() <= 2.0, "frame {n} channel {ch}: got {got:?}, expected {expected:.1?}");
+        }
+    }
+    // The ffmpeg path still renders, as plain cuts, and says why.
+    let plain = ve_render::frame(&tl, fr(45), SIDE, ImageFormat::Png, &work).unwrap();
+    assert!(plain.warnings.iter().any(|w| w.contains("GPU compositor")), "{:?}", plain.warnings);
 }

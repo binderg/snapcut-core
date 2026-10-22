@@ -101,8 +101,13 @@ pub fn frame(p: &mut OpenProject, a: FrameParams) -> Result<ImageResult, RpcErro
     let at = parse_time("at", &a.at, tl.output_rate())?;
     // VE_RENDERER=gpu (set where the daemon starts) tries the Phase 2 GPU compositor.
     let gpu = std::env::var("VE_RENDERER").is_ok_and(|v| v.eq_ignore_ascii_case("gpu"));
-    let render = if gpu { ve_render::compose::frame } else { ve_render::frame };
-    let img = render(tl, at, a.width, a.format.into(), &work_dir(p)).map_err(render_error)?;
+    let img = if gpu {
+        let fx = ve_render::fx::Registry::for_project(Some(p.root()));
+        ve_render::compose::frame(tl, at, a.width, a.format.into(), &fx)
+    } else {
+        ve_render::frame(tl, at, a.width, a.format.into(), &work_dir(p))
+    }
+    .map_err(render_error)?;
     Ok(ImageResult {
         at: tc(at, tl.output_rate()),
         width: img.width,

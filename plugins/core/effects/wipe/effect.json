@@ -1,0 +1,30 @@
+{
+  "id": "core.transition/wipe",
+  "version": "1.0.0",
+  "kind": "transition",
+  "runtime": "wgsl",
+  "name": "Wipe",
+  "description": "A moving edge reveals the next shot.",
+  "shader": "effect.wgsl",
+  "params": {
+    "type": "object",
+    "properties": {
+      "angle": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 360,
+        "default": 0,
+        "description": "Direction the edge travels, in degrees: 0 left to right, 90 top to bottom.",
+        "x-animatable": false
+      },
+      "softness": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 0.5,
+        "default": 0.05,
+        "description": "Edge softness, as a share of the frame.",
+        "x-animatable": true
+      }
+    }
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "id": "core.color/desaturate",
+  "version": "1.0.0",
+  "kind": "effect",
+  "runtime": "wgsl",
+  "name": "Desaturate",
+  "description": "Remove color, fully or partly.",
+  "shader": "effect.wgsl",
+  "params": {
+    "type": "object",
+    "properties": {
+      "amount": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1,
+        "default": 1,
+        "description": "0 keeps the color, 1 is grayscale.",
+        "x-animatable": true
+      }
+    }
+  }
+}

@@ -40,10 +40,11 @@ impl Timeline {
             if let Some(id) = item.id() {
                 taken.insert(id.clone());
             }
-            if let ItemRef::Clip(c) = item
-                && let Some(link) = c.metadata.ve.clip.as_ref().and_then(|m| m.link.clone())
-            {
-                taken.insert(link);
+            if let ItemRef::Clip(c) = item {
+                if let Some(link) = c.metadata.ve.clip.as_ref().and_then(|m| m.link.clone()) {
+                    taken.insert(link);
+                }
+                taken.extend(c.metadata.ve.effects.iter().map(|e| e.id.clone()));
             }
         });
         taken.extend(self.metadata.ve.assets.iter().map(|a| a.id.clone()));

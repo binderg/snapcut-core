@@ -3167,6 +3167,7 @@ dependencies = [
  "etcetera",
  "fs4",
  "futures",
+ "indexmap",
  "interprocess",
  "json-patch",
  "nanoid",
@@ -3245,6 +3246,7 @@ dependencies = [
 name = "ve-ops"
 version = "0.1.0"
 dependencies = [
+ "indexmap",
  "json-patch",
  "proptest",
  "schemars",
@@ -3292,6 +3294,9 @@ dependencies = [
  "ffmpeg-sidecar",
  "image",
  "image-compare",
+ "indexmap",
+ "naga",
+ "semver",
  "serde",
  "serde_json",
  "thiserror",

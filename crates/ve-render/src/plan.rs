@@ -6,7 +6,8 @@
 
 use std::path::PathBuf;
 
-use ve_model::otio::{Composable, MediaReference, Timeline, TrackKind};
+use ve_model::meta::{EffectInstance, TransitionMeta};
+use ve_model::otio::{Clip, Composable, MediaReference, Timeline, Track, TrackKind};
 use ve_model::time::{Q, Rate};
 use ve_ops::lane::{Lane, clip_id, clip_speed, media_bounds};
 
@@ -58,6 +59,11 @@ pub struct Segment {
     pub bounds: Option<(Q, Q)>,
     pub head: Edge,
     pub tail: Edge,
+    /// The whole clip's timeline start and length (effect time and progress).
+    pub clip_start: Q,
+    pub clip_duration: Q,
+    /// The clip's effect stack (`metadata.ve.effects`).
+    pub effects: Vec<EffectInstance>,
 }
 
 impl Segment {
@@ -67,11 +73,28 @@ impl Segment {
     }
 }
 
+/// A transition on a track, with both clips extended into it: the outgoing
+/// clip plays past its out point, the incoming clip before its in point.
+#[derive(Debug, Clone)]
+pub struct TransitionPlan {
+    pub meta: TransitionMeta,
+    /// Timeline range it covers (not clipped to the render range).
+    pub start: Q,
+    pub end: Q,
+    /// Segments covering the part of `[start, end)` inside the render range.
+    pub outgoing: Segment,
+    pub incoming: Segment,
+}
+
 #[derive(Debug, Clone)]
 pub struct TrackPlan {
     pub name: String,
     pub segments: Vec<Segment>,
+    pub transitions: Vec<TransitionPlan>,
 }
+
+/// Prefix of warnings about what only the GPU compositor renders.
+pub const GPU_ONLY: &str = "only the GPU compositor renders";
 
 #[derive(Debug, Clone)]
 pub struct Plan {
@@ -104,6 +127,7 @@ pub fn plan(tl: &Timeline, span: Span) -> Result<Plan, RenderError> {
     }
     let mut out = Plan { span, video: Vec::new(), audio: Vec::new(), warnings: Vec::new() };
     let mut transitions = 0;
+    let mut effects = 0;
     for c in &tl.tracks.children {
         let Composable::Track(track) = c else {
             out.warnings.push("a top-level item that is not a track was skipped".into());
@@ -119,10 +143,7 @@ pub fn plan(tl: &Timeline, span: Span) -> Result<Plan, RenderError> {
             let (start, end) = (p.start, p.end());
             let clip = match &p.item {
                 Composable::Clip(c) if c.enabled => c,
-                Composable::Transition(_) => {
-                    transitions += 1;
-                    continue;
-                }
+                Composable::Transition(_) => continue,
                 Composable::Track(_) | Composable::Stack(_) if start < span.end && end > span.start => {
                     out.warnings.push(format!("a nested composition on track {} renders as a gap", track.name));
                     continue;
@@ -138,50 +159,100 @@ pub fn plan(tl: &Timeline, span: Span) -> Result<Plan, RenderError> {
             if end <= span.start || start >= span.end {
                 continue;
             }
-            let id = clip_id(clip).map_or_else(|| clip.name.clone(), ToString::to_string);
-            let url = match clip.active_media() {
-                Some(MediaReference::External(e)) => e.target_url.clone(),
-                _ => return Err(RenderError::Media(format!("{id} has no media (missing reference)"))),
-            };
-            let path = local_path(&url).ok_or_else(|| RenderError::Media(format!("{id}: only file:// media can render, not {url}")))?;
-            if !path.is_file() {
-                return Err(RenderError::Media(format!("{id}: media file {} is missing", path.display())));
+            let (s, e) = (start.max(span.start), end.min(span.end));
+            let head = if s > start { Edge::RangeEdge } else if head_is_cut { Edge::Cut } else { Edge::Open };
+            let tail = if e < end { Edge::RangeEdge } else if next_is_clip_at_end { Edge::Cut } else { Edge::Open };
+            effects += clip.metadata.ve.effects.len();
+            if let Some(seg) = segment(tl, track, clip, (start, end), (s, e), (head, tail), &mut out.warnings)? {
+                segs.push(seg);
             }
-            let asset = tl.metadata.ve.assets.iter().find(|a| a.url == url).and_then(|a| a.media.as_ref());
-            if track.kind == TrackKind::Audio && asset.is_some_and(|m| m.audio.is_none()) {
-                out.warnings.push(format!("{id} is on audio track {} but its media has no sound", track.name));
-                continue;
-            }
-            if track.kind == TrackKind::Video && asset.is_some_and(|m| m.video.is_none()) {
-                out.warnings.push(format!("{id} is on video track {} but its media has no picture", track.name));
-                continue;
-            }
-            let src = clip.source_range.expect("lanes fill in source ranges");
-            let speed = clip_speed(clip);
-            let s = start.max(span.start);
-            let e = end.min(span.end);
-            segs.push(Segment {
-                clip: id,
-                path,
-                start: s,
-                end: e,
-                media_start: src.start_time.seconds() + (s - start) * speed,
-                speed,
-                volume_db: clip.metadata.ve.clip.as_ref().map_or(0.0, |m| m.volume_db),
-                media_rate: asset.and_then(|m| m.video.as_ref()).map_or(src.start_time.rate, |v| v.rate),
-                bounds: media_bounds(clip),
-                head: if s > start { Edge::RangeEdge } else if head_is_cut { Edge::Cut } else { Edge::Open },
-                tail: if e < end { Edge::RangeEdge } else if next_is_clip_at_end { Edge::Cut } else { Edge::Open },
-            });
         }
-        let t = TrackPlan { name: track.name.clone(), segments: segs };
+        // Transitions: both neighbours, extended into the transition's range.
+        let mut trans = Vec::new();
+        for (i, p) in lane.items.iter().enumerate() {
+            let Composable::Transition(tr) = &p.item else { continue };
+            let (Some(a), Some(b)) = (i.checked_sub(1).and_then(|j| lane.items.get(j)), lane.items.get(i + 1)) else { continue };
+            let (Composable::Clip(ca), Composable::Clip(cb)) = (&a.item, &b.item) else { continue };
+            let (w0, w1) = (p.start - tr.in_offset.seconds(), p.start + tr.out_offset.seconds());
+            let (s, e) = (w0.max(span.start), w1.min(span.end));
+            if track.kind != TrackKind::Video || s >= e || !ca.enabled || !cb.enabled {
+                continue;
+            }
+            let Some(meta) = tr.metadata.ve.transition.clone() else {
+                out.warnings.push(format!("a transition on {} has no engine data and renders as a cut", track.name));
+                continue;
+            };
+            let edges = (Edge::RangeEdge, Edge::RangeEdge);
+            let (Some(o), Some(n)) = (
+                segment(tl, track, ca, (a.start, a.end()), (s, e), edges, &mut out.warnings)?,
+                segment(tl, track, cb, (b.start, b.end()), (s, e), edges, &mut out.warnings)?,
+            ) else {
+                continue;
+            };
+            trans.push(TransitionPlan { meta, start: w0, end: w1, outgoing: o, incoming: n });
+        }
+        transitions += trans.len();
+        let t = TrackPlan { name: track.name.clone(), segments: segs, transitions: trans };
         match track.kind {
             TrackKind::Video => out.video.push(t),
             TrackKind::Audio => out.audio.push(t),
         }
     }
-    if transitions > 0 {
-        out.warnings.push(format!("{transitions} transition(s) render as cuts until the Phase 2 compositor"));
+    if transitions + effects > 0 {
+        out.warnings.push(format!(
+            "{transitions} transition(s) and {effects} effect(s) in range: {GPU_ONLY} them (frames with VE_RENDERER=gpu); this render shows plain cuts and unprocessed clips"
+        ));
     }
     Ok(out)
+}
+
+/// The part `[s, e)` of `clip` (which spans `clip_range` on the timeline) as
+/// a segment. `s` may lie before the clip's start or `e` after its end (a
+/// transition plays into the clip's handles). `None` when the track kind
+/// and the media do not match (with a warning).
+fn segment(
+    tl: &Timeline,
+    track: &Track,
+    clip: &Clip,
+    (start, end): (Q, Q),
+    (s, e): (Q, Q),
+    (head, tail): (Edge, Edge),
+    warnings: &mut Vec<String>,
+) -> Result<Option<Segment>, RenderError> {
+    let id = clip_id(clip).map_or_else(|| clip.name.clone(), ToString::to_string);
+    let url = match clip.active_media() {
+        Some(MediaReference::External(e)) => e.target_url.clone(),
+        _ => return Err(RenderError::Media(format!("{id} has no media (missing reference)"))),
+    };
+    let path = local_path(&url).ok_or_else(|| RenderError::Media(format!("{id}: only file:// media can render, not {url}")))?;
+    if !path.is_file() {
+        return Err(RenderError::Media(format!("{id}: media file {} is missing", path.display())));
+    }
+    let asset = tl.metadata.ve.assets.iter().find(|a| a.url == url).and_then(|a| a.media.as_ref());
+    if track.kind == TrackKind::Audio && asset.is_some_and(|m| m.audio.is_none()) {
+        warnings.push(format!("{id} is on audio track {} but its media has no sound", track.name));
+        return Ok(None);
+    }
+    if track.kind == TrackKind::Video && asset.is_some_and(|m| m.video.is_none()) {
+        warnings.push(format!("{id} is on video track {} but its media has no picture", track.name));
+        return Ok(None);
+    }
+    let src = clip.source_range.expect("lanes fill in source ranges");
+    let speed = clip_speed(clip);
+    Ok(Some(Segment {
+        clip: id,
+        path,
+        start: s,
+        end: e,
+        media_start: src.start_time.seconds() + (s - start) * speed,
+        speed,
+        volume_db: clip.metadata.ve.clip.as_ref().map_or(0.0, |m| m.volume_db),
+        media_rate: asset.and_then(|m| m.video.as_ref()).map_or(src.start_time.rate, |v| v.rate),
+        bounds: media_bounds(clip),
+        head,
+        tail,
+        clip_start: start,
+        clip_duration: end - start,
+        effects: clip.metadata.ve.effects.clone(),
+    }))
 }
