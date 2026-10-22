@@ -305,3 +305,8 @@ Not done yet, and what the gate still needs (suggested order, not decided):
 
 The owner (Gershon) prefers blunt, substantive feedback over hedging. Push back
 when a request conflicts with the decisions above.
+- **Ask before touching the core while working on the UI.** If a UI task
+  seems to need an engine change (new method, new param, changed edit
+  behaviour), stop and ask the owner first; say what would change and why.
+  A UI change that needs a new engine also needs the daemon rebuilt and
+  restarted, so say that too.
