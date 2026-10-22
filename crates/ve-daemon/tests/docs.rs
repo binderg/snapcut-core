@@ -30,8 +30,16 @@ fn every_method_is_documented() {
 
     let registry = ve_daemon::build_registry();
     let mut missing = Vec::new();
+    let ui_docs = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../skills/ve-ui/SKILL.md")).unwrap_or_default();
     for spec in registry.specs() {
         let name = format!("`{}`", spec.name);
+        // `ui.*` is documented in skills/ve-ui (it is meant to become a plugin), not in ve-core.
+        if spec.name.starts_with("ui.") {
+            if !ui_docs.contains(&name) {
+                missing.push(format!("{} not in skills/ve-ui/SKILL.md", spec.name));
+            }
+            continue;
+        }
         if !index.contains(&name) {
             missing.push(format!("{} not in methods/index.md", spec.name));
         }

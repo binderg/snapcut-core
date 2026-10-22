@@ -20,6 +20,11 @@ JSON-RPC 2.0 protocol. Primary use case: an agent editing real footage
   method family under `methods/`). Update them with any protocol change;
   `ve-daemon/tests/docs.rs` fails if a registered method is undocumented or
   a link is broken. `skills/video-edit/` is the CLI skill for agents.
+- **`ui.*` methods are temporary core code that must move to a UI plugin.**
+  Anything only a human editor needs (media thumbnails, later filmstrips)
+  lives in `ve-daemon::ui` behind the `ui-api` feature and is documented in
+  `skills/ve-ui/`, never `ve-core`. When `ve-plugin` has a host, move it into
+  `plugins/` and delete the feature. Don't add agent-facing methods there.
 - **Agent interface is CLI + skills (SKILL.md), not MCP.** Don't build MCP. Don't
   make choices that would prevent someone else writing a thin MCP shim from `describe`.
 - **Standards over invention:** OTIO JSON project, JSON-RPC 2.0 + OpenRPC,
@@ -235,9 +240,21 @@ GPU test render (3 frames, 2 s, NaN check). Built-ins in `plugins/core/effects`
 linear, effect ping-pong at clip size, transitions on canvas-size textures,
 then composite (still 0-diff vs ffmpeg). Methods `fx.list|define`,
 `effect.add|set|remove` (keyframes linear/hold), `transition.add|set|remove`
-(OTIO Transition, handle checks, align center/start/end). Only the GPU frame
-path renders them; exports/previews/sheets warn. Next: GPU export (pipe
-composited frames to the encoder) and GPU sheets/previews. In-process decoding (`ffmpeg-the-third`) is
+(OTIO Transition, handle checks, align center/start/end). GPU export
+(`ve-render::compose::encode`): every frame is composited on the GPU and piped
+as raw RGBA into one ffmpeg run (`ffmpeg::feed`, a writer thread behind a
+4-frame queue) whose audio comes from the Phase 1 graph and whose encoder args
+are shared with `ve_render::encode` (`encode_args`). The daemon picks per range
+(`ve_render::needs_gpu`: any effect or transition), for `render.frame`,
+`render.range_preview` and `render.export`; `VE_RENDERER=gpu|ffmpeg` only
+forces a backend. Progress is frames done / rate through the job's `Control`,
+cancel is checked per frame and kills ffmpeg (no partial file). Tests
+(`tests/gpu.rs`): plain project exports within codec noise of the ffmpeg path,
+effect+transition golden frames, cancel mid-export; `tests/jobs.rs` runs it as
+a job. Colour: RGBA to yuv420p uses swscale's defaults, matching how the
+decoders read untagged sources; BT.709-tagged footage is untested (check
+before trusting colours on it). Not measured yet: speed on the 10-min talking
+head. Contact sheets still warn (ffmpeg only). In-process decoding (`ffmpeg-the-third`) is
 planned for fast random scrubbing (ARCHITECTURE.md, "Decoding for the
 compositor"); it needs LLVM and an LGPL shared FFmpeg build, decide first.
 No CI yet; the Python check runs by hand.

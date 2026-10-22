@@ -7,6 +7,11 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[features]
+# TEMPORARY: `ui.*` helpers for human editors; move to a UI plugin once ve-plugin has a host.
+default = ["ui-api"]
+ui-api = []
+
 [dependencies]
 ve-model.workspace = true
 ve-protocol.workspace = true

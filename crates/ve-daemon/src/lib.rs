@@ -20,6 +20,8 @@ pub mod media;
 pub mod project;
 pub mod render;
 pub mod server;
+#[cfg(feature = "ui-api")]
+pub mod ui;
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
@@ -221,6 +223,10 @@ pub fn registry(session: Arc<Session>) -> Arc<Registry> {
 
     on_project!("media.import", "Probe, hash and add files to the asset table; same content is never added twice", true, media::import);
     on_project!("media.assets", "The project's asset table", false, |p: &mut OpenProject, _: NoParams| Ok(media::assets(p)));
+
+    // TEMPORARY: UI-only helpers; they belong in a UI plugin (see ui.rs).
+    #[cfg(feature = "ui-api")]
+    on_project!("ui.thumbnail", "A poster frame (JPEG, base64) of a video asset, for media panels", false, ui::thumbnail);
 
     on_project!("edit.insert", "Put an asset on the timeline (video + linked audio); insert or overwrite", true, edit::insert);
     on_project!("edit.split", "Cut clips in two at a time (all clips under it, or the given ones)", true, edit::split);
