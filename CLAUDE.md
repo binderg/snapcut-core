@@ -16,6 +16,10 @@ JSON-RPC 2.0 protocol. Primary use case: an agent editing real footage
   owns the data *shapes* (transcript asset with word timings/speakers/confidence,
   caption track, markers, jobs, provenance); every model lives in a plugin
   (local, BYOK cloud, or SaaS). Transcription is the first plugin, not built yet.
+- **API docs live in `skills/ve-core/`** (entry `SKILL.md`, one file per
+  method family under `methods/`). Update them with any protocol change;
+  `ve-daemon/tests/docs.rs` fails if a registered method is undocumented or
+  a link is broken. `skills/video-edit/` is the CLI skill for agents.
 - **Agent interface is CLI + skills (SKILL.md), not MCP.** Don't build MCP. Don't
   make choices that would prevent someone else writing a thin MCP shim from `describe`.
 - **Standards over invention:** OTIO JSON project, JSON-RPC 2.0 + OpenRPC,
@@ -173,6 +177,23 @@ queued by `commit_doc` and broadcast after each call under the session lock
 never overwrites them. Calls still serialize on the session mutex: a long
 export blocks other calls until jobs exist. Named pipe ACL is the Windows
 default (not locked down further).
+Measurements (`ve-analyze::{loudness,levels,pitch}`, `ve-daemon::measure`,
+`ve-render::source`): read-only `measure.loudness` (ffmpeg `ebur128`,
+true peak), `measure.levels` (per channel RMS/peak/DC/clipping, noise floor
+as the 5th percentile of 50 ms windows above digital silence, stereo balance
+and correlation), `measure.waveform` (min/max/RMS per bucket over all
+channels, no downmix), `measure.pitch` (own YIN at 8 kHz, 60-800 Hz, 20 ms
+hop). Each takes `asset` (whole file) or `from`/`to` (timeline mix) and an
+optional `resolution` series. Samples stream out of ffmpeg as f32
+(`ffmpeg::stream`), never held whole. Asset results are cached in
+`<cache>/ve/measure/<file hash>/` (bump `CACHE_VERSION` when output changes);
+timeline results are not. `edit.normalize` measures the mix and adds one gain
+to overlapping audio clips (`ve_ops::edit::add_gain`), limited by a true-peak
+ceiling. Probe now records color (pixel format, bit depth, chroma, range,
+primaries, transfer, matrix, sdr/hdr10/hlg). ve-analyze is built at
+opt-level 2 in dev (per-sample loops). On Windows the CLI starts daemons from
+a copy of `ve.exe` in `<cache>/ve/bin/` so a running daemon never blocks a
+rebuild; `VE_DAEMON_ORIGIN` tells the daemon which binary it stands for.
 No CI yet; the Python check runs by hand.
 
 Phase 1 gate: **an agent cuts a 10-minute talking head end to end via the CLI only.**
@@ -193,8 +214,10 @@ Not done yet, and what the gate still needs (suggested order, not decided):
 - Run the gate for real: an agent with only the skill cutting real footage
   (so far only a synthetic 10-min talking head has been cut end to end).
 - (done) Daemon socket + connect-or-spawn + WebSocket + `project.changed`.
-- Jobs: export and analyze are synchronous and hold the session lock, so a
-  UI or agent waits behind them.
+- Jobs: export, analyze and measure are synchronous and hold the session
+  lock, so a UI or agent waits behind them.
+- Video measurements: exposure/brightness, saturation, color cast, histogram
+  (`signalstats`), black/frozen frames, letterboxing, interlacing, blur.
 - Proxies on import (needs jobs); faster seeks for long-GOP phone footage.
 - `ve-plugin` host, then move the analyzers to `plugins/core` (dogfooding).
 
