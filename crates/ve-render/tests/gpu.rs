@@ -372,6 +372,79 @@ fn decode_all(path: &Path) -> Vec<image::RgbImage> {
     out.stdout.chunks_exact((w * h * 3) as usize).map(|c| image::RgbImage::from_raw(w, h, c.to_vec()).unwrap()).collect()
 }
 
+/// Frame `n` of a video as raw yuv420p bytes, untouched by any color conversion.
+fn yuv_frame(path: &Path, n: usize) -> Vec<u8> {
+    let out = Command::new("ffmpeg")
+        .args(["-v", "error", "-i"])
+        .arg(path)
+        .args(["-f", "rawvideo", "-pix_fmt", "yuv420p", "-"])
+        .output()
+        .expect("ffmpeg on PATH");
+    let size = (SIDE * SIDE * 3 / 2) as usize;
+    out.stdout[n * size..(n + 1) * size].to_vec()
+}
+
+/// The YUV matrix a file is tagged with (`unknown` when it says nothing).
+fn matrix_tag(path: &Path) -> String {
+    let out = Command::new("ffprobe")
+        .args(["-v", "error", "-select_streams", "v", "-show_entries", "stream=color_space", "-of", "csv=p=0"])
+        .arg(path)
+        .output()
+        .expect("ffprobe on PATH");
+    String::from_utf8_lossy(&out.stdout).trim().to_owned()
+}
+
+/// Saturated colors survive the GPU export the same as the ffmpeg export,
+/// for footage tagged BT.709 (phones, cameras) and for untagged footage.
+/// Before this test, BT.709 footage lost ~20 levels of luma on the green bar.
+/// The gray ramp cannot catch a matrix mistake: gray is the same in all of them.
+#[test]
+fn gpu_export_keeps_colors() {
+    let work = dir("gpu-export-color");
+    let tagged = work.join("bars709.mp4");
+    ffmpeg(&[
+        "-f", "lavfi", "-i", &format!("smptehdbars=s={SIDE}x{SIDE}:r={FPS}:d=1"),
+        "-vf", "setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv",
+        "-c:v", "libx264", "-qp", "0", "-pix_fmt", "yuv420p",
+        "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", tagged.to_str().unwrap(),
+    ]);
+    let untagged = work.join("bars-untagged.mkv");
+    ffmpeg(&[
+        "-f", "lavfi", "-i", &format!("smptehdbars=s={SIDE}x{SIDE}:r={FPS}:d=1"),
+        "-vf", "setparams=colorspace=unknown:color_primaries=unknown:color_trc=unknown",
+        "-c:v", "ffv1", "-pix_fmt", "yuv420p", untagged.to_str().unwrap(),
+    ]);
+    assert_eq!(matrix_tag(&tagged), "bt709");
+    assert_eq!(matrix_tag(&untagged), "unknown");
+    for (name, src) in [("bt709", &tagged), ("untagged", &untagged)] {
+        let output = OutputSettings { width: SIDE, height: SIDE, rate: Rate::integer(FPS), sample_rate: 48_000, color_space: "bt709".into() };
+        let mut tl = ve_model::doc::new_project("color", output);
+        add_asset(&mut tl, "asset_bars", src);
+        tl = edit::insert(&tl, &insert("asset_bars", None, None, None, false)).unwrap().0;
+        let (a, b) = (work.join(format!("{name}-ffmpeg.mp4")), work.join(format!("{name}-gpu.mp4")));
+        let s = settings(&tl);
+        ve_render::encode(&tl, span_all(&tl), &s, &a, &work).unwrap();
+        ve_render::compose::encode(&tl, span_all(&tl), &s, &b, &work, &fx()).unwrap();
+        assert_eq!(matrix_tag(&b), "bt709", "{name}: the GPU export says what it is");
+        // Decoded by their tags (untagged: BT.601, ffmpeg's default and the engine's).
+        let (fa, fb) = (decode_all(&a), decode_all(&b));
+        assert_eq!(fa.len(), fb.len());
+        let (mean, max) = diff(&fa[10], &fb[10]);
+        eprintln!("{name}: mean {mean:.3}, max {max}");
+        // A BT.601/709 mix-up moves whole saturated bars by 10-20 levels; bar
+        // edges differ a little more from chroma subsampling either way.
+        assert!(mean < 2.0, "{name}: mean {mean:.3}, max {max}");
+        if name == "bt709" {
+            // The ffmpeg path passes the source's YUV through; the GPU export
+            // must land on the same numbers, whatever a player assumes.
+            let (ya, yb) = (yuv_frame(&a, 10), yuv_frame(&b, 10));
+            let mean = ya.iter().zip(&yb).map(|(x, y)| f64::from(x.abs_diff(*y))).sum::<f64>() / ya.len() as f64;
+            eprintln!("{name}: yuv mean {mean:.3}");
+            assert!(mean < 1.5, "{name}: yuv mean {mean:.3}");
+        }
+    }
+}
+
 fn span_all(tl: &Timeline) -> ve_render::Span {
     ve_render::span_or_all(tl, None, None).unwrap()
 }
@@ -395,7 +468,9 @@ fn gpu_export_matches_the_ffmpeg_export() {
         let limit = if (10..30).contains(&n) { 3.0 } else { 1.05 };
         assert!(mean < limit, "frame {n}: mean {mean:.3}, max {max}");
         if !(10..30).contains(&n) {
-            assert!(max <= 4, "frame {n}: max {max}");
+            // Codec noise plus rounding: the GPU export goes back to YUV with
+            // BT.709, the source came in by its own matrix.
+            assert!(max <= 6, "frame {n}: max {max}");
         }
     }
 }
@@ -415,7 +490,7 @@ fn gpu_export_shows_effects_and_transitions() {
     for n in [30, 45, 50, 59, 60, 70] {
         let golden = rgb(&ve_render::compose::frame(&tl, fr(n), SIDE, ImageFormat::Png, &fx()).unwrap().bytes);
         let (mean, max) = diff(&golden, &ff[n as usize]);
-        assert!(mean < 1.5, "frame {n}: mean {mean:.3}, max {max}");
+        assert!(mean < 2.0, "frame {n}: mean {mean:.3}, max {max}");
     }
     // Not vacuous: +1 stop of exposure brightens frame 30, and the dissolve
     // is neither clip alone at its midpoint.
@@ -520,4 +595,24 @@ fn bench_export() {
     ffmpeg(&["-f", "lavfi", "-i", "testsrc2=s=1920x1080:r=30000/1001", "-frames:v", &frames.to_string(), "-c:v", "libx264", "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p", o3.to_str().unwrap()]);
     report("x264 alone (floor)", t, &o3);
     let _ = (fs::remove_file(&o1), fs::remove_file(&o2), fs::remove_file(&o3));
+}
+
+/// A frame that cannot render (here an effect nobody has installed) stops the
+/// export at once with that error, not ffmpeg's, and leaves no file.
+#[test]
+fn gpu_export_reports_render_errors() {
+    use std::time::{Duration, Instant};
+    let work = dir("gpu-export-error");
+    let mut tl = hd_project(&work);
+    let ve_model::otio::Composable::Track(v1) = &tl.tracks.children[0] else { panic!("V1") };
+    let ve_model::otio::Composable::Clip(clip) = &v1.children[0] else { panic!("a clip") };
+    let id = ve_ops::lane::clip_id(clip).unwrap().clone();
+    tl = ve_ops::effects::add(&tl, &id, "core.color/not-installed@1", serde_json::Map::new(), None).unwrap().0;
+    let out = work.join("broken.mp4");
+    let started = Instant::now();
+    let r = ve_render::compose::encode(&tl, span_all(&tl), &settings(&tl), &out, &work, &fx());
+    let Err(ve_render::RenderError::Invalid(msg)) = r else { panic!("expected the effect error, got {:?}", r.err()) };
+    assert!(msg.contains("not-installed"), "{msg}");
+    assert!(started.elapsed() < Duration::from_secs(20), "took {:?}", started.elapsed());
+    assert!(!out.exists(), "no file is left behind");
 }

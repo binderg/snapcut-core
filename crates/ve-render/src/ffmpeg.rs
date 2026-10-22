@@ -191,16 +191,24 @@ pub fn feed(
         }
         true
     });
+    // Set when ffmpeg stopped taking frames: then its own log says why.
+    let ffmpeg_gone = std::cell::Cell::new(false);
     let mut send = |chunk: Vec<u8>| -> Result<(), RenderError> {
         if control::cancelled() {
             return Err(RenderError::Cancelled);
         }
-        tx.send(chunk).map_err(|_| RenderError::Io("ffmpeg stopped reading frames".into()))
+        tx.send(chunk).map_err(|_| {
+            ffmpeg_gone.set(true);
+            RenderError::Io("ffmpeg stopped reading frames".into())
+        })
     };
     let produced = produce(&mut send);
     drop(tx);
     let child = Mutex::new(child);
-    if matches!(produced, Err(RenderError::Cancelled)) {
+    // The producer failed (cancel, a frame that would not render): stop
+    // ffmpeg now rather than let it finish a short file.
+    let producer_failed = produced.is_err() && !ffmpeg_gone.get();
+    if producer_failed {
         kill_tree(&mut lock(&child));
     }
     let wrote = writer.join().unwrap_or(false);
@@ -219,6 +227,9 @@ pub fn feed(
     drop(script);
     if matches!(produced, Err(RenderError::Cancelled)) || control::cancelled() {
         return Err(RenderError::Cancelled);
+    }
+    if producer_failed {
+        return produced.map(|()| String::new());
     }
     let status = status?;
     // ffmpeg's own error is the useful one when the pipe broke.

@@ -248,13 +248,21 @@ are shared with `ve_render::encode` (`encode_args`). The daemon picks per range
 (`ve_render::needs_gpu`: any effect or transition), for `render.frame`,
 `render.range_preview` and `render.export`; `VE_RENDERER=gpu|ffmpeg` only
 forces a backend. Progress is frames done / rate through the job's `Control`,
-cancel is checked per frame and kills ffmpeg (no partial file). Tests
-(`tests/gpu.rs`): plain project exports within codec noise of the ffmpeg path,
-effect+transition golden frames, cancel mid-export; `tests/jobs.rs` runs it as
-a job. Colour: RGBA to yuv420p uses swscale's defaults, matching how the
-decoders read untagged sources; BT.709-tagged footage is untested (check
-before trusting colours on it). Not measured yet: speed on the 10-min talking
-head. Contact sheets still warn (ffmpeg only). In-process decoding (`ffmpeg-the-third`) is
+cancel is checked per frame and kills ffmpeg (no partial file), and so does
+a frame that fails to render (its error is reported, not ffmpeg's). Each
+export has its own `DecoderPool` (closed when it ends); single frames share
+the process-wide one. Colour: decoders read each source by its tag
+(untagged: ffmpeg's BT.601 default, same as the ffmpeg path's stills); the
+export goes back to YUV with BT.709 limited range and is tagged bt709 (SDR
+only). Before that fix, BT.709 footage lost ~20 luma levels on saturated
+colours; `gpu_export_keeps_colors` compares raw YUV against the ffmpeg path.
+Open: untagged footage is read as BT.601 everywhere, while players show
+untagged HD as 709. Tests (`tests/gpu.rs`): plain project exports within
+codec noise of the ffmpeg path, effect+transition golden frames, colours,
+render errors, cancel mid-export; `tests/jobs.rs` runs it as a job. Speed
+(`bench_export`, 10-min 1080p 29.97, 160 cuts, x264 medium, dev build):
+ffmpeg 86 s (5.5 ms/frame), GPU 396 s (25.4 ms/frame), x264 alone 77 s.
+Contact sheets still warn (ffmpeg only). In-process decoding (`ffmpeg-the-third`) is
 planned for fast random scrubbing (ARCHITECTURE.md, "Decoding for the
 compositor"); it needs LLVM and an LGPL shared FFmpeg build, decide first.
 No CI yet; the Python check runs by hand.

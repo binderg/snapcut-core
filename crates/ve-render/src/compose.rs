@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use ve_model::Timeline;
 use ve_model::time::Q;
 
-use crate::decoder;
+use crate::decoder::{self, DecoderPool};
 use crate::ffmpeg::{self, Inputs};
 use crate::fx::{Kind, Registry};
 use crate::gpu::{Gpu, Item, Pass, Picture, Rect};
@@ -24,16 +24,30 @@ use crate::{Canvas, EncodeSettings, Encoded, Fit, Graph, Image, ImageFormat, Ren
 
 type Result<T> = std::result::Result<T, RenderError>;
 
-/// Displayed size (after rotation) of each source file the project knows.
-fn source_sizes(tl: &Timeline) -> HashMap<PathBuf, (u32, u32)> {
+/// The matrix GPU exports are encoded with and tagged. Decoders read each
+/// source by its own tag (untagged: ffmpeg's BT.601 default, as the ffmpeg
+/// path's stills do), so the RGB in between is the same either way. The
+/// compositor works in 8-bit RGBA: the output is SDR Rec.709.
+pub const OUTPUT_MATRIX: &str = "bt709";
+
+/// What the compositor needs to know about a source file.
+#[derive(Debug, Clone, Copy)]
+struct Source {
+    /// Displayed size, after rotation.
+    width: u32,
+    height: u32,
+}
+
+/// Every source file the project knows.
+fn sources(tl: &Timeline) -> HashMap<PathBuf, Source> {
     tl.metadata
         .ve
         .assets
         .iter()
         .filter_map(|a| {
             let v = a.media.as_ref()?.video.as_ref()?;
-            let size = if v.rotation % 180 == 90 { (v.height, v.width) } else { (v.width, v.height) };
-            Some((local_path(&a.url)?, size))
+            let (width, height) = if v.rotation % 180 == 90 { (v.height, v.width) } else { (v.width, v.height) };
+            Some((local_path(&a.url)?, Source { width, height }))
         })
         .collect()
 }
@@ -105,14 +119,24 @@ struct Decoded {
     effects: Vec<Pass>,
 }
 
-fn decoded(seg: &Segment, t: Q, slot: usize, sizes: &HashMap<PathBuf, (u32, u32)>, fit: Fit, canvas: (u32, u32), fx: &Registry) -> Result<Decoded> {
-    let &(w, h) = sizes
+/// How [`render_rgba`] decodes: the sources it reads and the decoders it reads with.
+struct Ctx<'a> {
+    sources: &'a HashMap<PathBuf, Source>,
+    pool: &'a mut DecoderPool,
+    canvas: &'a Canvas,
+    fx: &'a Registry,
+}
+
+fn decoded(ctx: &mut Ctx<'_>, seg: &Segment, t: Q, slot: usize) -> Result<Decoded> {
+    let src = *ctx
+        .sources
         .get(&seg.path)
         .ok_or_else(|| RenderError::Media(format!("{}: {} has no probed video size", seg.clip, seg.path.display())))?;
-    let rect = place(fit, w, h, canvas.0, canvas.1);
+    let rect = place(ctx.canvas.fit, src.width, src.height, ctx.canvas.width, ctx.canvas.height);
     let (dw, dh) = (rect.w as u32, rect.h as u32);
     let key = decoder::key(&seg.path, dw, dh, seg.media_rate, slot);
-    let rgba = decoder::frame(&key, source_frame(seg, t))?;
+    let fx = ctx.fx;
+    let rgba = ctx.pool.frame(&key, source_frame(seg, t))?;
     Ok(Decoded { rgba, width: dw, height: dh, rect, effects: passes(seg, t, fx)? })
 }
 
@@ -129,8 +153,8 @@ enum Shown {
 }
 
 /// The composited RGBA of the frame at `at` from a plan that covers it.
-fn render_rgba(p: &Plan, sizes: &HashMap<PathBuf, (u32, u32)>, canvas: &Canvas, at: Q, fx: &Registry) -> Result<Vec<u8>> {
-    let size = (canvas.width, canvas.height);
+fn render_rgba(ctx: &mut Ctx<'_>, p: &Plan, at: Q) -> Result<Vec<u8>> {
+    let fx = ctx.fx;
     // Each layer is decoded at the size it is drawn, by a warm decoder: one
     // stream per track, a second for the incoming clip of a transition.
     let mut shown = Vec::new();
@@ -144,11 +168,11 @@ fn render_rgba(p: &Plan, sizes: &HashMap<PathBuf, (u32, u32)>, canvas: &Canvas, 
                 time: seconds(local),
                 progress: seconds(local / (tr.end - tr.start)),
             };
-            let a = decoded(&tr.outgoing, at, 2 * k, sizes, canvas.fit, size, fx)?;
-            let b = decoded(&tr.incoming, at, 2 * k + 1, sizes, canvas.fit, size, fx)?;
+            let a = decoded(ctx, &tr.outgoing, at, 2 * k)?;
+            let b = decoded(ctx, &tr.incoming, at, 2 * k + 1)?;
             shown.push(Shown::Transition(a, b, pass));
         } else if let Some(seg) = track.segments.iter().find(|s| s.start <= at && at < s.end) {
-            shown.push(Shown::Plain(decoded(seg, at, 2 * k, sizes, canvas.fit, size, fx)?));
+            shown.push(Shown::Plain(decoded(ctx, seg, at, 2 * k)?));
         }
     }
     let items: Vec<Item<'_>> = shown
@@ -158,7 +182,7 @@ fn render_rgba(p: &Plan, sizes: &HashMap<PathBuf, (u32, u32)>, canvas: &Canvas, 
             Shown::Transition(a, b, pass) => Item::Transition { outgoing: a.picture(), incoming: b.picture(), pass: pass.clone() },
         })
         .collect();
-    Gpu::shared()?.render(canvas.width, canvas.height, &items)
+    Gpu::shared()?.render(ctx.canvas.width, ctx.canvas.height, &items)
 }
 
 /// [`crate::frame`] through the GPU compositor: one frame at `at` (snapped
@@ -173,7 +197,11 @@ pub fn frame(tl: &Timeline, at: Q, width: u32, format: ImageFormat, fx: &Registr
         return Err(RenderError::Invalid(format!("no frame there: the timeline has {} frames", (end * r).to_integer())));
     }
     let p = plan(tl, Span::new(at, at + Q::from_integer(1) / r))?;
-    let rgba = render_rgba(&p, &source_sizes(tl), &canvas, at, fx)?;
+    // Single frames share the process-wide warm decoders (scrubbing).
+    let sources = sources(tl);
+    let mut pool = decoder::shared()?;
+    let rgba = render_rgba(&mut Ctx { sources: &sources, pool: &mut pool, canvas: &canvas, fx }, &p, at)?;
+    drop(pool);
     let rgb = image::RgbImage::from_fn(canvas.width, canvas.height, |x, y| {
         let i = ((y * canvas.width + x) * 4) as usize;
         image::Rgb([rgba[i], rgba[i + 1], rgba[i + 2]])
@@ -204,25 +232,34 @@ pub fn encode(tl: &Timeline, span: Span, s: &EncodeSettings, out: &Path, work: &
         Some(e) => e.clone(),
         None => ffmpeg::h264_encoder()?.to_owned(),
     };
-    // Fail on a missing effect or GPU before an encoder is started.
+    // No GPU: fail before an encoder is started.
     Gpu::shared()?;
-    let sizes = source_sizes(tl);
+    let sources = sources(tl);
+    // An export reads with its own decoders: it walks the whole range in
+    // order and must not fight a preview or another export over the shared
+    // ones. They close when the export ends.
+    let mut pool = DecoderPool::default();
 
     let mut g = Graph::new();
     let a = g.audio(&p, c, s.crossfade);
     let pipe_index = g.input_count();
-    g.chain(format!("[{pipe_index}:v]format=yuv420p,setsar=1[gv]"));
+    g.chain(format!("[{pipe_index}:v]scale=out_color_matrix={OUTPUT_MATRIX}:out_range=tv,format=yuv420p,setsar=1[gv]"));
     let pipe = ["-f", "rawvideo", "-pix_fmt", "rgba", "-s", &format!("{}x{}", c.width, c.height), "-framerate", &c.rate.to_string(), "-i", "-"]
         .iter()
         .map(|a| (*a).to_owned())
         .collect();
-    let args = encode_args(s, &encoder, "[gv]", &format!("[{a}]"), out);
+    let mut args = encode_args(s, &encoder, "[gv]", &format!("[{a}]"), out);
+    // Say what the pixels are, so players do not guess (before the output path).
+    let tags = ["-colorspace", OUTPUT_MATRIX, "-color_primaries", "bt709", "-color_trc", "bt709", "-color_range", "tv"];
+    let last = args.len() - 1;
+    args.splice(last..last, tags.iter().map(|t| (*t).to_owned()));
 
     let ctrl = crate::control::current();
+    let mut ctx = Ctx { sources: &sources, pool: &mut pool, canvas: c, fx };
     let mut produce = |send: &mut ffmpeg::Send| -> Result<()> {
         for k in 0..total {
             let at = span.start + Q::from_integer(k) / r;
-            send(render_rgba(&p, &sizes, c, at, fx)?)?;
+            send(render_rgba(&mut ctx, &p, at)?)?;
             if let Some(ctrl) = &ctrl {
                 ctrl.progress(((k + 1) as f64) / c.rate.to_f64());
             }

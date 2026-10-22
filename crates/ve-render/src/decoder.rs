@@ -235,10 +235,9 @@ impl DecoderPool {
     }
 }
 
-/// Convenience over the shared pool.
-pub fn frame(key: &Key, n: i64) -> Result<Vec<u8>> {
-    let mut pool = DecoderPool::shared().lock().map_err(|_| RenderError::Io("decoder pool poisoned".into()))?;
-    pool.frame(key, n)
+/// The shared pool, locked.
+pub fn shared() -> Result<std::sync::MutexGuard<'static, DecoderPool>> {
+    DecoderPool::shared().lock().map_err(|_| RenderError::Io("decoder pool poisoned".into()))
 }
 
 /// Keep `Path` in the public signature family for callers building keys.
