@@ -360,3 +360,32 @@ proptest! {
         prop_assert_eq!(track_end(&next, TrackKind::Audio), before - cut);
     }
 }
+
+#[test]
+fn clips_go_on_added_tracks_and_leave_with_forced_removal() {
+    use ve_ops::tracks;
+    let tl = project();
+    let (tl, v2) = tracks::add(&tl, TrackKind::Video, None, None).unwrap();
+    let (tl, a2) = tracks::add(&tl, TrackKind::Audio, None, None).unwrap();
+    let p = Insert {
+        asset: Id::from_raw("asset_a"),
+        track: Some("V2".into()),
+        audio_track: Some(a2.track.id.to_string()),
+        at: Some(sec(2)),
+        source_in: None,
+        source_out: None,
+        duration: Some(sec(3)),
+        video: true,
+        audio: true,
+        overwrite: true,
+    };
+    let (with_clips, r) = edit::insert(&tl, &p).unwrap();
+    assert_eq!(r.created.iter().map(|c| c.track.as_str()).collect::<Vec<_>>(), ["V2", "A2"]);
+    assert!(tracks::remove(&with_clips, "V2", false).is_err());
+    let (after, rep) = tracks::remove(&with_clips, &v2.track.id.to_string(), true).unwrap();
+    assert_eq!(rep.removed.len(), 1);
+    assert_eq!(rep.tracks.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(), ["V1", "A1", "A2"]);
+    // Undo restores the track and its clip exactly.
+    let applied = ve_ops::commit_patches(&with_clips, &after).unwrap();
+    assert_eq!(ve_ops::apply_patch(&after, &applied.inverse).unwrap(), with_clips);
+}

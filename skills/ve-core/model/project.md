@@ -41,8 +41,10 @@ Timeline.1
       children[]           Clip.2 | Gap.1 | Transition.1 | Stack.1, in time order
 ```
 
-A new project has two tracks, `V1` (video) and `A1` (audio). Tracks lower in
-the list are composited **below** later ones for video; all audio tracks mix.
+A new project has two tracks, `V1` (video) and `A1` (audio); `track.add`
+adds any number more ([../methods/tracks.md](../methods/tracks.md)). Video
+tracks earlier in the list are composited **below** later ones; all audio
+tracks mix.
 
 ### Where a clip is
 

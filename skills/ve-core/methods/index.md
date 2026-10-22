@@ -30,6 +30,11 @@ Every method the engine has. "Edits" means it takes `base_rev` / `dry_run` /
 | `edit.set_speed` | yes | Change a clip's speed (exact ratio) | [edit.md](edit.md) |
 | `edit.set_volume` | yes | Set a clip's audio gain | [edit.md](edit.md) |
 | `edit.normalize` | yes | Hit a loudness target with one gain on the audio clips | [measure.md](measure.md) |
+| `track.add` | yes | Add a video or audio track (any number of each) | [tracks.md](tracks.md) |
+| `track.remove` | yes | Remove a track (with its clips only when forced) | [tracks.md](tracks.md) |
+| `track.rename` | yes | Rename a track | [tracks.md](tracks.md) |
+| `track.move` | yes | Change a track's position (video: stacking order) | [tracks.md](tracks.md) |
+| `track.list` | | Every track with kind, position, clip count | [tracks.md](tracks.md) |
 | `marker.add` | yes | Add a timeline marker | [markers.md](markers.md) |
 | `marker.remove` | yes | Remove markers by ID or name | [markers.md](markers.md) |
 | `history.undo` | yes | Undo the last step | [history.md](history.md) |

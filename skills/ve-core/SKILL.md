@@ -33,7 +33,7 @@ Read in this order the first time; afterwards jump to what you need.
 | [editing/revisions-and-undo.md](editing/revisions-and-undo.md) | `base_rev`, `dry_run`, `actor`, the result of every edit, undo groups |
 | [editing/events.md](editing/events.md) | `events.subscribe`, `project.changed`, keeping a live copy of the project |
 | [methods/index.md](methods/index.md) | Every method, one line each, linking to the details |
-| [methods/](methods/) | One file per method family: `project`, `media`, `edit`, `markers`, `history`, `render`, `analyze`, `measure`, `system` |
+| [methods/](methods/) | One file per method family: `project`, `media`, `edit`, `tracks`, `markers`, `history`, `render`, `analyze`, `measure`, `system` |
 | [guides/frontend.md](guides/frontend.md) | Building a UI on the engine, step by step |
 | [guides/status-and-limits.md](guides/status-and-limits.md) | What is not built yet and the gotchas, so you do not design around things that do not exist |
 

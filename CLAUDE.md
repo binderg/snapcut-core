@@ -194,6 +194,11 @@ primaries, transfer, matrix, sdr/hdr10/hlg). ve-analyze is built at
 opt-level 2 in dev (per-sample loops). On Windows the CLI starts daemons from
 a copy of `ve.exe` in `<cache>/ve/bin/` so a running daemon never blocks a
 rebuild; `VE_DAEMON_ORIGIN` tells the daemon which binary it stands for.
+Tracks (`ve-ops::tracks`): `track.add|remove|rename|move|list`, any number
+of video and audio tracks. Positions (`index`) count within a kind; for video
+that is the stacking order (0 is the bottom). Removing a track with clips
+needs `force`. CLI `ve track list|add|rm|rename|move`. Renders already skip a
+track with OTIO `enabled: false`; no method sets it yet.
 No CI yet; the Python check runs by hand.
 
 Phase 1 gate: **an agent cuts a 10-minute talking head end to end via the CLI only.**
@@ -219,6 +224,10 @@ Not done yet, and what the gate still needs (suggested order, not decided):
 - Video measurements: exposure/brightness, saturation, color cast, histogram
   (`signalstats`), black/frozen frames, letterboxing, interlacing, blur.
 - Proxies on import (needs jobs); faster seeks for long-GOP phone footage.
+- HLS playback stream for web frontends (after jobs; plan in ARCHITECTURE.md,
+  "Frame server").
+- Per-clip transforms, transitions and effects wait for the wgpu compositor
+  (owner's call, Oct 22 2026: no half-way ffmpeg versions).
 - `ve-plugin` host, then move the analyzers to `plugins/core` (dogfooding).
 
 ## Working style

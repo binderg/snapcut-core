@@ -20,6 +20,7 @@ pub mod diff;
 pub mod edit;
 pub mod lane;
 pub mod markers;
+pub mod tracks;
 
 use serde_json::Value;
 use ve_model::Timeline;

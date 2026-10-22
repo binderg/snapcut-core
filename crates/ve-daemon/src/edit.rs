@@ -8,10 +8,12 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ve_history::{OpenGroup, StepSummary};
 use ve_model::meta::MarkerSource;
+use ve_model::otio::TrackKind;
 use ve_model::{Id, Timeline};
 use ve_ops::EditReport;
 use ve_ops::edit::{self, Delete, Insert, Move, RippleDelete, SetSpeed, SetVolume, Split, Trim};
 use ve_ops::markers::{self, NewMarker};
+use ve_ops::tracks::{self, TrackPlace, TrackReport};
 use ve_protocol::{Actor, ActorKind, RpcError};
 
 use crate::commit::{Committed, actor_label, commit, commit_doc, mutation_params, parse_ratio, parse_time};
@@ -435,4 +437,91 @@ pub fn end_group(p: &mut OpenProject, a: EndGroupParams) -> Result<GroupEnded, R
     let (group, edits) = p.history.end_group(&actor).map_err(|e| RpcError::invalid_params(e.0))?;
     p.save_history();
     Ok(GroupEnded { group, edits })
+}
+
+// --- tracks ---
+
+/// Track kind in params.
+#[derive(Debug, Clone, Copy, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum TrackKindParam {
+    Video,
+    Audio,
+}
+
+mutation_params! {
+    /// `track.add`: a new empty track. Any number of video and audio tracks.
+    pub struct TrackAddParams {
+        pub kind: TrackKindParam,
+        /// Defaults to the next free `V<n>` / `A<n>`. Must not match another track's name or ID.
+        #[serde(default)]
+        pub name: Option<String>,
+        /// Position among tracks of the same kind: 0 is the first (for video, the bottom layer).
+        /// Defaults to the end (for video, the top layer).
+        #[serde(default)]
+        pub index: Option<usize>,
+    }
+}
+
+pub fn track_add(p: &mut OpenProject, a: TrackAddParams) -> Result<Committed<TrackReport>, RpcError> {
+    let kind = match a.kind {
+        TrackKindParam::Video => TrackKind::Video,
+        TrackKindParam::Audio => TrackKind::Audio,
+    };
+    commit(p, a.mutation(), "track.add", |tl| tracks::add(tl, kind, a.name.as_deref(), a.index).map_err(edit_err))
+}
+
+mutation_params! {
+    /// `track.remove`: delete a track.
+    pub struct TrackRemoveParams {
+        /// Track ID or name.
+        pub track: String,
+        /// Also delete the track's clips. Without it, a track with clips is not removed.
+        #[serde(default)]
+        pub force: bool,
+    }
+}
+
+pub fn track_remove(p: &mut OpenProject, a: TrackRemoveParams) -> Result<Committed<TrackReport>, RpcError> {
+    commit(p, a.mutation(), "track.remove", |tl| tracks::remove(tl, &a.track, a.force).map_err(edit_err))
+}
+
+mutation_params! {
+    /// `track.rename`.
+    pub struct TrackRenameParams {
+        /// Track ID or current name.
+        pub track: String,
+        /// New name; must not match another track's name or ID.
+        pub name: String,
+    }
+}
+
+pub fn track_rename(p: &mut OpenProject, a: TrackRenameParams) -> Result<Committed<TrackReport>, RpcError> {
+    commit(p, a.mutation(), "track.rename", |tl| tracks::rename(tl, &a.track, &a.name).map_err(edit_err))
+}
+
+mutation_params! {
+    /// `track.move`: change a track's position among tracks of its kind.
+    pub struct TrackMoveParams {
+        /// Track ID or name.
+        pub track: String,
+        /// New position among tracks of the same kind: 0 is the first (for video, the bottom layer).
+        pub index: usize,
+    }
+}
+
+pub fn track_move(p: &mut OpenProject, a: TrackMoveParams) -> Result<Committed<TrackReport>, RpcError> {
+    commit(p, a.mutation(), "track.move", |tl| tracks::reorder(tl, &a.track, a.index).map_err(edit_err))
+}
+
+/// `track.list` result.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct TrackList {
+    pub revision: u64,
+    /// Every track in document order.
+    pub tracks: Vec<TrackPlace>,
+}
+
+pub fn track_list(p: &OpenProject) -> TrackList {
+    TrackList { revision: p.revision(), tracks: tracks::list(&p.timeline) }
 }

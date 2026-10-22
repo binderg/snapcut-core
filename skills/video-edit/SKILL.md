@@ -83,7 +83,9 @@ Exit codes: 0 ok, 2 bad arguments (the message says what), 3 stale revision,
 | Loudness to a target (one gain on every audio clip) | `ve normalize --target -14` (-16 podcasts, -23 broadcast) |
 | Insert part of a source | `ve insert asset_94b8 --in 00:03:10:00 --out 00:03:25:00 --at 00:01:00:00` |
 | Insert over existing material | `… --overwrite` |
-| B-roll without its sound | `ve insert asset_b --no-audio --track V2 --at 00:00:30:00 --overwrite` |
+| Add a track (any number of each kind) | `ve track add video` (makes `V2`, drawn on top of `V1`), `ve track add audio --name Music` |
+| B-roll without its sound, over the main shot | `ve track add video`, then `ve insert asset_b --no-audio --track V2 --at 00:00:30:00 --overwrite` |
+| Tracks: list, rename, reorder, remove | `ve track list`, `ve track rename V2 Broll`, `ve track move V2 0`, `ve track rm V2 [--force]` |
 | Markers | `ve marker add --at 00:01:00:00 --name chapter`, `ve marker rm --name silence` |
 | Undo / redo / what happened | `ve undo`, `ve redo`, `ve history` |
 

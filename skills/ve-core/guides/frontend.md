@@ -5,7 +5,7 @@ does not have, and an agent can make the same edits at the same time. This
 guide is the order to build things in. Check
 [status-and-limits.md](status-and-limits.md) first so you do not design
 around features that do not exist yet (notably: no video playback stream,
-no background jobs, no track creation).
+no background jobs, no effects or transitions).
 
 ## 1. Pick a shell
 
@@ -86,6 +86,7 @@ Map gestures to methods ([../methods/edit.md](../methods/edit.md)):
 | Delete / ripple delete | `edit.delete {clips}` / `edit.ripple_delete {clips}` |
 | Select a range and delete | `edit.ripple_delete {ranges: [{from, to}]}` |
 | Drop an asset from the bin | `edit.insert {asset, at, track?, overwrite?}` |
+| Add / delete / rename / drag a track header | `track.add {kind}` / `track.remove {track}` / `track.rename` / `track.move {track, index}` |
 | Speed / volume fields | `edit.set_speed {clip, speed: "3/2"}` / `edit.set_volume {clip, db}` |
 | Undo / redo | `history.undo` / `history.redo` with `base_rev` |
 

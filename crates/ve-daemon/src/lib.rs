@@ -182,6 +182,11 @@ pub fn registry(session: Arc<Session>) -> Arc<Registry> {
     on_project!("edit.set_speed", "Change a clip's speed (exact ratio); writes OTIO LinearTimeWarp too", true, edit::set_speed);
     on_project!("edit.set_volume", "Set a clip's audio gain in dB", true, edit::set_volume);
     on_project!("edit.normalize", "Measure the timeline's loudness and add one gain to its audio clips to hit a LUFS target", true, measure::normalize);
+    on_project!("track.add", "Add a video or audio track (any number of each)", true, edit::track_add);
+    on_project!("track.remove", "Remove a track (with its clips only when forced)", true, edit::track_remove);
+    on_project!("track.rename", "Rename a track", true, edit::track_rename);
+    on_project!("track.move", "Change a track's position among tracks of its kind (video: stacking order)", true, edit::track_move);
+    on_project!("track.list", "Every track with its kind, position and clip count", false, |p: &mut OpenProject, _: NoParams| Ok(edit::track_list(p)));
     on_project!("marker.add", "Add a timeline marker", true, edit::marker_add);
     on_project!("marker.remove", "Remove timeline markers by ID or name", true, edit::marker_remove);
     on_project!("history.undo", "Undo the most recent step (one edit or one group)", true, |p: &mut OpenProject, a| edit::undo(p, a, false));

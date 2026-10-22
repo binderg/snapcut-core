@@ -202,6 +202,9 @@ enum Command {
     /// Timeline markers.
     #[command(subcommand)]
     Marker(MarkerCmd),
+    /// Tracks: any number of video and audio tracks.
+    #[command(subcommand)]
+    Track(TrackCmd),
     /// Undo the last step (one edit, or a whole group).
     Undo,
     /// Redo the last undone step.
@@ -297,6 +300,33 @@ enum DaemonCmd {
     /// `VE_DAEMON_IDLE_SECS` sets the idle timeout, `VE_WS_PORT` a fixed WebSocket port.
     #[command(hide = true)]
     Run,
+}
+
+#[derive(Subcommand)]
+enum TrackCmd {
+    /// Every track with its kind, position and clip count.
+    List,
+    /// `ve track add video [--name Titles] [--index 0]`. Video tracks added
+    /// later draw on top; `--index 0` puts one at the bottom.
+    Add {
+        /// `video` or `audio`.
+        kind: String,
+        #[arg(long)]
+        name: Option<String>,
+        /// Position among tracks of the same kind (0 is the first).
+        #[arg(long)]
+        index: Option<usize>,
+    },
+    /// `ve track rm V2`. `--force` also deletes the track's clips.
+    Rm {
+        track: String,
+        #[arg(long)]
+        force: bool,
+    },
+    /// `ve track rename V2 Titles`.
+    Rename { track: String, name: String },
+    /// `ve track move V3 0`: new position among tracks of its kind.
+    Move { track: String, index: usize },
 }
 
 #[derive(Subcommand)]
@@ -565,6 +595,13 @@ fn plan(cmd: &Command, json_output: bool) -> Plan {
             m("marker.add", json!({ "at": at, "duration": duration, "name": name, "color": color, "comment": comment }))
         }
         Command::Marker(MarkerCmd::Rm { ids, name }) => m("marker.remove", json!({ "ids": ids, "name": name })),
+        Command::Track(TrackCmd::List) => q("track.list", json!({})),
+        Command::Track(TrackCmd::Add { kind, name, index }) => {
+            m("track.add", json!({ "kind": kind.to_lowercase(), "name": name, "index": index }))
+        }
+        Command::Track(TrackCmd::Rm { track, force }) => m("track.remove", json!({ "track": track, "force": force })),
+        Command::Track(TrackCmd::Rename { track, name }) => m("track.rename", json!({ "track": track, "name": name })),
+        Command::Track(TrackCmd::Move { track, index }) => m("track.move", json!({ "track": track, "index": index })),
         Command::Undo => m("history.undo", json!({})),
         Command::Redo => m("history.redo", json!({})),
         Command::History { limit } => q("history.list", json!({ "limit": limit })),
@@ -653,6 +690,17 @@ fn print_commit(r: &Value) {
     }
     for id in r["removed"].as_array().into_iter().flatten() {
         println!("removed  {}", id.as_str().unwrap_or("?"));
+    }
+    for t in r["tracks"].as_array().into_iter().flatten() {
+        let mark = if t["id"] == r["track"]["id"] { "*" } else { " " };
+        println!(
+            "{mark} {:8} {:12} {} #{}  clips {}",
+            t["name"].as_str().unwrap_or("?"),
+            t["id"].as_str().unwrap_or("?"),
+            t["kind"].as_str().unwrap_or("?"),
+            t["index"],
+            t["clips"]
+        );
     }
     for id in r["markers"].as_array().into_iter().flatten() {
         println!("marker   {}", id.as_str().unwrap_or("?"));
@@ -1011,6 +1059,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         | Command::Speed { .. }
         | Command::Volume { .. }
         | Command::Marker(_)
+        | Command::Track(_)
         | Command::Undo
         | Command::Redo => print_commit(&result),
         _ => println!("{}", serde_json::to_string_pretty(&result)?),

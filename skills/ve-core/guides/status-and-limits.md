@@ -9,7 +9,7 @@ plan around it. When something here gets built, this file changes.
 | --- | --- |
 | **Background jobs** (progress, cancel) | `render.export`, `analyze.*`, `measure.*` and big imports are synchronous and block other calls on the project until done. Show a busy state; do not fire many heavy calls at once |
 | **Video playback stream** / serving media over HTTP | `render.frame` for stills; `render.range_preview` MP4s; or a desktop shell plays source files directly |
-| **Track management** (add, remove, rename, reorder tracks) | Projects have `V1` and `A1`. Methods taking `track` only accept existing tracks |
+| **Track mute, hide, lock** | Remove clips or move them to another track |
 | **Transitions as an edit** | The model has OTIO `Transition.1`, but no method creates one and renders treat them as cuts (with a warning). Audio cuts get a 20 ms crossfade automatically |
 | **Effects, titles, text, shapes, masks, LUTs, color correction** | Data slots are reserved (`metadata.ve.effects`); nothing renders them. They come with the GPU compositor |
 | **Picture transforms** (scale, position, crop per clip) | Sources are fit to the project size (`master`) or cropped (vertical preset) only |
