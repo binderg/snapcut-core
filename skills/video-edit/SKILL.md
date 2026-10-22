@@ -78,6 +78,7 @@ Exit codes: 0 ok, 2 bad arguments (the message says what), 3 stale revision,
 | Shorten / lengthen a clip, shifting what follows | `ve trim clip_7f3a --in +15f --out -1s` |
 | Move a cut point without shifting anything | `ve trim clip_7f3a --out +10f --roll` |
 | Move a clip (overwrites the destination) | `ve move clip_7f3a --to 00:00:42:00 [--track V2]` |
+| Move a clip in front of another, pushing the rest right | `ve move clip_7f3a --to <other clip's start> --push` |
 | Speed | `ve speed clip_7f3a 3/2` (exact ratios; `1/2` is slow motion) |
 | Gain | `ve volume clip_7f3a -6` (dB) |
 | Unlink video from its audio (later edits touch one side) | `ve unlink clip_7f3a` |

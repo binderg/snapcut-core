@@ -156,7 +156,8 @@ pub fn trim(p: &mut OpenProject, a: TrimParams) -> Result<Committed<EditReport>,
 
 mutation_params! {
     /// `edit.move`: move a clip (and its linked clips) to a new start,
-    /// overwriting what is there and leaving a gap behind.
+    /// leaving a gap behind. What is at the destination is overwritten, or
+    /// with `push` moved right just far enough to fit (with its linked clips).
     pub struct MoveParams {
         pub clip: Id,
         /// New timeline start of `clip`.
@@ -166,12 +167,15 @@ mutation_params! {
         pub track: Option<String>,
         #[serde(default = "yes")]
         pub linked: bool,
+        /// Push what is in the way instead of overwriting it.
+        #[serde(default)]
+        pub push: bool,
     }
 }
 
 pub fn move_clip(p: &mut OpenProject, a: MoveParams) -> Result<Committed<EditReport>, RpcError> {
     commit(p, a.mutation(), "edit.move", |tl| {
-        let op = Move { clip: a.clip.clone(), to: time(tl, "to", &a.to)?, track: a.track.clone(), linked: a.linked };
+        let op = Move { clip: a.clip.clone(), to: time(tl, "to", &a.to)?, track: a.track.clone(), linked: a.linked, push: a.push };
         edit::move_clip(tl, &op).map_err(edit_err)
     })
 }

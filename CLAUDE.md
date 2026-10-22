@@ -123,7 +123,7 @@ carry a compact `media` block (exact duration, size, nominal rate, rotation,
 vfr flag, first audio stream); full ffprobe JSON is not stored. Media URLs are
 absolute `file://`. VFR footage keeps `r_frame_rate` as its rate. No proxies
 yet (needs jobs).
-Edit ops (`ve-ops`): insert, split, trim (ripple or roll), move (overwrite),
+Edit ops (`ve-ops`): insert, split, trim (ripple or roll), move (overwrite, or `push`: what is in the way moves right just far enough, linked clips included),
 ripple_delete (ranges, marker names or clips), delete (lift), set_speed,
 set_volume, marker add/remove, as pure fns over flattened tracks
 (`ve-ops::lane`), with proptests (patches invert, linked clips stay in sync,

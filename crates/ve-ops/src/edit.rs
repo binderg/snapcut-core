@@ -400,7 +400,12 @@ pub fn insert(tl: &Timeline, p: &Insert) -> Result<(Timeline, EditReport)> {
     let link = (targets.len() > 1).then(|| d.ids.fresh("lnk"));
     let avail = TimeRange::new(RationalTime::zero(mrate), media.duration);
     let target_lanes: Vec<usize> = targets.iter().map(|&(_, l)| l).collect();
-    let rippled = if p.overwrite { HashSet::new() } else { make_room(&mut d, &target_lanes, at, dur)? };
+    let rippled = if p.overwrite {
+        HashSet::new()
+    } else {
+        let room: Vec<(usize, Q, Q)> = target_lanes.iter().map(|&l| (l, at, dur)).collect();
+        make_room(&mut d, &room, Room::Full)?
+    };
     for lane in target_lanes {
         let id = d.ids.fresh("clip");
         let range = TimeRange::new(at_rate(src_in, mrate), at_rate(dur, mrate));
@@ -421,40 +426,80 @@ pub fn insert(tl: &Timeline, p: &Insert) -> Result<(Timeline, EditReport)> {
     d.finish()
 }
 
-/// Open `len` of room at `at` on the target lanes without pulling linked
-/// clips apart. A clip under `at` is cut there, and so are its linked clips
-/// on other tracks. Every other track that holds a partner of a clip that
-/// moves is pushed too, from that partner's start (which keeps J/L offsets).
-/// Returns the lanes that moved.
-fn make_room(d: &mut Doc, targets: &[usize], at: Q, len: Q) -> Result<HashSet<usize>> {
+/// How much room [`make_room`] opens.
+#[derive(Clone, Copy, PartialEq)]
+enum Room {
+    /// Push by the full length (insert).
+    Full,
+    /// Push only as far as needed for the item to fit (a move that pushes).
+    Fit,
+}
+
+/// Make room for items of length `len` at `at` on each target lane without
+/// pulling linked clips apart. A clip under a target point is cut there, and
+/// so are its linked clips on other tracks. Everything on a target lane from
+/// its point moves right by one shared amount; every other track that holds a
+/// partner of a clip that moves is pushed by the same amount from that
+/// partner's start (which keeps J/L offsets). Returns the lanes that moved.
+fn make_room(d: &mut Doc, targets: &[(usize, Q, Q)], room: Room) -> Result<HashSet<usize>> {
+    let zero = Q::from_integer(0);
     let mut ids = std::mem::replace(&mut d.ids, Ids::new(HashSet::new()));
-    let mut cut_links = HashSet::new();
-    for &lane in targets {
+    for &(lane, at, _) in targets {
         if d.lane_ref(lane).straddled_by_nested(at) {
             d.ids = ids;
             return Err(EditError::new("cannot insert inside a nested composition"));
         }
-        if let Some(c) = d.lane_ref(lane).items.iter().find(|p| p.start < at && at < p.end()).and_then(|p| p.clip())
-            && let Some(link) = clip_link(c)
-        {
-            cut_links.insert(link.clone());
-        }
+        let cut_link = d
+            .lane_ref(lane)
+            .items
+            .iter()
+            .find(|p| p.start < at && at < p.end())
+            .and_then(|p| p.clip())
+            .and_then(clip_link)
+            .cloned();
         d.lane(lane).split_at(at, &mut ids);
-    }
-    // Same `at`, so the right halves share one new link with the target's right half.
-    for lane in d.track_indices() {
-        let spans_linked = d.lane_ref(lane).items.iter().any(|p| {
-            p.start < at && at < p.end() && p.clip().and_then(clip_link).is_some_and(|l| cut_links.contains(l))
-        });
-        if spans_linked && !d.lane_ref(lane).straddled_by_nested(at) {
-            d.lane(lane).split_at(at, &mut ids);
+        // Same `at`, so the right halves share one new link with the target's right half.
+        if let Some(link) = cut_link {
+            for other in d.track_indices() {
+                let spans = d.lane_ref(other).items.iter().any(|p| {
+                    p.start < at && at < p.end() && p.clip().and_then(clip_link) == Some(&link)
+                });
+                if spans && !d.lane_ref(other).straddled_by_nested(at) {
+                    d.lane(other).split_at(at, &mut ids);
+                }
+            }
         }
     }
     d.ids = ids;
 
-    // Where each lane starts moving. Target lanes move from `at`; another lane
+    let amount = match room {
+        Room::Full => targets.iter().map(|t| t.2).max().unwrap_or(zero),
+        Room::Fit => targets
+            .iter()
+            .map(|&(lane, at, len)| {
+                let next = d
+                    .lane_ref(lane)
+                    .items
+                    .iter()
+                    .filter(|p| p.start >= at && p.duration() > zero && !matches!(p.item, Composable::Gap(_)))
+                    .map(|p| p.start)
+                    .min();
+                next.map_or(zero, |n| (at + len - n).max(zero))
+            })
+            .max()
+            .unwrap_or(zero),
+    };
+    if amount == zero {
+        return Ok(HashSet::new());
+    }
+
+    // Where each lane starts moving. Target lanes move from their point; another lane
     // joins from the earliest partner of anything that moves, until nothing new joins.
-    let mut from: HashMap<usize, Q> = targets.iter().map(|&l| (l, at)).collect();
+    let mut from: HashMap<usize, Q> = HashMap::new();
+    for &(lane, at, _) in targets {
+        from.entry(lane).and_modify(|t| *t = (*t).min(at)).or_insert(at);
+    }
+    let pinned: HashSet<usize> = from.keys().copied().collect();
     loop {
         let moving: HashSet<Id> = from
             .iter()
@@ -462,7 +507,7 @@ fn make_room(d: &mut Doc, targets: &[usize], at: Q, len: Q) -> Result<HashSet<us
             .collect();
         let mut grew = false;
         for lane in d.track_indices() {
-            if targets.contains(&lane) {
+            if pinned.contains(&lane) {
                 continue;
             }
             let first = d
@@ -484,7 +529,7 @@ fn make_room(d: &mut Doc, targets: &[usize], at: Q, len: Q) -> Result<HashSet<us
         }
     }
     for (&lane, &t) in &from {
-        d.lane(lane).shift_from(t, len);
+        d.lane(lane).shift_from(t, amount);
     }
     Ok(from.into_keys().collect())
 }
@@ -732,9 +777,13 @@ pub struct Move {
     /// Move `clip` (not its linked clips) to this track.
     pub track: Option<String>,
     pub linked: bool,
+    /// Push what is at the destination right (just far enough to fit, with
+    /// its linked clips) instead of overwriting it.
+    pub push: bool,
 }
 
-/// Moves overwrite whatever is at the destination and leave a gap behind.
+/// Moves leave a gap behind and overwrite whatever is at the destination,
+/// or with `push` move it right to make room.
 pub fn move_clip(tl: &Timeline, p: &Move) -> Result<(Timeline, EditReport)> {
     let mut d = Doc::new(tl)?;
     let to = d.snap(p.to);
@@ -756,6 +805,10 @@ pub fn move_clip(tl: &Timeline, p: &Move) -> Result<(Timeline, EditReport)> {
             )));
         }
         moving.push((target, id, it));
+    }
+    if p.push {
+        let room: Vec<(usize, Q, Q)> = moving.iter().map(|(t, _, it)| (*t, it.start, it.duration())).collect();
+        make_room(&mut d, &room, Room::Fit)?;
     }
     for (target, id, it) in moving {
         let mut ids = std::mem::replace(&mut d.ids, Ids::new(HashSet::new()));
