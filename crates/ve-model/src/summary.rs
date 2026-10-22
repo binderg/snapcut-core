@@ -111,6 +111,18 @@ pub fn media_line(m: &MediaInfo) -> String {
         if v.vfr {
             out.push_str(" vfr");
         }
+        if let Some(c) = &v.color {
+            // Only what is unusual: 8-bit SDR is the default nobody needs told.
+            if c.bit_depth != 8 {
+                let _ = write!(out, " {}bit", c.bit_depth);
+            }
+            if c.dynamic_range != "sdr" {
+                let _ = write!(out, " {}", c.dynamic_range);
+            }
+            if c.range.as_deref() == Some("full") {
+                out.push_str(" full-range");
+            }
+        }
     }
     if let Some(a) = &m.audio {
         let _ = write!(out, "  {} {}Hz {}ch", a.codec, a.sample_rate, a.channels);

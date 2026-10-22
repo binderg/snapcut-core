@@ -17,6 +17,7 @@
 pub mod ffmpeg;
 pub mod graph;
 pub mod plan;
+pub mod source;
 
 use std::path::Path;
 
@@ -24,7 +25,8 @@ use ve_model::Timeline;
 use ve_model::time::Q;
 
 pub use graph::{Canvas, Fit, Graph};
-pub use plan::{Plan, Span, plan, timeline_end};
+pub use plan::{Plan, Span, local_path, plan, timeline_end};
+pub use source::{AudioSource, audio_filter_log, decode_audio};
 
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum RenderError {

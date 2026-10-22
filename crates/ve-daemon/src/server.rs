@@ -104,7 +104,8 @@ pub async fn run(opts: Options) -> io::Result<()> {
     let info = DaemonInfo {
         pid: std::process::id(),
         engine: ENGINE_VERSION.into(),
-        exe: ExeIdentity::current(),
+        // The binary the CLI asked for, even when the daemon runs from a staged copy.
+        exe: std::env::var_os(crate::client::ORIGIN_ENV).map_or_else(ExeIdentity::current, |p| ExeIdentity::of(std::path::Path::new(&p))),
         project: loc.root.clone(),
         socket: address,
         websocket: format!("ws://127.0.0.1:{port}/rpc?token={token}"),

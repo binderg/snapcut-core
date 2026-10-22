@@ -14,7 +14,7 @@ use std::process::Command;
 
 use serde::Deserialize;
 use serde_json::Value;
-use ve_model::meta::{AudioInfo, MediaInfo, VideoInfo};
+use ve_model::meta::{AudioInfo, ColorInfo, MediaInfo, VideoInfo};
 use ve_model::time::Q;
 use ve_model::{Rate, RationalTime};
 
@@ -126,6 +126,12 @@ struct FfStream {
     duration_ts: Option<i64>,
     sample_rate: Option<String>,
     channels: Option<u32>,
+    pix_fmt: Option<String>,
+    bits_per_raw_sample: Option<String>,
+    color_range: Option<String>,
+    color_space: Option<String>,
+    color_transfer: Option<String>,
+    color_primaries: Option<String>,
     #[serde(default)]
     side_data_list: Vec<SideData>,
     #[serde(default)]
@@ -168,6 +174,7 @@ pub fn summarize(ffprobe: &Value) -> Option<MediaInfo> {
             rate: nominal_rate(r, avg)?,
             rotation: rotation(s),
             vfr: matches!((r, avg), (Some(r), Some(avg)) if r != avg),
+            color: color(s),
         })
     });
     let audio = a.and_then(|s| {
@@ -239,6 +246,67 @@ fn nominal_rate(r: Option<Q>, avg: Option<Q>) -> Option<Rate> {
     Some(Rate::new(*q.numer(), *q.denom()))
 }
 
+/// The stream's color description. `None` when ffprobe gives no pixel format.
+fn color(s: &FfStream) -> Option<ColorInfo> {
+    let pix = s.pix_fmt.clone().filter(|p| !p.is_empty())?;
+    // ffprobe says `unknown` / `unspecified` / `reserved` for fields the file leaves open.
+    let known = |v: &Option<String>| v.clone().filter(|v| !matches!(v.as_str(), "" | "unknown" | "unspecified" | "reserved"));
+    let range = known(&s.color_range).map(|r| match r.as_str() {
+        "tv" | "mpeg" => "limited".to_owned(),
+        "pc" | "jpeg" => "full".to_owned(),
+        _ => r,
+    });
+    let transfer = known(&s.color_transfer);
+    let dynamic_range = match transfer.as_deref() {
+        Some("smpte2084") => "hdr10",
+        Some("arib-std-b67") => "hlg",
+        _ => "sdr",
+    };
+    let bit_depth = s
+        .bits_per_raw_sample
+        .as_deref()
+        .and_then(|b| b.parse::<u8>().ok())
+        .filter(|&b| b > 0)
+        .unwrap_or_else(|| pixel_bit_depth(&pix));
+    Some(ColorInfo {
+        chroma: chroma(&pix),
+        bit_depth,
+        range,
+        primaries: known(&s.color_primaries),
+        transfer,
+        matrix: known(&s.color_space),
+        dynamic_range: dynamic_range.into(),
+        pixel_format: pix,
+    })
+}
+
+/// Bits per component from a pixel format name: `yuv420p10le` is 10, `rgb48be` 16, else 8.
+fn pixel_bit_depth(pix: &str) -> u8 {
+    for (tag, bits) in [("p16", 16), ("p14", 14), ("p12", 12), ("p10", 10), ("p9", 9), ("48", 16), ("64", 16), ("p010", 10), ("p016", 16)] {
+        if pix.contains(tag) {
+            return bits;
+        }
+    }
+    8
+}
+
+fn chroma(pix: &str) -> Option<String> {
+    let c = if pix.starts_with("yuv420") || pix.starts_with("yuvj420") || pix.starts_with("nv12") || pix.starts_with("nv21") || pix.starts_with("p010") || pix.starts_with("p016") {
+        "4:2:0"
+    } else if pix.starts_with("yuv422") || pix.starts_with("yuvj422") || pix.starts_with("nv16") || pix.starts_with("p210") {
+        "4:2:2"
+    } else if pix.starts_with("yuv444") || pix.starts_with("yuvj444") || pix.starts_with("p410") {
+        "4:4:4"
+    } else if pix.starts_with("rgb") || pix.starts_with("bgr") || pix.starts_with("gbr") || pix.starts_with("argb") || pix.starts_with("abgr") {
+        "rgb"
+    } else if pix.starts_with("gray") {
+        "gray"
+    } else {
+        return None;
+    };
+    Some(c.into())
+}
+
 /// Display rotation in whole degrees, normalized to 0..360.
 fn rotation(s: &FfStream) -> u16 {
     let deg = s
@@ -262,6 +330,26 @@ mod tests {
             "codec_type": "video", "codec_name": "h264", "width": 1920, "height": 1080,
             "r_frame_rate": r, "avg_frame_rate": avg, "time_base": "1/600", "duration_ts": 1780
         })
+    }
+
+    #[test]
+    fn reads_color_description() {
+        let mut s = video_stream("30/1", "30/1");
+        s["pix_fmt"] = json!("yuv420p10le");
+        s["color_range"] = json!("tv");
+        s["color_primaries"] = json!("bt2020");
+        s["color_transfer"] = json!("arib-std-b67");
+        s["color_space"] = json!("bt2020nc");
+        let c = summarize(&json!({"streams": [s]})).unwrap().video.unwrap().color.unwrap();
+        assert_eq!((c.bit_depth, c.chroma.as_deref(), c.range.as_deref()), (10, Some("4:2:0"), Some("limited")));
+        assert_eq!((c.primaries.as_deref(), c.matrix.as_deref(), c.dynamic_range.as_str()), (Some("bt2020"), Some("bt2020nc"), "hlg"));
+
+        let mut s = video_stream("30/1", "30/1");
+        s["pix_fmt"] = json!("yuvj420p");
+        s["color_range"] = json!("pc");
+        s["color_transfer"] = json!("unknown");
+        let c = summarize(&json!({"streams": [s]})).unwrap().video.unwrap().color.unwrap();
+        assert_eq!((c.bit_depth, c.range.as_deref(), c.transfer, c.dynamic_range.as_str()), (8, Some("full"), None, "sdr"));
     }
 
     #[test]

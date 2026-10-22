@@ -121,7 +121,9 @@ async fn spawn(loc: &Located, ve_exe: &Path) -> io::Result<Client> {
     std::fs::create_dir_all(&loc.cache)?;
     let log_path = loc.cache.join("daemon.log");
     let log = std::fs::File::create(&log_path)?;
-    let mut cmd = Command::new(ve_exe);
+    let mut cmd = Command::new(staged(ve_exe));
+    // The daemon reports this path's identity, not the copy's (see `staged`).
+    cmd.env(ORIGIN_ENV, ve_exe);
     cmd.arg("--project")
         .arg(&loc.root)
         .args(["daemon", "run"])
@@ -153,6 +155,56 @@ async fn spawn(loc: &Located, ve_exe: &Path) -> io::Result<Client> {
             return Err(io::Error::other(format!("the ve daemon did not start ({last}); log: {}", log_path.display())));
         }
         tokio::time::sleep(Duration::from_millis(30)).await;
+    }
+}
+
+/// Env var naming the `ve` binary a daemon was started for (it may run from a copy).
+pub const ORIGIN_ENV: &str = "VE_DAEMON_ORIGIN";
+
+/// The binary to run the daemon from. On Windows a running program locks its
+/// file, so a daemon started straight from `target/debug/ve.exe` (or an
+/// installed `ve.exe`) would make every rebuild or upgrade fail until it
+/// idles out. There the daemon runs from a copy in `<OS cache>/ve/bin/`,
+/// named by the original's path and modification time; copies no daemon is
+/// using are cleared out after a day.
+fn staged(ve_exe: &Path) -> std::path::PathBuf {
+    if !cfg!(windows) {
+        return ve_exe.to_owned();
+    }
+    let try_stage = || -> io::Result<std::path::PathBuf> {
+        let id = ExeIdentity::of(ve_exe);
+        let dir = project::cache_base().map_err(io::Error::other)?.join("bin");
+        std::fs::create_dir_all(&dir)?;
+        let key = blake3::hash(format!("{} {}", id.path.display(), id.modified).as_bytes()).to_hex();
+        let copy = dir.join(format!("ve-{}.exe", &key[..12]));
+        if !copy.is_file() {
+            let tmp = dir.join(format!("ve-{}.{}.tmp", &key[..12], std::process::id()));
+            std::fs::copy(ve_exe, &tmp)?;
+            if let Err(e) = std::fs::rename(&tmp, &copy) {
+                let _ = std::fs::remove_file(&tmp);
+                // Another CLI staged it at the same moment.
+                if !copy.is_file() {
+                    return Err(e);
+                }
+            }
+        }
+        sweep(&dir, &copy);
+        Ok(copy)
+    };
+    try_stage().unwrap_or_else(|e| {
+        tracing::warn!("could not copy {} for the daemon ({e}); running it in place", ve_exe.display());
+        ve_exe.to_owned()
+    })
+}
+
+/// Remove day-old copies. One in use by a daemon is locked and stays.
+fn sweep(dir: &Path, keep: &Path) {
+    let old = std::time::SystemTime::now() - Duration::from_secs(24 * 3600);
+    for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        let p = e.path();
+        if p != keep && e.metadata().and_then(|m| m.modified()).is_ok_and(|t| t < old) {
+            let _ = std::fs::remove_file(p);
+        }
     }
 }
 

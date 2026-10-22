@@ -307,7 +307,7 @@ fn lock(root: &Path) -> Result<(File, PathBuf)> {
 }
 
 /// `<OS cache dir>/ve`.
-fn cache_base() -> Result<PathBuf> {
+pub fn cache_base() -> Result<PathBuf> {
     let base = etcetera::choose_base_strategy().map_err(|e| ProjectError::Io {
         path: PathBuf::from("~"),
         source: io::Error::other(e.to_string()),

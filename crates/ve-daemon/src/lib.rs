@@ -13,6 +13,7 @@ pub mod client;
 pub mod commit;
 pub mod edit;
 pub mod events;
+pub mod measure;
 pub mod media;
 pub mod project;
 pub mod render;
@@ -180,6 +181,7 @@ pub fn registry(session: Arc<Session>) -> Arc<Registry> {
     on_project!("edit.delete", "Remove clips and leave gaps", true, edit::delete);
     on_project!("edit.set_speed", "Change a clip's speed (exact ratio); writes OTIO LinearTimeWarp too", true, edit::set_speed);
     on_project!("edit.set_volume", "Set a clip's audio gain in dB", true, edit::set_volume);
+    on_project!("edit.normalize", "Measure the timeline's loudness and add one gain to its audio clips to hit a LUFS target", true, measure::normalize);
     on_project!("marker.add", "Add a timeline marker", true, edit::marker_add);
     on_project!("marker.remove", "Remove timeline markers by ID or name", true, edit::marker_remove);
     on_project!("history.undo", "Undo the most recent step (one edit or one group)", true, |p: &mut OpenProject, a| edit::undo(p, a, false));
@@ -195,6 +197,10 @@ pub fn registry(session: Arc<Session>) -> Arc<Registry> {
     r.method("render.presets", "Export presets", false, |_: NoParams| Ok(render::presets()));
 
     on_project!("analyze.silence", "Find quiet stretches in the timeline audio; writes `silence` markers", true, analyze::silence);
+    on_project!("measure.loudness", "EBU R128 loudness (LUFS, range, true peak) of an asset's file or the timeline mix", false, measure::loudness);
+    on_project!("measure.levels", "RMS, peak, clipping, DC offset, noise floor, stereo balance and phase", false, measure::levels);
+    on_project!("measure.waveform", "Waveform peaks (min, max, RMS per point) for drawing", false, measure::waveform);
+    on_project!("measure.pitch", "Pitch (fundamental frequency) of voices and instruments: median, range, contour", false, measure::pitch);
     on_project!("analyze.scenes", "Find hard cuts in the timeline picture; writes `scene` markers", true, analyze::scenes);
 
     let s = session.clone();

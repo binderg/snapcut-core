@@ -80,6 +80,7 @@ Exit codes: 0 ok, 2 bad arguments (the message says what), 3 stale revision,
 | Move a clip (overwrites the destination) | `ve move clip_7f3a --to 00:00:42:00 [--track V2]` |
 | Speed | `ve speed clip_7f3a 3/2` (exact ratios; `1/2` is slow motion) |
 | Gain | `ve volume clip_7f3a -6` (dB) |
+| Loudness to a target (one gain on every audio clip) | `ve normalize --target -14` (-16 podcasts, -23 broadcast) |
 | Insert part of a source | `ve insert asset_94b8 --in 00:03:10:00 --out 00:03:25:00 --at 00:01:00:00` |
 | Insert over existing material | `… --overwrite` |
 | B-roll without its sound | `ve insert asset_b --no-audio --track V2 --at 00:00:30:00 --overwrite` |
@@ -129,6 +130,33 @@ Too choppy? Undo the group and re-run with a longer `--min` (0.8s) or more
 `ve analyze scenes` marks hard cuts in the picture (`scene` markers) - useful
 for finding where a screen recording changes or where clips were joined.
 
+## 5b. Measure the sound
+
+Measurements change nothing. Each works on the timeline mix (optionally
+`--from/--to`) or on one source file (`--asset asset_…`, cached after the
+first run). `--resolution 1s` adds a value per second, to find where
+something changes.
+
+```bash
+ve measure loudness                      # integrated LUFS, loudness range, true peak
+ve measure levels --asset asset_94b8     # per channel: RMS, peak, clipping, DC; noise floor;
+                                         # stereo balance and correlation
+ve measure pitch --asset asset_94b8      # median pitch, range, nearest note
+ve measure waveform --buckets 800 --json # min/max/RMS arrays for drawing
+```
+
+What the numbers mean:
+- **Loudness**: online video and podcasts sit near -14 to -16 LUFS. Fix it
+  with `ve normalize --target -14`, which measures, then adds one gain to the
+  audio clips and keeps the true peak under -1 dBTP. If it says the gain was
+  limited, the audio is too peaky to reach the target without a limiter: say so.
+- **Clipped samples** above zero mean the recording distorted; gain can't fix that, tell the user.
+- **Balance** far from 0 dB or **correlation** near 0 on a voice usually means
+  one channel is dead or a lav mic was on one side only. Negative correlation
+  means one side is polarity-flipped.
+- **DC offset** above about 0.001 points at faulty gear.
+- **Noise floor** above about -50 dB is audible hiss or room noise.
+
 ## 6. Check your work
 
 Cheapest first:
@@ -159,6 +187,9 @@ A 1080p export runs at about twice real time on a 4-core machine; run it last.
 ## Notes
 
 - `--json` on any command gives machine-readable output (`ve --json summary`).
+- `ve probe <file>` shows codec, size, frame rate and, when unusual, bit depth,
+  HDR (`hdr10`, `hlg`) and full-range video. HDR or 10-bit sources exported
+  to an 8-bit preset may look washed out: mention it.
 - `ve describe` prints the full protocol (every method and parameter); `ve call <method> '<json>'` sends any of them directly.
 - Transitions and effects don't render yet (cuts only); captions and
   transcription come from plugins, not the core.

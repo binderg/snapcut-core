@@ -262,6 +262,20 @@ enum Command {
     /// Built-in analyzers. Results become timeline markers.
     #[command(subcommand)]
     Analyze(AnalyzeCmd),
+    /// Measure audio without changing anything: `ve measure loudness`, `ve measure levels --asset asset_3f2a`.
+    #[command(subcommand)]
+    Measure(MeasureCmd),
+    /// Set the mix to a loudness target: `ve normalize --target -14` (one gain on every audio clip).
+    Normalize {
+        /// Integrated loudness to hit, LUFS: -14 (YouTube), -16 (podcasts), -23 (broadcast).
+        #[arg(long, default_value_t = -14.0, allow_hyphen_values = true)]
+        target: f64,
+        /// Highest true peak allowed after the gain, dBTP.
+        #[arg(long, default_value_t = -1.0, allow_hyphen_values = true)]
+        ceiling: f64,
+        #[command(flatten)]
+        span: Span,
+    },
 
     /// Send a raw JSON-RPC method call, e.g. `ve call project.get '{}'`.
     Call { method: String, params: Option<String> },
@@ -312,6 +326,49 @@ enum MarkerCmd {
 enum GroupCmd {
     Begin { label: String },
     End,
+}
+
+/// What to measure: an asset's whole file, or the timeline (optionally a range).
+#[derive(Args, Clone)]
+struct MeasureSource {
+    /// Measure this asset's file instead of the timeline.
+    #[arg(long)]
+    asset: Option<String>,
+    #[command(flatten)]
+    span: Span,
+}
+
+#[derive(Subcommand)]
+enum MeasureCmd {
+    /// EBU R128 loudness: integrated LUFS, loudness range, true peak.
+    Loudness {
+        #[command(flatten)]
+        source: MeasureSource,
+        /// Also list loudness per step, e.g. `1s`.
+        #[arg(long)]
+        resolution: Option<String>,
+    },
+    /// Levels per channel, clipping, DC offset, noise floor, stereo balance and phase.
+    Levels {
+        #[command(flatten)]
+        source: MeasureSource,
+        #[arg(long)]
+        resolution: Option<String>,
+    },
+    /// Waveform peaks for drawing (use --json to get the arrays).
+    Waveform {
+        #[command(flatten)]
+        source: MeasureSource,
+        #[arg(long, default_value_t = 1000)]
+        buckets: usize,
+    },
+    /// Pitch of voices and instruments: median, range, nearest note.
+    Pitch {
+        #[command(flatten)]
+        source: MeasureSource,
+        #[arg(long)]
+        resolution: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -550,6 +607,26 @@ fn plan(cmd: &Command, json_output: bool) -> Plan {
             p["markers"] = json!(!no_markers);
             m("analyze.scenes", p)
         }
+        Command::Measure(cmd) => {
+            let (method, source, extra) = match cmd {
+                MeasureCmd::Loudness { source, resolution } => ("measure.loudness", source, json!({ "resolution": resolution })),
+                MeasureCmd::Levels { source, resolution } => ("measure.levels", source, json!({ "resolution": resolution })),
+                MeasureCmd::Waveform { source, buckets } => ("measure.waveform", source, json!({ "buckets": buckets })),
+                MeasureCmd::Pitch { source, resolution } => ("measure.pitch", source, json!({ "resolution": resolution })),
+            };
+            let mut p = span_params(&source.span);
+            p["asset"] = json!(source.asset);
+            for (k, v) in extra.as_object().into_iter().flatten() {
+                p[k] = v.clone();
+            }
+            q(method, p)
+        }
+        Command::Normalize { target, ceiling, span } => {
+            let mut p = span_params(span);
+            p["target"] = json!(target);
+            p["ceiling"] = json!(ceiling);
+            m("edit.normalize", p)
+        }
         Command::Call { .. } | Command::Daemon(_) => unreachable!("planned in main"),
     }
 }
@@ -595,6 +672,68 @@ fn print_commit(r: &Value) {
         }
         (_, Some(false)) => println!("no change (rev {rev})"),
         _ => println!("rev {rev}"),
+    }
+}
+
+/// `-14.2` or `-` for a missing value.
+fn num(v: &Value, unit: &str) -> String {
+    v.as_f64().map_or_else(|| "-".to_owned(), |x| format!("{x:.1}{unit}"))
+}
+
+fn print_measure(cmd: &MeasureCmd, r: &Value) {
+    let src = &r["source"];
+    let what = src["asset"].as_str().map_or_else(|| "timeline".to_owned(), str::to_owned);
+    let cached = if r["cached"] == true { "  (cached)" } else { "" };
+    println!("{what}  {}-{}{cached}", src["from"].as_str().unwrap_or("?"), src["to"].as_str().unwrap_or("?"));
+    match cmd {
+        MeasureCmd::Loudness { .. } => println!(
+            "integrated {}  range {}  true peak {}",
+            num(&r["integrated_lufs"], " LUFS"),
+            num(&r["range_lu"], " LU"),
+            num(&r["true_peak_dbtp"], " dBTP")
+        ),
+        MeasureCmd::Levels { .. } => {
+            for (i, c) in r["channels"].as_array().into_iter().flatten().enumerate() {
+                println!(
+                    "ch{}  rms {}  peak {}  dc {}  clipped {}",
+                    i + 1,
+                    num(&c["rms_db"], " dB"),
+                    num(&c["peak_db"], " dB"),
+                    c["dc_offset"],
+                    c["clipped_samples"]
+                );
+            }
+            println!("noise floor {}", num(&r["noise_floor_db"], " dB"));
+            if r.get("balance_db").is_some() {
+                println!("balance (L-R) {}  correlation {}", num(&r["balance_db"], " dB"), r["correlation"]);
+            }
+        }
+        MeasureCmd::Waveform { .. } => {
+            let points = r["min"].as_array().map_or(0, Vec::len);
+            println!("{points} points over {} samples at {} Hz (--json for the arrays)", r["samples"], r["sample_rate"]);
+        }
+        MeasureCmd::Pitch { .. } => println!(
+            "median {} ({})  range {}-{}  voiced {:.0}%",
+            num(&r["median_hz"], " Hz"),
+            r["note"].as_str().unwrap_or("-"),
+            num(&r["low_hz"], ""),
+            num(&r["high_hz"], " Hz"),
+            r["voiced"].as_f64().unwrap_or(0.0) * 100.0
+        ),
+    }
+    if let Some(s) = r.get("series").and_then(Value::as_object) {
+        let step = s.get("step").and_then(Value::as_str).unwrap_or("?");
+        let cols: Vec<(&String, &Vec<Value>)> = s.iter().filter_map(|(k, v)| v.as_array().map(|a| (k, a))).collect();
+        let names: Vec<&str> = cols.iter().map(|c| c.0.as_str()).collect();
+        println!("every {step}: {}", names.join("  "));
+        let n = cols.iter().map(|c| c.1.len()).max().unwrap_or(0);
+        for i in 0..n {
+            let vals: Vec<String> = cols.iter().map(|c| num(c.1.get(i).unwrap_or(&Value::Null), "")).collect();
+            println!("  {i:5}  {}", vals.join("  "));
+        }
+    }
+    for w in r["warnings"].as_array().into_iter().flatten() {
+        println!("warning: {}", w.as_str().unwrap_or("?"));
     }
 }
 
@@ -845,6 +984,22 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 println!("{}  {}-{}  {}", r["kind"].as_str().unwrap_or("?"), r["start"].as_str().unwrap_or("?"), r["end"].as_str().unwrap_or("?"), r["note"].as_str().unwrap_or(""));
             }
             println!("{} found", result["ranges"].as_array().map_or(0, Vec::len));
+            print_commit(&result);
+        }
+        Command::Measure(cmd) => print_measure(cmd, &result),
+        Command::Normalize { .. } => {
+            let f = |v: &Value| v.as_f64().map_or("?".into(), |x| format!("{x:.1}"));
+            println!(
+                "measured {} LUFS (true peak {} dBTP), gain {:+.1} dB -> {} LUFS (true peak {} dBTP)",
+                f(&result["measured_lufs"]),
+                f(&result["measured_true_peak_dbtp"]),
+                result["gain_db"].as_f64().unwrap_or(0.0),
+                f(&result["expected_lufs"]),
+                f(&result["expected_true_peak_dbtp"])
+            );
+            for w in result["warnings"].as_array().into_iter().flatten() {
+                println!("warning: {}", w.as_str().unwrap_or("?"));
+            }
             print_commit(&result);
         }
         Command::Insert { .. }

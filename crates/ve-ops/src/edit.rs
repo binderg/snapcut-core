@@ -927,6 +927,42 @@ pub fn set_volume(tl: &Timeline, p: &SetVolume) -> Result<(Timeline, EditReport)
     d.finish()
 }
 
+/// Add `db` to the volume of every audio clip overlapping `range` (timeline
+/// seconds, `[from, to)`), or of every audio clip when `None`. Volumes stay
+/// within -100..+30 dB and are rounded to 0.1 dB. Returns the clips touched.
+pub fn add_gain(tl: &Timeline, range: Option<(Q, Q)>, db: f64) -> Result<(Timeline, EditReport, Vec<Id>)> {
+    if !db.is_finite() || db.abs() > 130.0 {
+        return Err(EditError::new("gain must be a finite number of dB"));
+    }
+    let mut d = Doc::new(tl)?;
+    let mut touched = Vec::new();
+    for i in d.track_indices() {
+        if d.kind(i) != TrackKind::Audio {
+            continue;
+        }
+        let ids: Vec<Id> = d
+            .lane_ref(i)
+            .items
+            .iter()
+            .filter(|p| range.is_none_or(|(a, b)| p.start < b && p.end() > a))
+            .filter_map(|p| p.clip().and_then(clip_id).cloned())
+            .collect();
+        for id in ids {
+            let Some(j) = d.lane_ref(i).find_clip(&id) else { continue };
+            let c = d.lane(i).items[j].clip_mut().expect("found a clip");
+            let m = c.metadata.ve.clip.get_or_insert_with(|| ClipMeta::new(id.clone()));
+            m.volume_db = ((m.volume_db + db).clamp(-100.0, 30.0) * 10.0).round() / 10.0;
+            d.mark_changed(&id);
+            touched.push(id);
+        }
+    }
+    if touched.is_empty() {
+        return Err(EditError::new("no audio clips there to change the volume of"));
+    }
+    let (next, report) = d.finish()?;
+    Ok((next, report, touched))
+}
+
 /// The report for a command that only touched markers: just the duration.
 pub fn report_for(tl: &Timeline) -> EditReport {
     let rate = tl.output_rate();

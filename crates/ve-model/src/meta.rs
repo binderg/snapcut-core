@@ -132,6 +132,36 @@ pub struct VideoInfo {
     /// Frame timing varies (common on phones); renders must conform it.
     #[serde(default, skip_serializing_if = "is_default")]
     pub vfr: bool,
+    /// How the pixels encode color, as far as the file says.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<ColorInfo>,
+}
+
+/// A video stream's color description (ffprobe's names). Fields the file
+/// leaves unspecified are absent; players then usually assume Rec.709.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+pub struct ColorInfo {
+    /// Pixel format, e.g. `yuv420p`, `yuv420p10le`.
+    pub pixel_format: String,
+    /// Bits per component: 8, 10, 12.
+    pub bit_depth: u8,
+    /// `4:2:0`, `4:2:2`, `4:4:4`, `rgb` or `gray`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chroma: Option<String>,
+    /// `limited` (TV, 16-235) or `full` (PC, 0-255).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub range: Option<String>,
+    /// Color primaries: `bt709`, `bt2020`, `smpte432` (P3), ...
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primaries: Option<String>,
+    /// Transfer function: `bt709`, `smpte2084` (PQ), `arib-std-b67` (HLG), ...
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transfer: Option<String>,
+    /// YUV matrix: `bt709`, `bt2020nc`, `bt470bg`, ...
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub matrix: Option<String>,
+    /// `sdr`, `hdr10` (PQ) or `hlg`, from the transfer function.
+    pub dynamic_range: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

@@ -1,10 +1,18 @@
 //! Built-in analyzers, implemented with FFmpeg filters over the rendered
 //! timeline: `silencedetect` (quiet stretches) and `scdet` (scene cuts).
+//! Also the measurement math behind `measure.*`: EBU R128 loudness from
+//! `ebur128`'s log ([`loudness`]), sample statistics and waveform peaks
+//! ([`levels`]) and YIN pitch tracking ([`pitch`]), all pure functions over
+//! logs or decoded samples.
 //! They analyze what the timeline plays (the same graph `render` uses), so
 //! the times they report are timeline times and can go straight into
 //! `edit.ripple_delete`. Output becomes markers. Moves to `plugins/core`
 //! once the process plugin host exists (dogfooding rule: built-ins use the
 //! same API as third-party plugins).
+
+pub mod levels;
+pub mod loudness;
+pub mod pitch;
 
 use std::path::Path;
 

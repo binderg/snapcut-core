@@ -94,7 +94,7 @@ pub fn timeline_end(tl: &Timeline) -> Q {
 }
 
 /// Local path for a media URL. Phase 1 reads `file://` only.
-fn local_path(url: &str) -> Option<PathBuf> {
+pub fn local_path(url: &str) -> Option<PathBuf> {
     url::Url::parse(url).ok().filter(|u| u.scheme() == "file").and_then(|u| u.to_file_path().ok())
 }
 

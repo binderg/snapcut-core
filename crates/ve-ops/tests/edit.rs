@@ -37,7 +37,7 @@ fn project() -> Timeline {
         provenance: None,
         media: Some(MediaInfo {
             duration: RationalTime::from_frames(300 * FPS, Rate::integer(FPS)),
-            video: Some(VideoInfo { codec: "h264".into(), width: 1920, height: 1080, rate: Rate::integer(FPS), rotation: 0, vfr: false }),
+            video: Some(VideoInfo { codec: "h264".into(), width: 1920, height: 1080, rate: Rate::integer(FPS), rotation: 0, vfr: false, color: None }),
             audio: Some(AudioInfo { codec: "aac".into(), sample_rate: 48_000, channels: 2 }),
             size_bytes: 0,
         }),
