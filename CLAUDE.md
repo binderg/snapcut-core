@@ -129,7 +129,7 @@ set_volume, marker add/remove, as pure fns over flattened tracks
 (`ve-ops::lane`), with proptests (patches invert, linked clips stay in sync,
 clips never read past their media). Clips inserted from an A/V asset share a
 `metadata.ve.clip.link` and are edited together unless `linked: false` (how
-J/L cuts are made: roll one side). Timeline times snap to the project frame
+J/L cuts are made: roll one side). Insert (non-overwrite) also cuts the linked partners of a clip it splits and pushes any track holding a partner of a clip that moves, from that partner's start; ripple trim, speed and ripple delete on an *unlinked* clip still move only its own track (can pull later pairs apart; open). Timeline times snap to the project frame
 grid. Speed convention: `source_range.duration` is timeline time, media used
 is `duration * speed` (OTIO's time-warp convention), and `LinearTimeWarp` is
 written too. Patches come from our own prefix/suffix JSON diff

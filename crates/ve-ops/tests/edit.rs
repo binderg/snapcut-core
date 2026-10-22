@@ -132,7 +132,75 @@ fn insert_puts_linked_video_and_audio_down() {
     assert_eq!(rep.created[0].start, "00:00:00:00");
     assert_eq!(rep.created[0].end, "00:00:05:00");
     assert_eq!(track_end(&tl2, TrackKind::Video), sec(305));
-    assert_eq!(track_end(&tl2, TrackKind::Audio), sec(300), "only target tracks ripple");
+    // The pushed video clip is linked, so its audio moves with it.
+    assert_eq!(track_end(&tl2, TrackKind::Audio), sec(305), "linked audio is pushed too");
+}
+
+fn insert_video(at: Q, len: i64) -> Insert {
+    Insert {
+        asset: Id::from_raw("asset_a"),
+        track: None,
+        audio_track: None,
+        at: Some(at),
+        source_in: Some(sec(0)),
+        source_out: None,
+        duration: Some(sec(len)),
+        video: true,
+        audio: false,
+        overwrite: false,
+    }
+}
+
+#[test]
+fn insert_inside_a_linked_clip_cuts_and_pushes_both_sides() {
+    let tl = insert_all(&project());
+    let (tl, _) = edit::insert(&tl, &insert_video(sec(100), 5)).unwrap();
+    let r = rows(&tl);
+    let v: Vec<&Row> = r.iter().filter(|x| x.kind == TrackKind::Video).collect();
+    let a: Vec<&Row> = r.iter().filter(|x| x.kind == TrackKind::Audio).collect();
+    assert_eq!(v.len(), 3);
+    assert_eq!(a.len(), 2, "the audio is cut at the insert point too");
+    assert_eq!((a[0].start, a[0].dur), (sec(0), sec(100)));
+    assert_eq!((a[1].start, a[1].dur), (sec(105), sec(200)));
+    // Left halves linked together, right halves linked together, the new clip alone.
+    assert_eq!(v[0].link, a[0].link);
+    assert_eq!(v[2].link, a[1].link);
+    assert_ne!(v[0].link, v[2].link);
+    assert_eq!(v[2].start, a[1].start);
+    assert_eq!(v[2].media, a[1].media);
+    assert_eq!(v[1].link, None);
+}
+
+#[test]
+fn insert_pushes_linked_audio_from_its_own_start() {
+    // Two takes, then make an L cut: the first take's audio runs 10 frames into the second shot.
+    let tl = insert_all(&project());
+    let tl = edit::split(&tl, &Split { at: sec(100), clips: vec![], tracks: vec![], linked: true }).unwrap().0;
+    let a0 = rows(&tl).into_iter().find(|x| x.kind == TrackKind::Audio).unwrap().id;
+    let tl = edit::trim(&tl, &Trim { clip: a0, in_delta: None, out_delta: Some(fr(10)), roll: true, linked: false }).unwrap().0;
+    let (tl, _) = edit::insert(&tl, &insert_video(sec(100), 5)).unwrap();
+    let r = rows(&tl);
+    let a: Vec<&Row> = r.iter().filter(|x| x.kind == TrackKind::Audio).collect();
+    let v: Vec<&Row> = r.iter().filter(|x| x.kind == TrackKind::Video).collect();
+    // The outgoing audio is not under the insert point on its own track, so it stays whole;
+    // the second shot's audio keeps its 10-frame offset from its picture.
+    assert_eq!((a[0].start, a[0].dur), (sec(0), sec(100) + fr(10)));
+    assert_eq!(v[2].start, sec(105));
+    assert_eq!(a[1].start, sec(105) + fr(10));
+}
+
+#[test]
+fn insert_leaves_unlinked_tracks_alone() {
+    // Video-only clip on V1, music-style audio-only clip on A1: nothing links them.
+    let tl = project();
+    let tl = edit::insert(&tl, &insert_video(sec(0), 20)).unwrap().0;
+    let mut p = insert_video(sec(0), 20);
+    p.video = false;
+    p.audio = true;
+    let tl = edit::insert(&tl, &p).unwrap().0;
+    let (tl, _) = edit::insert(&tl, &insert_video(sec(10), 5)).unwrap();
+    assert_eq!(track_end(&tl, TrackKind::Video), sec(25));
+    assert_eq!(track_end(&tl, TrackKind::Audio), sec(20));
 }
 
 #[test]
@@ -266,6 +334,7 @@ enum Op {
     Trim { pick: usize, din: i64, dout: i64, roll: bool },
     Speed { pick: usize, num: i64, den: i64 },
     Move { pick: usize, by: i64 },
+    Insert { at: i64, len: i64, audio: bool },
 }
 
 fn arb_op() -> impl Strategy<Value = Op> {
@@ -275,6 +344,9 @@ fn arb_op() -> impl Strategy<Value = Op> {
         (0usize..8, -60i64..60, -60i64..60, any::<bool>()).prop_map(|(pick, din, dout, roll)| Op::Trim { pick, din, dout, roll }),
         (0usize..8, 1i64..5, 1i64..5).prop_map(|(pick, num, den)| Op::Speed { pick, num, den }),
         (0usize..8, -300i64..300).prop_map(|(pick, by)| Op::Move { pick, by }),
+        // Only A/V inserts here: ripple trims and speed changes on an unlinked
+        // clip still push its own track only, which would pull later pairs apart.
+        (0i64..9000, 1i64..300).prop_map(|(at, len)| Op::Insert { at, len, audio: true }),
     ]
 }
 
@@ -299,6 +371,12 @@ fn apply(tl: &Timeline, op: &Op) -> Result<Timeline, ve_ops::EditError> {
             let Some(clip) = pick(*i) else { return Ok(tl.clone()) };
             let start = rows(tl).iter().find(|r| r.id == clip).unwrap().start;
             edit::move_clip(tl, &Move { clip, to: start + fr(*by), track: None, linked: true })?
+        }
+        Op::Insert { at, len, audio } => {
+            let mut p = insert_video(fr(*at), 0);
+            p.duration = Some(fr(*len));
+            p.audio = *audio;
+            edit::insert(tl, &p)?
         }
     };
     Ok(out.0)
@@ -343,6 +421,25 @@ proptest! {
                         prop_assert!(ve_ops::lane::check_media(c).is_ok());
                     }
                 }
+            }
+            tl = next;
+        }
+    }
+
+    #[test]
+    fn inserts_keep_linked_clips_in_sync(ops in prop::collection::vec((0i64..9000, 1i64..300, any::<bool>()), 1..10)) {
+        let mut tl = insert_all(&project());
+        for (at, len, audio) in ops {
+            let mut p = insert_video(fr(at), 0);
+            p.duration = Some(fr(len));
+            p.audio = audio;
+            let Ok((next, _)) = edit::insert(&tl, &p) else { continue };
+            let r = rows(&next);
+            for row in r.iter().filter(|r| r.link.is_some()) {
+                let twins: Vec<&Row> = r.iter().filter(|o| o.link == row.link).collect();
+                prop_assert_eq!(twins.len(), 2, "{:?}", r);
+                prop_assert_eq!(twins[0].start, twins[1].start);
+                prop_assert_eq!(twins[0].media, twins[1].media);
             }
             tl = next;
         }

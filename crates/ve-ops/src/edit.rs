@@ -4,7 +4,7 @@
 //! Times in params are exact seconds on the timeline (or in the media, where
 //! a field says so); the protocol layer parses the strings people type.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use schemars::JsonSchema;
 use serde::Serialize;
@@ -399,9 +399,9 @@ pub fn insert(tl: &Timeline, p: &Insert) -> Result<(Timeline, EditReport)> {
     let name = urlencoding_decode(&name);
     let link = (targets.len() > 1).then(|| d.ids.fresh("lnk"));
     let avail = TimeRange::new(RationalTime::zero(mrate), media.duration);
-    let mut rippled = HashSet::new();
-    for (_, lane) in &targets {
-        let lane = *lane;
+    let target_lanes: Vec<usize> = targets.iter().map(|&(_, l)| l).collect();
+    let rippled = if p.overwrite { HashSet::new() } else { make_room(&mut d, &target_lanes, at, dur)? };
+    for lane in target_lanes {
         let id = d.ids.fresh("clip");
         let range = TimeRange::new(at_rate(src_in, mrate), at_rate(dur, mrate));
         let mut clip = Clip::new(name.clone(), MediaReference::External(ExternalReference::new(asset.url.clone(), Some(avail))), range);
@@ -410,13 +410,6 @@ pub fn insert(tl: &Timeline, p: &Insert) -> Result<(Timeline, EditReport)> {
         let l = d.lane(lane);
         if p.overwrite {
             l.remove_range(at, at + dur, &mut ids)?;
-        } else {
-            if l.straddled_by_nested(at) {
-                return Err(EditError::new("cannot insert inside a nested composition"));
-            }
-            l.split_at(at, &mut ids);
-            l.shift_from(at, dur);
-            rippled.insert(lane);
         }
         l.place(Placed { start: at, item: Composable::Clip(clip) });
         d.ids = ids;
@@ -426,6 +419,74 @@ pub fn insert(tl: &Timeline, p: &Insert) -> Result<(Timeline, EditReport)> {
         ripple_markers_insert(&mut d.tl.tracks.markers, at, dur);
     }
     d.finish()
+}
+
+/// Open `len` of room at `at` on the target lanes without pulling linked
+/// clips apart. A clip under `at` is cut there, and so are its linked clips
+/// on other tracks. Every other track that holds a partner of a clip that
+/// moves is pushed too, from that partner's start (which keeps J/L offsets).
+/// Returns the lanes that moved.
+fn make_room(d: &mut Doc, targets: &[usize], at: Q, len: Q) -> Result<HashSet<usize>> {
+    let mut ids = std::mem::replace(&mut d.ids, Ids::new(HashSet::new()));
+    let mut cut_links = HashSet::new();
+    for &lane in targets {
+        if d.lane_ref(lane).straddled_by_nested(at) {
+            d.ids = ids;
+            return Err(EditError::new("cannot insert inside a nested composition"));
+        }
+        if let Some(c) = d.lane_ref(lane).items.iter().find(|p| p.start < at && at < p.end()).and_then(|p| p.clip())
+            && let Some(link) = clip_link(c)
+        {
+            cut_links.insert(link.clone());
+        }
+        d.lane(lane).split_at(at, &mut ids);
+    }
+    // Same `at`, so the right halves share one new link with the target's right half.
+    for lane in d.track_indices() {
+        let spans_linked = d.lane_ref(lane).items.iter().any(|p| {
+            p.start < at && at < p.end() && p.clip().and_then(clip_link).is_some_and(|l| cut_links.contains(l))
+        });
+        if spans_linked && !d.lane_ref(lane).straddled_by_nested(at) {
+            d.lane(lane).split_at(at, &mut ids);
+        }
+    }
+    d.ids = ids;
+
+    // Where each lane starts moving. Target lanes move from `at`; another lane
+    // joins from the earliest partner of anything that moves, until nothing new joins.
+    let mut from: HashMap<usize, Q> = targets.iter().map(|&l| (l, at)).collect();
+    loop {
+        let moving: HashSet<Id> = from
+            .iter()
+            .flat_map(|(&l, &t)| d.lane_ref(l).items.iter().filter(move |p| p.start >= t).filter_map(|p| p.clip().and_then(clip_link).cloned()))
+            .collect();
+        let mut grew = false;
+        for lane in d.track_indices() {
+            if targets.contains(&lane) {
+                continue;
+            }
+            let first = d
+                .lane_ref(lane)
+                .items
+                .iter()
+                .filter(|p| p.clip().and_then(clip_link).is_some_and(|l| moving.contains(l)))
+                .map(|p| p.start)
+                .min();
+            if let Some(s) = first
+                && from.get(&lane).is_none_or(|&cur| s < cur)
+            {
+                from.insert(lane, s);
+                grew = true;
+            }
+        }
+        if !grew {
+            break;
+        }
+    }
+    for (&lane, &t) in &from {
+        d.lane(lane).shift_from(t, len);
+    }
+    Ok(from.into_keys().collect())
 }
 
 /// File names in URLs are percent-encoded (`IMG%204410.MOV`); show them plainly.

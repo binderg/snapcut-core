@@ -33,7 +33,10 @@ Put an asset (or part of it) on the timeline.
 | `overwrite` | false | Replace what is there instead of pushing it later |
 
 Without `overwrite`, content after `at` on the **target tracks** moves right
-by the clip's length (a clip under `at` is split first); other tracks do not
+by the clip's length (a clip under `at` is split first, together with its
+linked clips). Linked clips stay in sync: any other track holding a partner
+of a clip that moves is pushed too, from that partner's start (so J/L
+offsets are kept). Tracks with nothing linked to the moving clips do not
 move. Timeline markers move too when every track with later content moved.
 `created` lists the new clip(s).
 
