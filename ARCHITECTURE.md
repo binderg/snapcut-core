@@ -272,7 +272,7 @@ A plugin is a folder with a `plugin.json` manifest. It can contribute any mix of
 | Effect / transition | WGSL shader + param schema | inside the compositor | film grain, glitch wipe |
 | Command | new protocol methods (macros over `edit.*`) | external process | `jumpcut.remove_silences`, `beatsync.cut_to_beats` |
 | Analyzer | markers + analysis assets | external process, as a job | transcription, face tracking, beat detection |
-| Generator | new media assets | external process, as a job | TTS voiceover, background-removal matte, upscaled clip |
+| Generator | new media assets, or editable generated clips (template + params) | external process, as a job | TTS voiceover, background-removal matte, HyperFrames lower third, Blender scene |
 | Import / export | project format adapters | external process | FCPXML, EDL, Premiere XML via OTIO adapters |
 
 Every plugin can also ship a `SKILL.md` that teaches agents when and how to use it.
@@ -299,6 +299,15 @@ Every plugin can also ship a `SKILL.md` that teaches agents when and how to use 
 ```
 
 **Process plugins (v1).** The engine starts the plugin's process and talks JSON-RPC over stdio, the same pattern as LSP. The plugin receives the call, can call back into the engine's normal methods (`project.get`, `edit.*`, `render.frame`) as actor `plugin:<id>`, and returns a result. Any language works. An agent can write a Python plugin in one sitting. All edits a plugin makes inside one call form one undo group.
+
+**Generated clips.** A generator can also make a clip that stays editable on the timeline: an animated lower third or title from HyperFrames, a 3D scene from Blender or three.js, an AI video shot, a caption style drawn in HTML. The clip keeps the recipe; the pixels are a cached render.
+
+- **Recipe on the clip.** `metadata.ve.generated` holds the plugin id and version, the template and its params. The media is a `baked` asset with provenance, so reopening a project never re-renders and a param change always does.
+- **Output.** The generator runs as a job and returns video with alpha (ProRes 4444, VP9 WebM with alpha, or a PNG sequence) at the project's size and frame rate. The compositor places it on an overlay track like any other clip.
+- **Deterministic.** Frame N depends only on the template, the params and N. Each plugin brings its own renderer (headless Chrome, Blender, a model). The core never ships one, and anyone can write a different generator for the same job.
+- **Fast edits.** A changed param marks the clip stale and queues a re-render; the old render shows until the new one lands. Long clips (captions over a whole talk) render in segments, so an edit re-renders only the segment it touches.
+- **Optional live preview.** A generator may also ship a web preview, a page driven by the playhead time, that a UI draws over the player while the bake is pending. The bake is the truth: export and `render.frame` always use it.
+- **Needs from the core:** jobs, a compositor that stacks video tracks with alpha (also needed for text, masks and picture-in-picture), and the `baked` asset kind, which exists.
 
 **Discovery.** Plugins load from three places, highest priority first: the project's `plugins/` folder, the user's plugin folder, and the built-in set. `system.plugins` lists them; `system.describe` merges their methods and schemas into the OpenRPC document.
 
