@@ -96,6 +96,38 @@ async fn import_adds_assets_once_and_persists() {
 }
 
 #[tokio::test]
+async fn remove_refuses_used_assets_and_undoes() {
+    let dir = scratch("media-remove");
+    make_clip(&dir.join("a.mp4"), 440);
+    make_clip(&dir.join("b.mp4"), 880);
+    let r = new_project(&dir).await;
+    let resp = call(&r, "media.import", json!({"paths": [dir.join("a.mp4"), dir.join("b.mp4")], "base_rev": 0})).await;
+    let a = resp["result"]["assets"][0]["id"].clone();
+    let b = resp["result"]["assets"][1]["id"].clone();
+    let resp = call(&r, "edit.insert", json!({"asset": a, "at": "f0", "base_rev": 1})).await;
+    assert_eq!(resp["result"]["revision"], 2, "{resp}");
+
+    // `a` is on the timeline: refused, and nothing is removed (not even `b`).
+    let resp = call(&r, "media.remove", json!({"assets": [b, a], "base_rev": 2})).await;
+    assert_eq!(resp["error"]["code"], -32602, "{resp}");
+    assert!(resp["error"]["message"].as_str().unwrap().contains("clip_"), "{resp}");
+    let resp = call(&r, "media.remove", json!({"assets": ["asset_nope"], "base_rev": 2})).await;
+    assert_eq!(resp["error"]["code"], -32602);
+    assert_eq!(call(&r, "media.assets", json!({})).await["result"]["assets"].as_array().unwrap().len(), 2);
+
+    let resp = call(&r, "media.remove", json!({"assets": [b], "base_rev": 2})).await;
+    assert_eq!(resp["result"]["removed"], json!([b]), "{resp}");
+    assert_eq!(resp["result"]["revision"], 3);
+    let table = call(&r, "media.assets", json!({})).await["result"]["assets"].clone();
+    assert_eq!(table.as_array().unwrap().len(), 1);
+    assert_eq!(table[0]["id"], a);
+
+    let resp = call(&r, "history.undo", json!({"base_rev": 3})).await;
+    assert!(resp["result"].is_object(), "{resp}");
+    assert_eq!(call(&r, "media.assets", json!({})).await["result"]["assets"].as_array().unwrap().len(), 2);
+}
+
+#[tokio::test]
 async fn import_checks_revision_dry_run_and_bad_files() {
     let dir = scratch("media-rules");
     make_clip(&dir.join("a.mp4"), 440);

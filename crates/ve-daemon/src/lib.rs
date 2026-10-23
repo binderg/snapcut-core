@@ -231,6 +231,7 @@ pub fn registry(session: Arc<Session>) -> Arc<Registry> {
     }
 
     on_project!("media.import", "Probe, hash and add files to the asset table; same content is never added twice", true, media::import);
+    on_project!("media.remove", "Remove assets from the asset table; refused while any clip uses them", true, media::remove);
     on_project!("media.assets", "The project's asset table", false, |p: &mut OpenProject, _: NoParams| Ok(media::assets(p)));
 
     // TEMPORARY: UI-only helpers; they belong in a UI plugin (see ui.rs).

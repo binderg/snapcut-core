@@ -38,6 +38,23 @@ was already imported (same content, maybe a different path).
 Importing does not put anything on the timeline; follow with `edit.insert`.
 No proxies are made yet.
 
+## `media.remove` (edits)
+
+| Param | Type | |
+| --- | --- | --- |
+| `assets` | [string] | Asset IDs to remove |
+| + `base_rev`, `dry_run`, `actor` | | |
+
+All-or-nothing. Refused (`invalid_params`) for an unknown ID, or for an
+asset any clip still uses; the message lists those clip IDs, so delete the
+clips first (`edit.delete` or `edit.ripple_delete`). Only the table row
+goes; the media file on disk is never touched. Undo brings the row back.
+
+```json
+{"revision": 5, "changed": true, "dry_run": false, "patch": [...],
+ "removed": ["asset_834f84"]}
+```
+
 ## `media.assets`
 
 No params. `{"revision": 4, "assets": [ ...asset rows... ]}`, the same rows

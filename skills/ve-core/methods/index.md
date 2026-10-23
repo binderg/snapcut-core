@@ -24,6 +24,7 @@ schemas: `system.describe`.
 | `project.summary` | | Compact text of tracks, clips, markers, assets | [project.md](project.md) |
 | `media.probe` | | What a media file contains (no project) | [media.md](media.md) |
 | `media.import` | yes | Add files to the asset table | [media.md](media.md) |
+| `media.remove` | yes | Remove unused assets from the table | [media.md](media.md) |
 | `media.assets` | | The asset table | [media.md](media.md) |
 | `edit.insert` | yes | Put an asset (or part of it) on the timeline | [edit.md](edit.md) |
 | `edit.split` | yes | Cut clips in two at a time | [edit.md](edit.md) |

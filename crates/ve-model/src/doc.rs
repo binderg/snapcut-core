@@ -94,6 +94,20 @@ impl Timeline {
         added
     }
 
+    /// IDs of the clips with any media reference pointing at `url`.
+    pub fn clips_using(&self, url: &str) -> Vec<Id> {
+        let mut out = Vec::new();
+        self.visit(&mut |item| {
+            if let ItemRef::Clip(c) = item {
+                let uses = c.media_references.values().any(|m| matches!(m, crate::otio::MediaReference::External(e) if e.target_url == url));
+                if uses {
+                    out.extend(item.id().cloned());
+                }
+            }
+        });
+        out
+    }
+
     /// Visit every item that can carry a stable ID, depth first.
     fn visit(&self, f: &mut impl FnMut(ItemRef<'_>)) {
         visit_stack(&self.tracks, f);

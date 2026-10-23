@@ -96,6 +96,43 @@ pub fn import(project: &mut OpenProject, p: ImportParams) -> Result<Committed<Im
     })
 }
 
+crate::commit::mutation_params! {
+    /// `media.remove`: drop assets from the asset table.
+    pub struct RemoveParams {
+        /// Asset IDs to remove.
+        pub assets: Vec<Id>,
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct RemoveResult {
+    /// The removed asset IDs, in request order.
+    pub removed: Vec<Id>,
+}
+
+/// All-or-nothing: an unknown ID, or an asset any clip still uses, fails the
+/// whole call. The media file itself is never touched.
+pub fn remove(project: &mut OpenProject, p: RemoveParams) -> Result<Committed<RemoveResult>, RpcError> {
+    if p.assets.is_empty() {
+        return Err(RpcError::invalid_params("assets is empty"));
+    }
+    crate::commit::commit(project, p.mutation(), "media.remove", |tl| {
+        let mut next = tl.clone();
+        for id in &p.assets {
+            let Some(a) = next.metadata.ve.assets.iter().find(|a| &a.id == id) else {
+                return Err(RpcError::invalid_params(format!("no asset {id}")));
+            };
+            let clips = next.clips_using(&a.url);
+            if !clips.is_empty() {
+                let list = clips.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ");
+                return Err(RpcError::invalid_params(format!("asset {id} is used by clips {list}; delete them first")));
+            }
+        }
+        next.metadata.ve.assets.retain(|a| !p.assets.contains(&a.id));
+        Ok((next, RemoveResult { removed: p.assets.clone() }))
+    })
+}
+
 pub fn assets(project: &OpenProject) -> AssetList {
     AssetList { revision: project.revision(), assets: project.timeline.metadata.ve.assets.clone() }
 }
