@@ -514,3 +514,30 @@ The method registry and JSON Schema generation start in Phase 1 even though the 
 | Agent-written shaders | hangs, crashes, NaNs, driver resets | naga validation, timeout test render, project-local until promoted |
 | FFmpeg licensing | GPL codecs force GPL on distribution | LGPL build, hardware encoders, user-supplied FFmpeg for x264/x265 |
 | Scope creep toward a full NLE | months on UI polish instead of the engine | headless milestones first; the reference UI stays minimal until Phase 4 |
+
+## TODO
+
+**Real-time playback (the critical path for a CapCut-like feel).** Today
+playback plays short MP4 chunks. They are kept by content and built ahead of
+the playhead (and ahead of everything else where an edit just changed
+something, newest edit first), so replaying or playing a prepared stretch
+starts at once. But pressing play on a stretch the engine has not reached
+yet, or right after an edit, still waits a couple of seconds for the first
+chunk. Removing that wait for good needs two things:
+
+- [ ] **Proxies on import:** all-intra, lower-resolution copies made in the
+  background, so phone and other long-GOP footage decodes fast for preview
+  (exports keep reading the originals). See the seek risk below.
+- [ ] **A streaming playback path:** frames go to the player as they are
+  composited (with audio kept in sync) instead of being encoded into a video
+  file first. The planned HLS stream ("Frame server") does this for the web;
+  the desktop app may stream frames more directly. Effects and transitions
+  feel bad without it.
+
+Smaller gaps from the transform and preview work:
+
+- [ ] Anti-aliased edges on rotated clips.
+- [ ] Contact sheets (and the UI's timeline filmstrip) ignore transforms and
+  effects: they still come from the ffmpeg path.
+- [ ] Keyframes for transforms can only be set from the CLI; the UI shows them
+  but cannot add or move them.

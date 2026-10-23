@@ -63,10 +63,13 @@ and when the preview size changes; it is cheap to repeat.
 | `active` | true | False stops rendering ahead (preview hidden) |
 | `chunk_frames` | | If the preview plays `render.range_preview` chunks on a grid of this many frames, build the chunks ahead too |
 
-Order: frames an edit just changed (a new transition or effect) nearest the
-playhead first, then the 10 s behind / 60 s ahead of the playhead, ahead
-first, then (with `chunk_frames`) the playback chunks from the one holding
-the playhead through that window, then the rest of the timeline. Chunks
+Order, anywhere on the timeline: first what edits changed, **newest edit
+first** (a transition added a minute away still goes before the playhead
+area): that edit's frames nearest the playhead first, then (with
+`chunk_frames`) its playback chunks; then older edits the same way. Then the
+10 s behind / 60 s ahead of the playhead, ahead first, and the chunks from
+the one holding the playhead through that window; then the rest of the
+timeline. An edit made while it works jumps to the front. Chunks
 come from the cached frames and are kept by content (see `render.range_preview`),
 so pressing play over them starts at once. It pauses while `render.frame` calls
 are coming in (scrubbing) and while a job runs. A new hint or a new

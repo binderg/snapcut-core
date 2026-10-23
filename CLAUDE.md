@@ -242,6 +242,14 @@ rendered through the frame cache when the range needs the GPU, else through
 the ffmpeg graph. One build per key at a time. With `chunk_frames` the
 render-ahead worker also builds the playback chunks on that grid from the
 playhead through its window. Previews encode with x264 `ultrafast`.
+Render-ahead order: every frame is keyed from one plan of the timeline
+(`compose::frame_keys`), so each pass sees the whole timeline; frames whose
+content changed since the last pass and are not cached form an edit, kept on
+a stack (newest first, up to 32). The worker renders the newest edit's frames
+(nearest the playhead first) and its chunks, then older edits, then 10 s
+behind / 60 s ahead of the playhead and those chunks, then the rest. A new
+edit makes the pass stale, so it jumps to the front. Open playback work is
+listed under "TODO" in ARCHITECTURE.md.
 GPU compositor spike (`ve-render::gpu`, `::compose`; the Phase 0 gate):
 wgpu 30 device created once per process (prefers the discrete GPU, falls
 back to WARP/llvmpipe); layers upload as `Rgba8UnormSrgb`, blend

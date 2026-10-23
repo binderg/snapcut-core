@@ -277,12 +277,18 @@ struct Pass {
     cached: Vec<bool>,
 }
 
+/// Most edits remembered with frames still to render; older ones are dropped
+/// (their frames still get rendered, just not ahead of the playhead).
+const MAX_EDITS: usize = 32;
+
 fn worker(s: &Arc<Session>) {
     let gpu = ve_render::gpu::Gpu::shared().is_ok();
     let mut pool = ve_render::decoder::DecoderPool::default();
-    // Keys of the last pass, by frame, for the size it ran at: frames whose
-    // key changed are the ones an edit touched, and go first.
+    // Keys of the last pass, by frame, at the width it ran at.
     let mut previous: Option<(u32, Vec<Option<String>>)> = None;
+    // The frames each edit changed that are not rendered yet (by key), oldest
+    // edit first. The newest edit is always worked on first.
+    let mut edits: Vec<std::collections::HashSet<String>> = Vec::new();
     loop {
         let (hint, generation) = {
             let mut sh = s.prefetch.shared.lock().unwrap_or_else(|e| e.into_inner());
@@ -295,18 +301,54 @@ fn worker(s: &Arc<Session>) {
             std::thread::sleep(Duration::from_secs(1));
             continue;
         };
-        let rate = snap.timeline.output_rate();
-        let total = (ve_render::timeline_end(&snap.timeline) * rate.as_ratio()).ceil().to_integer().max(0);
-        let n = usize::try_from(total).unwrap_or(0);
-        let mut pass = Pass { snap, hint, generation, keys: vec![None; n], cached: vec![false; n] };
-        let prev = previous.take().filter(|(w, _)| *w == pass.hint.width).map(|(_, k)| k);
+        let mut pass = keyed_pass(s, snap, hint, generation);
+        let total = pass.keys.len() as i64;
+        if let Some((w, prev)) = previous.take()
+            && w == pass.hint.width
+        {
+            // What this edit changed: frames whose content differs from the last
+            // pass and is not cached (a ripple that only moves frames changes nothing).
+            let changed: std::collections::HashSet<String> = (0..pass.keys.len())
+                .filter(|&i| !pass.cached[i] && prev.get(i).is_some_and(|old| *old != pass.keys[i]))
+                .filter_map(|i| pass.keys[i].clone())
+                .collect();
+            if !changed.is_empty() {
+                edits.push(changed);
+            }
+        }
+        previous = Some((pass.hint.width, pass.keys.clone()));
+        // Forget edits whose frames are all rendered (or no longer on the timeline).
+        let waiting: std::collections::HashSet<&str> =
+            (0..pass.keys.len()).filter(|&i| !pass.cached[i]).filter_map(|i| pass.keys[i].as_deref()).collect();
+        edits.retain(|e| e.iter().any(|k| waiting.contains(k.as_str())));
+        if edits.len() > MAX_EDITS {
+            edits.drain(..edits.len() - MAX_EDITS);
+        }
+
         let at = pass.hint.at.clamp(0, (total - 1).max(0));
-        let fps = rate.as_ratio().ceil().to_integer().max(1);
-        let window = (at - WINDOW.0 * fps).max(0)..(at + WINDOW.1 * fps).min(total);
-        let finished = run(s, &mut pass, window.clone(), prev.as_deref(), gpu, &mut pool)
-            && chunks(s, &pass, at, window.end)
-            && run(s, &mut pass, 0..total, prev.as_deref(), gpu, &mut pool);
-        previous = Some((pass.hint.width, pass.keys));
+        let fps = pass.snap.timeline.output_rate().as_ratio().ceil().to_integer().max(1);
+        let near = |f: &i64| if *f >= at { f - at } else { (at - f) * 3 };
+        publish(s, &pass);
+        let mut finished = true;
+        // 1. Edits, newest first: their frames nearest the playhead first, then their chunks.
+        for e in edits.iter().rev() {
+            let mut frames: Vec<i64> = (0..total).filter(|&f| !pass.cached[f as usize] && pass.keys[f as usize].as_ref().is_some_and(|k| e.contains(k))).collect();
+            frames.sort_by_key(near);
+            if !(render(s, &mut pass, &frames, gpu, &mut pool) && chunks(s, &pass, &frames)) {
+                finished = false;
+                break;
+            }
+        }
+        // 2. Around the playhead, ahead first, then its chunks; 3. everything else.
+        if finished {
+            let window = (at - WINDOW.0 * fps).max(0)..(at + WINDOW.1 * fps).min(total);
+            let mut around: Vec<i64> = window.clone().filter(|&f| !pass.cached[f as usize]).collect();
+            around.sort_by_key(near);
+            let ahead: Vec<i64> = (at..window.end).collect();
+            let mut rest: Vec<i64> = (0..total).filter(|&f| !pass.cached[f as usize]).collect();
+            rest.sort_by_key(near);
+            finished = render(s, &mut pass, &around, gpu, &mut pool) && chunks(s, &pass, &ahead) && render(s, &mut pass, &rest, gpu, &mut pool);
+        }
         if finished {
             // All done: sleep until the hint or the project changes.
             let rev = pass.snap.revision;
@@ -318,22 +360,36 @@ fn worker(s: &Arc<Session>) {
     }
 }
 
-/// Build the playback chunks from the one holding the playhead to `end`
-/// (frames are cached by now, so each is a quick encode, or nothing at all
-/// when an identical chunk was made before). Returns false if the pass went stale.
-fn chunks(s: &Session, pass: &Pass, at: i64, end: i64) -> bool {
+/// Key every frame of the timeline (one plan for all of it) and note which are cached.
+fn keyed_pass(s: &Session, snap: Snapshot, hint: Hint, generation: u64) -> Pass {
+    let tl = &snap.timeline;
+    let r = tl.output_rate().as_ratio();
+    let total = (ve_render::timeline_end(tl) * r).ceil().to_integer().max(0);
+    let fx = ve_render::fx::Registry::for_project(Some(snap.root()));
+    let format = hint.format.into();
+    let keys: Vec<Option<String>> = match ve_render::compose::frame_keys(tl, 0, total, hint.width, format, &fx) {
+        Ok(k) => k.into_iter().map(Some).collect(),
+        // Something cannot render (missing media): key frame by frame, so the rest still can.
+        Err(_) => (0..total).map(|f| ve_render::compose::frame_key(tl, Q::from_integer(f) / r, hint.width, format, &fx).ok()).collect(),
+    };
+    let dir = crate::render::frames_dir(&snap);
+    let cached = keys.iter().map(|k| k.as_deref().is_none_or(|k| s.frames.contains(&dir, k))).collect();
+    Pass { snap, hint, generation, keys, cached }
+}
+
+/// Build the playback chunks holding `frames`, in the order the frames come
+/// (each is a quick encode from cached frames, or nothing at all when an
+/// identical chunk was made before). Returns false if the pass went stale.
+fn chunks(s: &Session, pass: &Pass, frames: &[i64]) -> bool {
     let Some(len) = pass.hint.chunk else { return true };
     let total = pass.cached.len() as i64;
-    let mut from = at / len * len;
-    while from < end.min(total) {
-        loop {
-            if stale(s, pass) {
-                return false;
-            }
-            if s.frames.idle_ms() >= YIELD_MS && !s.jobs.list().iter().any(|j| matches!(j.state, crate::jobs::JobState::Running)) {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(50));
+    let mut seen = std::collections::HashSet::new();
+    for from in frames.iter().map(|f| f / len * len) {
+        if !seen.insert(from) {
+            continue;
+        }
+        if !wait_turn(s, pass) {
+            return false;
         }
         let to = (from + len).min(total);
         let params = serde_json::json!({ "from": format!("f{from}"), "to": format!("f{to}"), "width": pass.hint.width });
@@ -345,9 +401,22 @@ fn chunks(s: &Session, pass: &Pass, at: i64, end: i64) -> bool {
             }
             Err(e) => tracing::warn!("render-ahead chunk params: {e}"),
         }
-        from = to;
     }
     true
+}
+
+/// Wait while someone scrubs or a job runs. False if the pass went stale meanwhile.
+fn wait_turn(s: &Session, pass: &Pass) -> bool {
+    loop {
+        if stale(s, pass) {
+            return false;
+        }
+        let busy = s.frames.idle_ms() < YIELD_MS || s.jobs.list().iter().any(|j| matches!(j.state, crate::jobs::JobState::Running));
+        if !busy {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
 }
 
 /// Whether this pass is out of date (new hint or new revision).
@@ -355,79 +424,40 @@ fn stale(s: &Session, pass: &Pass) -> bool {
     s.prefetch.shared.lock().unwrap_or_else(|e| e.into_inner()).generation != pass.generation || s.revision() != Some(pass.snap.revision)
 }
 
-fn publish(s: &Session, pass: &Pass, pending: usize) {
+fn publish(s: &Session, pass: &Pass) {
     let status = CacheStatus {
         revision: pass.snap.revision,
         width: pass.hint.width,
         frames: pass.cached.len() as i64,
         cached: ranges(&pass.cached),
-        pending,
+        pending: pass.cached.iter().filter(|c| !**c).count(),
     };
     let params = serde_json::to_value(&status).unwrap_or_default();
     s.prefetch.shared.lock().unwrap_or_else(|e| e.into_inner()).status = status;
     s.events.publish_job("ui.cache", &params);
 }
 
-/// Render the uncached frames of `range`: frames an edit changed first
-/// (nearest the playhead first), then outward from the playhead, ahead
-/// before behind. Returns false if the pass went stale.
-fn run(
-    s: &Session,
-    pass: &mut Pass,
-    range: std::ops::Range<i64>,
-    prev: Option<&[Option<String>]>,
-    gpu: bool,
-    pool: &mut ve_render::decoder::DecoderPool,
-) -> bool {
-    let rate = pass.snap.timeline.output_rate();
-    let r = rate.as_ratio();
-    let fx = ve_render::fx::Registry::for_project(Some(pass.snap.root()));
-    let dir = crate::render::frames_dir(&pass.snap);
-    let format = pass.hint.format;
-    for f in range.clone() {
-        let i = f as usize;
-        if pass.keys[i].is_some() {
+/// Render the uncached ones of `frames`, in order. Returns false if the pass went stale.
+fn render(s: &Session, pass: &mut Pass, frames: &[i64], gpu: bool, pool: &mut ve_render::decoder::DecoderPool) -> bool {
+    let r = pass.snap.timeline.output_rate().as_ratio();
+    let mut last = Instant::now();
+    for &f in frames {
+        if pass.cached[f as usize] {
             continue;
         }
-        if f % 500 == 0 && stale(s, pass) {
+        if !wait_turn(s, pass) {
             return false;
         }
-        let key = ve_render::compose::frame_key(&pass.snap.timeline, Q::from_integer(f) / r, pass.hint.width, format.into(), &fx).ok();
-        pass.cached[i] = key.as_deref().is_none_or(|k| s.frames.contains(&dir, k));
-        pass.keys[i] = key;
-    }
-    let at = pass.hint.at;
-    let changed = |f: i64| prev.and_then(|p| p.get(f as usize)).is_some_and(|old| old.is_some() && *old != pass.keys[f as usize]);
-    let mut todo: Vec<i64> = range.filter(|&f| !pass.cached[f as usize]).collect();
-    todo.sort_by_key(|&f| {
-        let dist = if f >= at { f - at } else { (at - f) * 3 };
-        (!changed(f), dist)
-    });
-    publish(s, pass, todo.len());
-    let mut last = Instant::now();
-    for (done, f) in todo.iter().enumerate() {
-        // Scrubbing and exports come first.
-        loop {
-            if stale(s, pass) {
-                return false;
-            }
-            let busy = s.frames.idle_ms() < YIELD_MS || s.jobs.list().iter().any(|j| matches!(j.state, crate::jobs::JobState::Running));
-            if !busy {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(50));
-        }
-        let at = Q::from_integer(*f) / r;
-        let rendered = crate::render::cached_frame(s, &pass.snap, at, pass.hint.width, format, gpu.then_some(&mut *pool));
+        let rendered = crate::render::cached_frame(s, &pass.snap, Q::from_integer(f) / r, pass.hint.width, pass.hint.format, gpu.then_some(&mut *pool));
         if let Err(e) = &rendered {
             tracing::debug!("render-ahead frame {f}: {}", e.message);
         }
-        pass.cached[*f as usize] = true;
+        pass.cached[f as usize] = true;
         if last.elapsed() >= STATUS_EVERY {
-            publish(s, pass, todo.len() - done - 1);
+            publish(s, pass);
             last = Instant::now();
         }
     }
-    publish(s, pass, 0);
+    publish(s, pass);
     true
 }

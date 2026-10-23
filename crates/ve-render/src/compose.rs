@@ -281,14 +281,28 @@ pub const FRAME_KEY_VERSION: u32 = 1;
 /// does not say which renderer drew the frame: the GPU compositor and the
 /// ffmpeg path agree exactly on plain frames, and only the GPU draws the rest.
 pub fn frame_key(tl: &Timeline, at: Q, width: u32, format: ImageFormat, fx: &Registry) -> Result<String> {
-    let canvas = project_canvas(tl).scaled_to_width(width);
-    let r = canvas.rate.as_ratio();
-    let at = (at * r).floor() / r;
+    let r = project_canvas(tl).rate.as_ratio();
+    let f = (at * r).floor().to_integer();
     let end = timeline_end(tl);
-    if at < Q::from_integer(0) || at >= end {
+    if f < 0 || Q::from_integer(f) / r >= end {
         return Err(RenderError::Invalid(format!("no frame there: the timeline has {} frames", (end * r).to_integer())));
     }
-    let p = plan(tl, Span::new(at, at + Q::from_integer(1) / r))?;
+    Ok(frame_keys(tl, f, f + 1, width, format, fx)?.remove(0))
+}
+
+/// [`frame_key`] for every frame in `[from, to)` (frame numbers at the
+/// project rate, clipped to the timeline), from one plan of the range: cheap
+/// enough to key a whole timeline, which is how render-ahead finds what an
+/// edit changed.
+pub fn frame_keys(tl: &Timeline, from: i64, to: i64, width: u32, format: ImageFormat, fx: &Registry) -> Result<Vec<String>> {
+    let canvas = project_canvas(tl).scaled_to_width(width);
+    let r = canvas.rate.as_ratio();
+    let last = (timeline_end(tl) * r).ceil().to_integer();
+    let (from, to) = (from.max(0), to.min(last));
+    if to <= from {
+        return Ok(Vec::new());
+    }
+    let p = plan(tl, Span::new(Q::from_integer(from) / r, Q::from_integer(to) / r))?;
     let files: HashMap<PathBuf, String> = tl
         .metadata
         .ve
@@ -296,45 +310,58 @@ pub fn frame_key(tl: &Timeline, at: Q, width: u32, format: ImageFormat, fx: &Reg
         .iter()
         .filter_map(|a| Some((local_path(&a.url)?, a.hash.clone()?)))
         .collect();
-    let mut h = blake3::Hasher::new();
-    let mut put = |s: &str| {
-        h.update(s.as_bytes());
-        h.update(&[0]);
-    };
-    put(&format!("v{FRAME_KEY_VERSION} {}x{} {:?} {:?}", canvas.width, canvas.height, canvas.fit, format));
-    let layer = |put: &mut dyn FnMut(&str), seg: &Segment| -> Result<()> {
-        let file = match files.get(&seg.path) {
-            Some(hash) => hash.clone(),
-            None => {
-                let m = std::fs::metadata(&seg.path).ok();
+    // Files without a content hash are known by path, size and time; look each up once.
+    let mut unhashed: HashMap<PathBuf, String> = HashMap::new();
+    let mut file_id = |path: &Path| -> String {
+        if let Some(h) = files.get(path) {
+            return h.clone();
+        }
+        unhashed
+            .entry(path.to_owned())
+            .or_insert_with(|| {
+                let m = std::fs::metadata(path).ok();
                 let modified = m.as_ref().and_then(|m| m.modified().ok()).and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok());
-                format!("{} {:?} {:?}", seg.path.display(), m.map(|m| m.len()), modified)
-            }
-        };
-        put(&format!("file {file} frame {} rate {}", source_frame(seg, at), seg.media_rate));
-        if let Some(t) = transform_at(seg, at) {
-            put(&serde_json::to_string(&t).unwrap_or_default());
-        }
-        for pass in passes(seg, at, fx)? {
-            put(&format!("fx {} {:x} t={} p={}", pass.fx.reference(), pass.fx.hash, pass.time, pass.progress));
-            h_bytes(put, &pass.params);
-        }
-        Ok(())
+                format!("{} {:?} {:?}", path.display(), m.map(|m| m.len()), modified)
+            })
+            .clone()
     };
-    for (k, track) in p.video.iter().enumerate() {
-        put(&format!("track {k}"));
-        if let Some(tr) = track.transitions.iter().find(|t| t.start <= at && at < t.end) {
-            let f = fx.require(&tr.meta.transition, Kind::Transition).map_err(|e| RenderError::Invalid(format!("{}: {e}", tr.meta.id)))?;
-            let local = at - tr.start;
-            put(&format!("transition {} {:x} {} {}", f.reference(), f.hash, local, tr.end - tr.start));
-            h_bytes(&mut put, &f.pack(&tr.meta.params, &indexmap::IndexMap::new(), local));
-            layer(&mut put, &tr.outgoing)?;
-            layer(&mut put, &tr.incoming)?;
-        } else if let Some(seg) = track.segments.iter().find(|s| s.start <= at && at < s.end) {
-            layer(&mut put, seg)?;
+    let head = format!("v{FRAME_KEY_VERSION} {}x{} {:?} {:?}", canvas.width, canvas.height, canvas.fit, format);
+    let mut keys = Vec::with_capacity(usize::try_from(to - from).unwrap_or(0));
+    for f in from..to {
+        let at = Q::from_integer(f) / r;
+        let mut h = blake3::Hasher::new();
+        let mut put = |s: &str| {
+            h.update(s.as_bytes());
+            h.update(&[0]);
+        };
+        put(&head);
+        let mut layer = |put: &mut dyn FnMut(&str), seg: &Segment| -> Result<()> {
+            put(&format!("file {} frame {} rate {}", file_id(&seg.path), source_frame(seg, at), seg.media_rate));
+            if let Some(t) = transform_at(seg, at) {
+                put(&serde_json::to_string(&t).unwrap_or_default());
+            }
+            for pass in passes(seg, at, fx)? {
+                put(&format!("fx {} {:x} t={} p={}", pass.fx.reference(), pass.fx.hash, pass.time, pass.progress));
+                h_bytes(put, &pass.params);
+            }
+            Ok(())
+        };
+        for (k, track) in p.video.iter().enumerate() {
+            put(&format!("track {k}"));
+            if let Some(tr) = track.transitions.iter().find(|t| t.start <= at && at < t.end) {
+                let fxr = fx.require(&tr.meta.transition, Kind::Transition).map_err(|e| RenderError::Invalid(format!("{}: {e}", tr.meta.id)))?;
+                let local = at - tr.start;
+                put(&format!("transition {} {:x} {} {}", fxr.reference(), fxr.hash, local, tr.end - tr.start));
+                h_bytes(&mut put, &fxr.pack(&tr.meta.params, &indexmap::IndexMap::new(), local));
+                layer(&mut put, &tr.outgoing)?;
+                layer(&mut put, &tr.incoming)?;
+            } else if let Some(seg) = track.segments.iter().find(|s| s.start <= at && at < s.end) {
+                layer(&mut put, seg)?;
+            }
         }
+        keys.push(h.finalize().to_hex().to_string());
     }
-    Ok(h.finalize().to_hex().to_string())
+    Ok(keys)
 }
 
 fn h_bytes(put: &mut dyn FnMut(&str), b: &[u8]) {

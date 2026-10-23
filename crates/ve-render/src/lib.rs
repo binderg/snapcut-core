@@ -285,7 +285,12 @@ pub fn preview_frame_keys(tl: &Timeline, span: Span, s: &EncodeSettings, fx: &fx
     let c = &s.canvas;
     let r = c.rate.as_ratio();
     let total = ((span.end - span.start) * r).round().to_integer();
-    (0..total).map(|k| compose::frame_key(tl, span.start + Q::from_integer(k) / r, c.width, ImageFormat::Jpeg, fx)).collect()
+    let first = (span.start * r).round().to_integer();
+    let keys = compose::frame_keys(tl, first, first + total, c.width, ImageFormat::Jpeg, fx)?;
+    if keys.len() as i64 != total {
+        return Err(RenderError::Invalid("the preview range runs past the timeline".into()));
+    }
+    Ok(keys)
 }
 
 /// [`preview_key`] from frame keys already computed ([`preview_frame_keys`]).

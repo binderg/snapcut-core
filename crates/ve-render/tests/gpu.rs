@@ -666,3 +666,23 @@ fn transforms_place_and_fade_a_layer() {
     let plain = ve_render::frame(&tl, fr(15), SIDE, ImageFormat::Png, &work).unwrap();
     assert!(plain.warnings.iter().any(|w| w.contains("transform")), "{:?}", plain.warnings);
 }
+
+/// Keying a whole range from one plan gives the same keys as keying each frame
+/// alone (the frame cache depends on it), across a cut, a transition and an effect.
+#[test]
+fn range_keys_match_single_frame_keys() {
+    let work = dir("frame-keys");
+    let (tl, _, _) = fx_timeline(&work);
+    let total = (ve_render::timeline_end(&tl) * Q::from_integer(FPS)).to_integer();
+    let all = ve_render::compose::frame_keys(&tl, 0, total, SIDE, ImageFormat::Jpeg, &fx()).unwrap();
+    assert_eq!(all.len() as i64, total);
+    for f in 0..total {
+        let one = ve_render::compose::frame_key(&tl, fr(f), SIDE, ImageFormat::Jpeg, &fx()).unwrap();
+        assert_eq!(all[f as usize], one, "frame {f}");
+    }
+    // A sub-range keys the same frames the same way.
+    let part = ve_render::compose::frame_keys(&tl, 40, 70, SIDE, ImageFormat::Jpeg, &fx()).unwrap();
+    assert_eq!(part, all[40..70]);
+    // Different frames differ (the ramp changes every frame).
+    assert_ne!(all[10], all[11]);
+}
