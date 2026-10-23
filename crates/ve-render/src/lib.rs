@@ -226,6 +226,90 @@ pub fn encode(tl: &Timeline, span: Span, s: &EncodeSettings, out: &Path, work: &
     Ok(Encoded { frames, encoder, width: c.width, height: c.height, warnings: p.warnings })
 }
 
+/// Render `span` to an MP4 at `out` from finished JPEG frames: `frame(t)`
+/// gives the frame at each timeline time in order (from a frame cache, or
+/// rendered on demand); the audio is the Phase 1 graph as usual. Used for
+/// playback previews, whose frames the preview has usually drawn already.
+pub fn encode_frames(
+    tl: &Timeline,
+    span: Span,
+    s: &EncodeSettings,
+    out: &Path,
+    work: &Path,
+    frame: &mut dyn FnMut(Q) -> Result<Vec<u8>>,
+) -> Result<Encoded> {
+    let p = plan(tl, span)?;
+    let c = &s.canvas;
+    let r = c.rate.as_ratio();
+    let total = ((span.end - span.start) * r).round().to_integer();
+    let encoder = match &s.encoder {
+        Some(e) => e.clone(),
+        None => ffmpeg::h264_encoder()?.to_owned(),
+    };
+    let mut g = Graph::new();
+    let a = g.audio(&p, c, s.crossfade);
+    let pipe_index = g.input_count();
+    g.chain(format!(
+        "[{pipe_index}:v]scale={}:{}:out_color_matrix=bt709:out_range=tv,format=yuv420p,setsar=1[gv]",
+        c.width, c.height
+    ));
+    let pipe = ["-f", "image2pipe", "-c:v", "mjpeg", "-framerate", &c.rate.to_string(), "-i", "-"].iter().map(|a| (*a).to_owned()).collect();
+    let args = encode_args(s, &encoder, "[gv]", &format!("[{a}]"), out);
+    let ctrl = control::current();
+    let mut produce = |send: &mut ffmpeg::Send| -> Result<()> {
+        for k in 0..total {
+            send(frame(span.start + Q::from_integer(k) / r)?)?;
+            if let Some(ctrl) = &ctrl {
+                ctrl.progress(((k + 1) as f64) / c.rate.to_f64());
+            }
+        }
+        Ok(())
+    };
+    if let Err(e) = ffmpeg::feed(&ffmpeg::Inputs::GraphPipe(&g, pipe), &args, work, &mut produce) {
+        let _ = std::fs::remove_file(out);
+        return Err(e);
+    }
+    let warnings = p.warnings.into_iter().filter(|w| !w.contains(plan::GPU_ONLY)).collect();
+    Ok(Encoded { frames: total, encoder, width: c.width, height: c.height, warnings })
+}
+
+/// A hash of everything in a playback preview of `span` at `width`: every
+/// frame's [`compose::frame_key`], the audio plan and the encode settings.
+/// Equal keys mean an earlier preview file can be played again as is.
+pub fn preview_key(tl: &Timeline, span: Span, s: &EncodeSettings, fx: &fx::Registry) -> Result<String> {
+    preview_key_from(tl, span, s, &preview_frame_keys(tl, span, s, fx)?)
+}
+
+/// The [`compose::frame_key`] of every frame of a preview of `span`, in order.
+pub fn preview_frame_keys(tl: &Timeline, span: Span, s: &EncodeSettings, fx: &fx::Registry) -> Result<Vec<String>> {
+    let c = &s.canvas;
+    let r = c.rate.as_ratio();
+    let total = ((span.end - span.start) * r).round().to_integer();
+    (0..total).map(|k| compose::frame_key(tl, span.start + Q::from_integer(k) / r, c.width, ImageFormat::Jpeg, fx)).collect()
+}
+
+/// [`preview_key`] from frame keys already computed ([`preview_frame_keys`]).
+pub fn preview_key_from(tl: &Timeline, span: Span, s: &EncodeSettings, frame_keys: &[String]) -> Result<String> {
+    let c = &s.canvas;
+    let mut h = blake3::Hasher::new();
+    h.update(format!("preview v{} {:?} {} {} {} {} {}", compose::FRAME_KEY_VERSION, c, s.crf, s.x264_preset, s.audio_kbps, s.crossfade, span.start).as_bytes());
+    for key in frame_keys {
+        h.update(key.as_bytes());
+    }
+    // Audio: where each piece of sound comes from and how it is placed, relative to the span.
+    let p = plan(tl, span)?;
+    for t in &p.audio {
+        for seg in &t.segments {
+            h.update(
+                format!("{} {} {} {} {} {} {:?} {:?}", seg.path.display(), seg.start - span.start, seg.end - span.start, seg.media_start, seg.speed, seg.volume_db, seg.head, seg.tail)
+                    .as_bytes(),
+            );
+        }
+        h.update(b"|");
+    }
+    Ok(h.finalize().to_hex().to_string())
+}
+
 /// ffmpeg output arguments for an MP4 from the video stream `v` and audio
 /// stream `a` (stream specifiers, e.g. `[v1]`), shared by both backends.
 pub(crate) fn encode_args(s: &EncodeSettings, encoder: &str, v: &str, a: &str, out: &Path) -> Vec<String> {

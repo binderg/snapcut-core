@@ -313,6 +313,9 @@ pub struct VideoResult {
     pub encoder: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<String>,
+    /// A preview whose content had not changed since it was last made: the same file, at once.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub cached: bool,
 }
 
 fn out_file(work: &Path, kind: &str, rev: u64) -> PathBuf {
@@ -351,13 +354,188 @@ fn encode(p: &Snapshot, sp: Span, settings: ve_render::EncodeSettings, kind: &st
         height: e.height,
         encoder: e.encoder,
         warnings: e.warnings,
+        cached: false,
     })
 }
 
-pub fn range_preview(p: &Snapshot, a: PreviewParams) -> Result<VideoResult, RpcError> {
-    let sp = span(&p.timeline, a.from.as_ref(), a.to.as_ref())?;
-    let settings = ve_export::preview_settings(&p.timeline, a.width);
-    encode(p, sp, settings, "preview")
+/// Playback previews kept by content, per project.
+const PREVIEW_BYTES: u64 = 1 << 30;
+
+/// A playback preview of a range. Kept by content ([`ve_render::preview_key`]):
+/// asking again for a range nothing changed in returns the same file at once.
+/// Otherwise its frames come from the frame cache when the preview has them
+/// all (render-ahead usually has), or are rendered into it when the range
+/// needs the GPU; a plain range nobody has looked at goes through the
+/// ffmpeg graph, which is fastest for that.
+pub fn range_preview(s: &crate::Session, p: &Snapshot, a: PreviewParams) -> Result<VideoResult, RpcError> {
+    let tl = &p.timeline;
+    let sp = span(tl, a.from.as_ref(), a.to.as_ref())?;
+    let settings = ve_export::preview_settings(tl, a.width);
+    if renderer_override().is_some() {
+        return encode(p, sp, settings, "preview");
+    }
+    let t0 = std::time::Instant::now();
+    let fx = ve_render::fx::Registry::for_project(Some(p.root()));
+    let frame_keys = ve_render::preview_frame_keys(tl, sp, &settings, &fx).map_err(render_error)?;
+    let key = ve_render::preview_key_from(tl, sp, &settings, &frame_keys).map_err(render_error)?;
+    let dir = p.cache_dir().join("previews");
+    let path = dir.join(format!("{key}.mp4"));
+    let meta = dir.join(format!("{key}.json"));
+    // One build per preview at a time: a second asker (the render-ahead
+    // worker and a pressed play) waits for the first, then finds its file.
+    let lock = building(&key);
+    let _guard = lock.lock().unwrap_or_else(|e| e.into_inner());
+    if path.is_file()
+        && let Some(mut r) = std::fs::read(&meta).ok().and_then(|b| serde_json::from_slice::<StoredPreview>(&b).ok()).map(StoredPreview::into_result)
+    {
+        r.path.clone_from(&path);
+        r.url = ve_media::file_url(&path).unwrap_or_default();
+        r.cached = true;
+        return Ok(r);
+    }
+    std::fs::create_dir_all(&dir).map_err(|e| RpcError::new(ErrorCode::Internal, format!("{}: {e}", dir.display())))?;
+    let tmp = dir.join(format!("{key}.part.mp4"));
+    let c = settings.canvas;
+    let r = c.rate.as_ratio();
+    let frames_dir = frames_dir(p);
+    let all_cached = frame_keys.iter().all(|key| s.frames.contains(&frames_dir, key));
+    let gpu = ve_render::needs_gpu(tl, sp).map_err(render_error)?;
+    let work = work_dir(p);
+    let e = if all_cached || gpu {
+        let mut pool = ve_render::decoder::DecoderPool::default();
+        let have_gpu = ve_render::gpu::Gpu::shared().is_ok();
+        let mut frame = |t: ve_model::time::Q| -> Result<Vec<u8>, RenderError> {
+            // Frames the cache has come straight from it, by the keys worked out above.
+            let k = ((t - sp.start) * r).round().to_integer();
+            if let Some(f) = usize::try_from(k).ok().and_then(|k| frame_keys.get(k)).and_then(|key| s.frames.get(&frames_dir, key)) {
+                return Ok(f.bytes.as_ref().clone());
+            }
+            let pool = have_gpu.then_some(&mut pool);
+            cached_frame(s, p, t, c.width, Format::Jpeg, pool).map(|(f, _)| f.bytes.as_ref().clone()).map_err(|e| RenderError::Invalid(e.message))
+        };
+        ve_render::encode_frames(tl, sp, &settings, &tmp, &work, &mut frame)
+    } else {
+        ve_render::encode(tl, sp, &settings, &tmp, &work)
+    }
+    .map_err(render_error)?;
+    tracing::info!(
+        "range_preview {} frames: {:?} ({})",
+        frame_keys.len(),
+        t0.elapsed(),
+        if all_cached { "from cached frames" } else if gpu { "rendering frames" } else { "ffmpeg graph" }
+    );
+    std::fs::rename(&tmp, &path).map_err(|e| RpcError::new(ErrorCode::Internal, format!("{}: {e}", path.display())))?;
+    let rate = tl.output_rate();
+    let result = VideoResult {
+        url: ve_media::file_url(&path).unwrap_or_default(),
+        size_bytes: std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0),
+        path,
+        mime: "video/mp4".into(),
+        from: tc(sp.start, rate),
+        to: tc(sp.end, rate),
+        duration: tc(sp.duration(), rate),
+        frames: e.frames,
+        width: e.width,
+        height: e.height,
+        encoder: e.encoder,
+        warnings: e.warnings,
+        cached: false,
+    };
+    if let Ok(b) = serde_json::to_vec(&StoredPreview::from(&result)) {
+        let _ = std::fs::write(&meta, b);
+    }
+    prune_previews(&dir);
+    Ok(result)
+}
+
+/// The lock for building the preview with this key.
+fn building(key: &str) -> std::sync::Arc<std::sync::Mutex<()>> {
+    type Locks = std::sync::Mutex<std::collections::HashMap<String, std::sync::Weak<std::sync::Mutex<()>>>>;
+    static LOCKS: std::sync::OnceLock<Locks> = std::sync::OnceLock::new();
+    let mut m = LOCKS.get_or_init(Default::default).lock().unwrap_or_else(|e| e.into_inner());
+    m.retain(|_, w| w.strong_count() > 0);
+    if let Some(l) = m.get(key).and_then(std::sync::Weak::upgrade) {
+        return l;
+    }
+    let l = std::sync::Arc::new(std::sync::Mutex::new(()));
+    m.insert(key.to_owned(), std::sync::Arc::downgrade(&l));
+    l
+}
+
+/// What is kept next to a preview file to answer for it again.
+#[derive(Serialize, Deserialize)]
+struct StoredPreview {
+    from: String,
+    to: String,
+    duration: String,
+    frames: i64,
+    width: u32,
+    height: u32,
+    encoder: String,
+    size_bytes: u64,
+    warnings: Vec<String>,
+}
+
+impl From<&VideoResult> for StoredPreview {
+    fn from(r: &VideoResult) -> Self {
+        Self {
+            from: r.from.clone(),
+            to: r.to.clone(),
+            duration: r.duration.clone(),
+            frames: r.frames,
+            width: r.width,
+            height: r.height,
+            encoder: r.encoder.clone(),
+            size_bytes: r.size_bytes,
+            warnings: r.warnings.clone(),
+        }
+    }
+}
+
+impl StoredPreview {
+    fn into_result(self) -> VideoResult {
+        VideoResult {
+            path: PathBuf::new(),
+            url: String::new(),
+            mime: "video/mp4".into(),
+            size_bytes: self.size_bytes,
+            from: self.from,
+            to: self.to,
+            duration: self.duration,
+            frames: self.frames,
+            width: self.width,
+            height: self.height,
+            encoder: self.encoder,
+            warnings: self.warnings,
+            cached: true,
+        }
+    }
+}
+
+/// Keep the preview folder under its budget, oldest first.
+fn prune_previews(dir: &Path) {
+    let mut files: Vec<(SystemTime, u64, PathBuf)> = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| {
+            let m = e.metadata().ok()?;
+            Some((m.modified().unwrap_or(UNIX_EPOCH), m.len(), e.path()))
+        })
+        .collect();
+    let mut total: u64 = files.iter().map(|f| f.1).sum();
+    if total <= PREVIEW_BYTES {
+        return;
+    }
+    files.sort();
+    for (_, len, path) in files {
+        if total <= PREVIEW_BYTES / 4 * 3 {
+            break;
+        }
+        if std::fs::remove_file(&path).is_ok() {
+            total -= len;
+        }
+    }
 }
 
 pub fn export(p: &Snapshot, a: ExportParams) -> Result<VideoResult, RpcError> {

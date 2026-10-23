@@ -308,7 +308,7 @@ pub fn registry(session: Arc<Session>) -> Arc<Registry> {
     long!("render.contact_sheet", "A grid of evenly spaced frames from a range (base64 image)", false, render::SheetParams,
         |_: &Session, snap: &Snapshot, p| render::contact_sheet(snap, p));
     long!("render.range_preview", "A low-res MP4 of a range, written to the engine cache", false, render::PreviewParams,
-        |_: &Session, snap: &Snapshot, p| render::range_preview(snap, p));
+        |s: &Session, snap: &Snapshot, p| render::range_preview(s, snap, p));
     long!("render.export", "Render the timeline (or a range) with a preset to an MP4 in the engine cache", false, render::ExportParams,
         |_: &Session, snap: &Snapshot, p| render::export(snap, p));
     r.method("render.presets", "Export presets", false, |_: NoParams| Ok(render::presets()));

@@ -144,13 +144,25 @@ async fn frame_cache_survives_unrelated_edits() {
     ok(&r, "edit.set_transform", json!({"clip": clip, "scale": 0.5, "base_rev": 4})).await;
     assert!(!cached(&ok(&r, "render.frame", frame("f55")).await));
 
+    // Playback previews are kept by content too.
+    let preview = json!({"from": "f0", "to": "f50", "width": 160});
+    let p1 = ok(&r, "render.range_preview", preview.clone()).await;
+    assert!(!cached(&p1), "{p1}");
+    let p2 = ok(&r, "render.range_preview", preview.clone()).await;
+    assert!(cached(&p2), "{p2}");
+    assert_eq!(p1["path"], p2["path"]);
+    assert!(std::path::Path::new(p2["path"].as_str().unwrap()).is_file());
+    // Louder sound is a different preview.
+    ok(&r, "edit.set_volume", json!({"clip": clip, "db": -3, "base_rev": 5})).await;
+    assert!(!cached(&ok(&r, "render.range_preview", preview).await));
+
     // Render-ahead fills in the rest.
     ok(&r, "ui.cache_hint", json!({"at": "f0", "width": 160})).await;
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
     loop {
         let st = ok(&r, "ui.cache_status", json!({})).await;
         let total = st["frames"].as_i64().unwrap_or(0);
-        if st["revision"] == 5 && st["pending"] == 0 && total > 0 && st["cached"] == json!([[0, total]]) {
+        if st["revision"] == 6 && st["pending"] == 0 && total > 0 && st["cached"] == json!([[0, total]]) {
             break;
         }
         assert!(std::time::Instant::now() < deadline, "render-ahead did not finish: {st}");

@@ -231,8 +231,17 @@ key ignores the renderer (GPU and ffmpeg agree on plain frames); a forced
 `ui.cache_status` + `ui.cache` event, UI-only so behind `ui-api`): one
 worker thread walks frames an edit changed first, then 10 s behind / 60 s
 ahead of the playhead, then the rest, on its own warm decoders (GPU path),
-pausing while `render.frame` calls come in or a job runs. Range previews
-(playback chunks) are not cached by content yet.
+pausing while `render.frame` calls come in or a job runs. Project effect
+registries are kept per project (`Registry::for_project`, rechecked by file
+listing at most every 200 ms; `fx.define` forgets it), since reloading them
+per frame cost more than the frames. Range previews (playback chunks) are
+kept by content too (`ve_render::preview_key`: every frame key + the audio
+plan + settings) in `<project cache>/previews/` (1 GB); a miss is built from
+cached frames when all are there (`encode_frames`, JPEGs piped to ffmpeg),
+rendered through the frame cache when the range needs the GPU, else through
+the ffmpeg graph. One build per key at a time. With `chunk_frames` the
+render-ahead worker also builds the playback chunks on that grid from the
+playhead through its window. Previews encode with x264 `ultrafast`.
 GPU compositor spike (`ve-render::gpu`, `::compose`; the Phase 0 gate):
 wgpu 30 device created once per process (prefers the discrete GPU, falls
 back to WARP/llvmpipe); layers upload as `Rgba8UnormSrgb`, blend

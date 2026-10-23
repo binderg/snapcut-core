@@ -61,10 +61,14 @@ and when the preview size changes; it is cheap to repeat.
 | `width` | required | The `width` the preview passes to `render.frame` |
 | `format` | `jpeg` | The `format` it passes |
 | `active` | true | False stops rendering ahead (preview hidden) |
+| `chunk_frames` | | If the preview plays `render.range_preview` chunks on a grid of this many frames, build the chunks ahead too |
 
 Order: frames an edit just changed (a new transition or effect) nearest the
 playhead first, then the 10 s behind / 60 s ahead of the playhead, ahead
-first, then the rest of the timeline. It pauses while `render.frame` calls
+first, then (with `chunk_frames`) the playback chunks from the one holding
+the playhead through that window, then the rest of the timeline. Chunks
+come from the cached frames and are kept by content (see `render.range_preview`),
+so pressing play over them starts at once. It pauses while `render.frame` calls
 are coming in (scrubbing) and while a job runs. A new hint or a new
 revision restarts the walk; frames already cached are skipped. Returns the
 current [status](#uicache_status).

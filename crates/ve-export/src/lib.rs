@@ -99,7 +99,8 @@ pub fn preview_settings(tl: &Timeline, width: u32) -> EncodeSettings {
         canvas: project_canvas(tl).scaled_to_width(width),
         encoder: None,
         crf: 28,
-        x264_preset: "veryfast".to_owned(),
+        // Previews are played once, locally, right after they are made: encode speed matters, size does not.
+        x264_preset: "ultrafast".to_owned(),
         bits_per_pixel: 0.07,
         audio_kbps: 96,
         crossfade: ve_render::default_crossfade(),

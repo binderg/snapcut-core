@@ -172,6 +172,11 @@ pub struct CacheHintParams {
     /// False stops rendering ahead (the preview is hidden). Default true.
     #[serde(default = "yes")]
     pub active: bool,
+    /// Frames per playback chunk, if the preview plays `render.range_preview`
+    /// chunks on a grid of this size (0, `chunk`, `2 chunk`, ...). The
+    /// chunks ahead of the playhead are then built too, so play starts at once.
+    #[serde(default)]
+    pub chunk_frames: Option<i64>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -198,6 +203,7 @@ struct Hint {
     width: u32,
     format: Format,
     active: bool,
+    chunk: Option<i64>,
 }
 
 #[derive(Default)]
@@ -223,7 +229,7 @@ pub fn cache_hint(s: &Arc<Session>, p: CacheHintParams) -> Result<CacheStatus, R
     let rate = s.with_project(|proj| Ok(proj.timeline.output_rate()))?;
     let at = crate::commit::parse_time("at", &p.at, rate)?;
     let at = (at * rate.as_ratio()).floor().to_integer();
-    let hint = Hint { at, width: p.width, format: p.format, active: p.active };
+    let hint = Hint { at, width: p.width, format: p.format, active: p.active, chunk: p.chunk_frames.filter(|c| *c > 0) };
     let status = {
         let mut sh = s.prefetch.shared.lock().unwrap_or_else(|e| e.into_inner());
         if sh.hint.as_ref() != Some(&hint) {
@@ -298,6 +304,7 @@ fn worker(s: &Arc<Session>) {
         let fps = rate.as_ratio().ceil().to_integer().max(1);
         let window = (at - WINDOW.0 * fps).max(0)..(at + WINDOW.1 * fps).min(total);
         let finished = run(s, &mut pass, window.clone(), prev.as_deref(), gpu, &mut pool)
+            && chunks(s, &pass, at, window.end)
             && run(s, &mut pass, 0..total, prev.as_deref(), gpu, &mut pool);
         previous = Some((pass.hint.width, pass.keys));
         if finished {
@@ -309,6 +316,38 @@ fn worker(s: &Arc<Session>) {
             }
         }
     }
+}
+
+/// Build the playback chunks from the one holding the playhead to `end`
+/// (frames are cached by now, so each is a quick encode, or nothing at all
+/// when an identical chunk was made before). Returns false if the pass went stale.
+fn chunks(s: &Session, pass: &Pass, at: i64, end: i64) -> bool {
+    let Some(len) = pass.hint.chunk else { return true };
+    let total = pass.cached.len() as i64;
+    let mut from = at / len * len;
+    while from < end.min(total) {
+        loop {
+            if stale(s, pass) {
+                return false;
+            }
+            if s.frames.idle_ms() >= YIELD_MS && !s.jobs.list().iter().any(|j| matches!(j.state, crate::jobs::JobState::Running)) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let to = (from + len).min(total);
+        let params = serde_json::json!({ "from": format!("f{from}"), "to": format!("f{to}"), "width": pass.hint.width });
+        match serde_json::from_value::<crate::render::PreviewParams>(params) {
+            Ok(p) => {
+                if let Err(e) = crate::render::range_preview(s, &pass.snap, p) {
+                    tracing::debug!("render-ahead chunk f{from}: {}", e.message);
+                }
+            }
+            Err(e) => tracing::warn!("render-ahead chunk params: {e}"),
+        }
+        from = to;
+    }
+    true
 }
 
 /// Whether this pass is out of date (new hint or new revision).

@@ -49,7 +49,15 @@ thumbnails on a timeline: one call, then slice the grid.
 
 ## `render.range_preview`
 
-`{from, to, width (640)}`. A low-resolution MP4 of the range.
+`{from, to, width (640)}`. A low-resolution MP4 of the range, for playing.
+
+Previews are kept by content: asking again for a range where nothing
+changed (same frames, same sound, same width) returns the same file at once
+with `"cached": true`, even after edits elsewhere. They live in the
+project's cache folder (`previews/`, about 1 GB, oldest removed first)
+rather than `renders/`, so they are not cleared after a day; copy one out if
+you want to keep it. A new preview uses frames already in the frame cache
+when it has them all, which is much faster than rendering.
 
 ## `render.export`
 
