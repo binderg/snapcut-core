@@ -147,7 +147,6 @@ enum Command {
         unlinked: bool,
     },
     /// Move a clip (overwrites the destination, leaves a gap): `ve move clip_7f3a --to 00:00:42:00 --track V2`.
-    /// `--push` moves what is in the way right instead of overwriting it.
     /// `--reorder` swaps places: what lies between slides over to fill the old place.
     Move {
         clip: String,
@@ -157,8 +156,6 @@ enum Command {
         track: Option<String>,
         #[arg(long)]
         unlinked: bool,
-        #[arg(long)]
-        push: bool,
         #[arg(long)]
         reorder: bool,
     },
@@ -713,8 +710,8 @@ fn plan(cmd: &Command, json_output: bool) -> Plan {
         Command::Trim { clip, in_delta, out_delta, roll, unlinked } => {
             m("edit.trim", json!({ "clip": clip, "in": in_delta, "out": out_delta, "roll": roll, "linked": !unlinked }))
         }
-        Command::Move { clip, to, track, unlinked, push, reorder } => {
-            m("edit.move", json!({ "clip": clip, "to": to, "track": track, "linked": !unlinked, "push": push, "reorder": reorder }))
+        Command::Move { clip, to, track, unlinked, reorder } => {
+            m("edit.move", json!({ "clip": clip, "to": to, "track": track, "linked": !unlinked, "reorder": reorder }))
         }
         Command::RippleDelete { clips, span, ranges, markers, tracks, unlinked } => {
             let mut rs: Vec<Value> = Vec::new();

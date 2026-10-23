@@ -1,6 +1,6 @@
 ---
 name: ve-ui
-description: ui.* methods for human editors (media panel thumbnails). Agents editing video do not need this; use ve-core.
+description: ui.* methods for human editors (media panel thumbnails, drag-to-push moves). Agents editing video do not need this; use ve-core.
 ---
 
 # ve-ui
@@ -28,3 +28,22 @@ most black openings. Audio-only assets fail with `invalid_params`.
 
 JPEGs are cached by file hash in `<cache>/ve/thumbs/`, so repeat calls are
 instant and survive daemon restarts. Read-only; works on any open project.
+
+## `ui.move_push`
+
+What dropping a dragged clip does when the spot is too small. Takes
+`base_rev`, `dry_run` and `actor` and returns the common edit result, like
+every `edit.*` method.
+
+| Param | Default | |
+| --- | --- | --- |
+| `clip` | required | |
+| `to` | required | New timeline start |
+| `track` | same track | Put this clip (not its linked clips) on another track of the same kind |
+| `linked` | true | |
+
+The clip and its linked clips move to `to`, leaving a gap where they were.
+Content on the destination tracks from `to` moves right just far enough for
+the clip to fit (not at all if it fits in a gap), and linked clips on other
+tracks move with it, so sound stays in sync. A clip under `to` is cut there.
+Agents use `edit.move` (overwrite, or `reorder` to swap places) instead.

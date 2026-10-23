@@ -1,6 +1,6 @@
 //! `ui.*` methods: helpers that exist only for human editors (media panel
-//! thumbnails today; filmstrips and waveform drawing later). Agents never
-//! need them.
+//! thumbnails, the push that dragging a clip does; filmstrips and waveform
+//! drawing later). Agents never need them.
 //!
 //! TEMPORARY HOME. These belong in a UI plugin, not the core. They live here,
 //! behind the `ui-api` cargo feature (default on), only because `ve-plugin` has
@@ -19,7 +19,35 @@ use serde::{Deserialize, Serialize};
 use ve_model::Id;
 use ve_protocol::{ErrorCode, RpcError};
 
+use crate::commit::{Committed, commit, mutation_params};
+use crate::edit::{edit_err, time, yes};
 use crate::project::OpenProject;
+use ve_ops::EditReport;
+use ve_ops::edit::{self, Move};
+
+mutation_params! {
+    /// `ui.move_push`: what a timeline drag does when a clip is let go in
+    /// a spot that is too small: the clip (and its linked clips) moves to
+    /// `to` and what is in the way slides right just far enough to fit,
+    /// linked clips included. Leaves a gap where the clip was.
+    pub struct MovePushParams {
+        pub clip: Id,
+        /// New timeline start of `clip`.
+        pub to: String,
+        /// Put `clip` (not its linked clips) on this track.
+        #[serde(default)]
+        pub track: Option<String>,
+        #[serde(default = "yes")]
+        pub linked: bool,
+    }
+}
+
+pub fn move_push(p: &mut OpenProject, a: MovePushParams) -> Result<Committed<EditReport>, RpcError> {
+    commit(p, a.mutation(), "ui.move_push", |tl| {
+        let op = Move { clip: a.clip.clone(), to: time(tl, "to", &a.to)?, track: a.track.clone(), linked: a.linked, push: true, reorder: false };
+        edit::move_clip(tl, &op).map_err(edit_err)
+    })
+}
 
 /// Bump when the thumbnail's frame choice or encoding changes, so stale cache files are ignored.
 const THUMB_VERSION: u32 = 1;

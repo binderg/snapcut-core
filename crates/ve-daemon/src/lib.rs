@@ -227,6 +227,8 @@ pub fn registry(session: Arc<Session>) -> Arc<Registry> {
     // TEMPORARY: UI-only helpers; they belong in a UI plugin (see ui.rs).
     #[cfg(feature = "ui-api")]
     on_project!("ui.thumbnail", "A poster frame (JPEG, base64) of a video asset, for media panels", false, ui::thumbnail);
+    #[cfg(feature = "ui-api")]
+    on_project!("ui.move_push", "Timeline drag: move a clip and push what is in the way just far enough", true, ui::move_push);
 
     on_project!("edit.insert", "Put an asset on the timeline (video + linked audio); insert or overwrite", true, edit::insert);
     on_project!("edit.split", "Cut clips in two at a time (all clips under it, or the given ones)", true, edit::split);

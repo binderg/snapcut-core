@@ -19,15 +19,15 @@ use ve_protocol::{Actor, ActorKind, RpcError};
 use crate::commit::{Committed, actor_label, commit, commit_doc, mutation_params, parse_ratio, parse_time};
 use crate::project::OpenProject;
 
-fn yes() -> bool {
+pub(crate) fn yes() -> bool {
     true
 }
 
-fn edit_err(e: ve_ops::EditError) -> RpcError {
+pub(crate) fn edit_err(e: ve_ops::EditError) -> RpcError {
     RpcError::invalid_params(e.0)
 }
 
-fn time(tl: &Timeline, field: &str, s: &str) -> Result<ve_model::time::Q, RpcError> {
+pub(crate) fn time(tl: &Timeline, field: &str, s: &str) -> Result<ve_model::time::Q, RpcError> {
     parse_time(field, s, tl.output_rate())
 }
 
@@ -156,8 +156,8 @@ pub fn trim(p: &mut OpenProject, a: TrimParams) -> Result<Committed<EditReport>,
 
 mutation_params! {
     /// `edit.move`: move a clip (and its linked clips) to a new start,
-    /// leaving a gap behind. What is at the destination is overwritten, or
-    /// with `push` moved right just far enough to fit (with its linked clips).
+    /// leaving a gap behind and overwriting what is at the destination, or
+    /// with `reorder` trading places with what it passes.
     pub struct MoveParams {
         pub clip: Id,
         /// New timeline start of `clip`.
@@ -167,9 +167,6 @@ mutation_params! {
         pub track: Option<String>,
         #[serde(default = "yes")]
         pub linked: bool,
-        /// Push what is in the way instead of overwriting it.
-        #[serde(default)]
-        pub push: bool,
         /// Swap places: what lies between the old and new place slides over
         /// to fill the old one. Nothing else moves.
         #[serde(default)]
@@ -179,7 +176,7 @@ mutation_params! {
 
 pub fn move_clip(p: &mut OpenProject, a: MoveParams) -> Result<Committed<EditReport>, RpcError> {
     commit(p, a.mutation(), "edit.move", |tl| {
-        let op = Move { clip: a.clip.clone(), to: time(tl, "to", &a.to)?, track: a.track.clone(), linked: a.linked, push: a.push, reorder: a.reorder };
+        let op = Move { clip: a.clip.clone(), to: time(tl, "to", &a.to)?, track: a.track.clone(), linked: a.linked, push: false, reorder: a.reorder };
         edit::move_clip(tl, &op).map_err(edit_err)
     })
 }

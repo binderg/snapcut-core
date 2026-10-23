@@ -80,15 +80,10 @@ with `invalid_params`.
 | `to` | required | New timeline start |
 | `track` | same track | Move this clip (not its linked clips) to another track of the same kind |
 | `linked` | true | |
-| `push` | false | Push what is in the way instead of overwriting it |
-| `reorder` | false | Swap places instead (not with `push` or `track`) |
+| `reorder` | false | Swap places instead of overwriting (not with `track`) |
 
-Leaves a gap where the clip was. By default it overwrites whatever is at the
-destination. With `push`, content on the destination tracks from the new
-start moves right just far enough for the clip to fit (not at all if it fits
-in a gap), together with its linked clips, as `edit.insert` does; a clip
-under the new start is cut there. Moving a clip to the start or end of
-another clip with `push` puts it before or after that clip.
+Leaves a gap where the clip was and overwrites whatever is at the
+destination, unless `reorder` is given.
 
 With `reorder`, the clip ends at `to` and whatever lay between its old and
 new place slides over by the clip's length to fill the old place, so the
