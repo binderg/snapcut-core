@@ -65,11 +65,12 @@ and when the preview size changes; it is cheap to repeat.
 
 Order, anywhere on the timeline: first what edits changed, **newest edit
 first** (a transition added a minute away still goes before the playhead
-area): that edit's frames nearest the playhead first, then (with
-`chunk_frames`) its playback chunks; then older edits the same way. Then the
-10 s behind / 60 s ahead of the playhead, ahead first, and the chunks from
-the one holding the playhead through that window; then the rest of the
-timeline. An edit made while it works jumps to the front. Chunks
+area): that edit's frames from the playhead forward first, then behind it,
+then (with `chunk_frames`) its playback chunks; then older edits the same
+way. Then the 60 s ahead of the playhead, one chunk at a time from the one
+holding the playhead (its frames, then the chunk, so the next chunk playback
+needs is ready soonest); then the 10 s behind; then the rest of the
+timeline, ahead first. An edit made while it works jumps to the front. Chunks
 come from the cached frames and are kept by content (see `render.range_preview`),
 so pressing play over them starts at once. It pauses while `render.frame` calls
 are coming in (scrubbing) and while a job runs. A new hint or a new

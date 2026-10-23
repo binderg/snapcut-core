@@ -229,8 +229,8 @@ Unrelated edits and ripple shifts still hit (`"cached": true`, ~10 ms); the
 key ignores the renderer (GPU and ffmpeg agree on plain frames); a forced
 `VE_RENDERER` skips the cache. Render-ahead (`ui.cache_hint` /
 `ui.cache_status` + `ui.cache` event, UI-only so behind `ui-api`): one
-worker thread walks frames an edit changed first, then 10 s behind / 60 s
-ahead of the playhead, then the rest, on its own warm decoders (GPU path),
+worker thread walks frames an edit changed first, then 60 s ahead of the
+playhead, then 10 s behind, then the rest, on its own warm decoders (GPU path),
 pausing while `render.frame` calls come in or a job runs. Project effect
 registries are kept per project (`Registry::for_project`, rechecked by file
 listing at most every 200 ms; `fx.define` forgets it), since reloading them
@@ -246,8 +246,10 @@ Render-ahead order: every frame is keyed from one plan of the timeline
 (`compose::frame_keys`), so each pass sees the whole timeline; frames whose
 content changed since the last pass and are not cached form an edit, kept on
 a stack (newest first, up to 32). The worker renders the newest edit's frames
-(nearest the playhead first) and its chunks, then older edits, then 10 s
-behind / 60 s ahead of the playhead and those chunks, then the rest. A new
+(from the playhead forward, then behind) and its chunks, then older edits,
+then 60 s ahead of the playhead chunk by chunk (each chunk's frames, then
+that chunk, so the next one playback needs is ready first), then 10 s
+behind, then the rest (ahead first). A new
 edit makes the pass stale, so it jumps to the front. Open playback work is
 listed under "TODO" in ARCHITECTURE.md.
 GPU compositor spike (`ve-render::gpu`, `::compose`; the Phase 0 gate):

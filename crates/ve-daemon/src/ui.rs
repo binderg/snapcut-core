@@ -153,7 +153,8 @@ use crate::render::Format;
 use crate::{Session, Snapshot};
 use ve_model::time::Q;
 
-/// Seconds around the playhead rendered first (behind, ahead); the rest of the timeline follows.
+/// Seconds around the playhead rendered first (behind, ahead): ahead first,
+/// chunk by chunk, then behind; the rest of the timeline follows.
 const WINDOW: (i64, i64) = (10, 60);
 /// A client asked for a frame this recently: wait, scrubbing comes first.
 const YIELD_MS: u64 = 300;
@@ -327,7 +328,8 @@ fn worker(s: &Arc<Session>) {
 
         let at = pass.hint.at.clamp(0, (total - 1).max(0));
         let fps = pass.snap.timeline.output_rate().as_ratio().ceil().to_integer().max(1);
-        let near = |f: &i64| if *f >= at { f - at } else { (at - f) * 3 };
+        // Everything from the playhead forward, nearest first, then what is behind it.
+        let near = |f: &i64| if *f >= at { (0, f - at) } else { (1, at - f) };
         publish(s, &pass);
         let mut finished = true;
         // 1. Edits, newest first: their frames nearest the playhead first, then their chunks.
@@ -339,15 +341,30 @@ fn worker(s: &Arc<Session>) {
                 break;
             }
         }
-        // 2. Around the playhead, ahead first, then its chunks; 3. everything else.
+        // 2. Ahead of the playhead one chunk at a time (its frames, then the
+        //    chunk), so the chunk playback needs next is ready soonest;
+        // 3. behind the playhead; 4. everything else, ahead first.
         if finished {
-            let window = (at - WINDOW.0 * fps).max(0)..(at + WINDOW.1 * fps).min(total);
-            let mut around: Vec<i64> = window.clone().filter(|&f| !pass.cached[f as usize]).collect();
-            around.sort_by_key(near);
-            let ahead: Vec<i64> = (at..window.end).collect();
+            let end = (at + WINDOW.1 * fps).min(total);
+            let mut from = match pass.hint.chunk {
+                Some(len) => at / len * len,
+                None => at,
+            };
+            while finished && from < end {
+                let to = match pass.hint.chunk {
+                    Some(len) => (from + len).min(total),
+                    None => end,
+                };
+                let frames: Vec<i64> = (from..to).collect();
+                finished = render(s, &mut pass, &frames, gpu, &mut pool) && chunks(s, &pass, &frames);
+                from = to;
+            }
+        }
+        if finished {
+            let behind: Vec<i64> = ((at - WINDOW.0 * fps).max(0)..at).rev().collect();
             let mut rest: Vec<i64> = (0..total).filter(|&f| !pass.cached[f as usize]).collect();
             rest.sort_by_key(near);
-            finished = render(s, &mut pass, &around, gpu, &mut pool) && chunks(s, &pass, &ahead) && render(s, &mut pass, &rest, gpu, &mut pool);
+            finished = render(s, &mut pass, &behind, gpu, &mut pool) && render(s, &mut pass, &rest, gpu, &mut pool);
         }
         if finished {
             // All done: sleep until the hint or the project changes.
