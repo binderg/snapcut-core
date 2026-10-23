@@ -52,7 +52,7 @@ pub(crate) fn span(tl: &Timeline, from: Option<&String>, to: Option<&String>) ->
     ve_render::span_or_all(tl, from, to).map_err(render_error)
 }
 
-#[derive(Debug, Clone, Copy, Default, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum Format {
     #[default]
@@ -96,29 +96,66 @@ pub struct ImageResult {
     pub data: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<String>,
+    /// Served from the frame cache (nothing in the frame changed since it was drawn).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub cached: bool,
 }
 
-pub fn frame(p: &Snapshot, a: FrameParams) -> Result<ImageResult, RpcError> {
+/// Where a project's cached frames live.
+pub(crate) fn frames_dir(p: &Snapshot) -> PathBuf {
+    p.cache_dir().join("frames")
+}
+
+/// One frame through the frame cache: `(frame, served from the cache)`.
+/// `pool` renders on the GPU with the caller's decoders (background work);
+/// `None` picks the renderer the usual way.
+pub(crate) fn cached_frame(
+    s: &crate::Session,
+    p: &Snapshot,
+    at: ve_model::time::Q,
+    width: u32,
+    format: Format,
+    pool: Option<&mut ve_render::decoder::DecoderPool>,
+) -> Result<(crate::frames::CachedFrame, bool), RpcError> {
     let tl = &p.timeline;
-    let at = parse_time("at", &a.at, tl.output_rate())?;
-    let gpu = match renderer_override() {
-        Some(forced) => forced,
-        None => ve_render::needs_gpu(tl, ve_render::Span::new(at, at + tl.output_rate().as_ratio().recip())).map_err(render_error)?,
-    };
-    let img = if gpu {
-        let fx = ve_render::fx::Registry::for_project(Some(p.root()));
-        ve_render::compose::frame(tl, at, a.width, a.format.into(), &fx)
-    } else {
-        ve_render::frame(tl, at, a.width, a.format.into(), &work_dir(p))
+    let fx = ve_render::fx::Registry::for_project(Some(p.root()));
+    let forced = renderer_override();
+    // A forced backend is for tests and debugging: skip the cache.
+    let key = if forced.is_none() { Some(ve_render::compose::frame_key(tl, at, width, format.into(), &fx).map_err(render_error)?) } else { None };
+    let dir = frames_dir(p);
+    if let Some(hit) = key.as_deref().and_then(|k| s.frames.get(&dir, k)) {
+        return Ok((hit, true));
+    }
+    let img = match (pool, forced) {
+        (Some(pool), None) => ve_render::compose::frame_in(tl, at, width, format.into(), &fx, pool),
+        _ => {
+            let gpu = match forced {
+                Some(f) => f,
+                None => ve_render::needs_gpu(tl, ve_render::Span::new(at, at + tl.output_rate().as_ratio().recip())).map_err(render_error)?,
+            };
+            if gpu { ve_render::compose::frame(tl, at, width, format.into(), &fx) } else { ve_render::frame(tl, at, width, format.into(), &work_dir(p)) }
+        }
     }
     .map_err(render_error)?;
+    let f = crate::frames::CachedFrame { width: img.width, height: img.height, warnings: img.warnings, bytes: std::sync::Arc::new(img.bytes) };
+    if let Some(k) = &key {
+        s.frames.put(&dir, k, f.clone());
+    }
+    Ok((f, false))
+}
+
+pub fn frame(s: &crate::Session, p: &Snapshot, a: FrameParams) -> Result<ImageResult, RpcError> {
+    let tl = &p.timeline;
+    let at = parse_time("at", &a.at, tl.output_rate())?;
+    let (f, cached) = cached_frame(s, p, at, a.width, a.format, None)?;
     Ok(ImageResult {
         at: tc(at, tl.output_rate()),
-        width: img.width,
-        height: img.height,
+        width: f.width,
+        height: f.height,
         mime: ImageFormat::from(a.format).mime().into(),
-        data: base64::engine::general_purpose::STANDARD.encode(img.bytes),
-        warnings: img.warnings,
+        data: base64::engine::general_purpose::STANDARD.encode(f.bytes.as_slice()),
+        warnings: f.warnings,
+        cached,
     })
 }
 
@@ -190,6 +227,7 @@ pub fn contact_sheet(p: &Snapshot, a: SheetParams) -> Result<SheetResult, RpcErr
             mime: ImageFormat::from(a.format).mime().into(),
             data: base64::engine::general_purpose::STANDARD.encode(s.image.bytes),
             warnings: s.image.warnings,
+            cached: false,
         },
         columns: s.columns,
         rows: s.rows,

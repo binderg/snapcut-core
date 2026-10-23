@@ -1,6 +1,6 @@
 ---
 name: ve-ui
-description: ui.* methods for human editors (media panel thumbnails, drag-to-push moves). Agents editing video do not need this; use ve-core.
+description: ui.* methods for human editors (media panel thumbnails, drag-to-push moves, preview render-ahead). Agents editing video do not need this; use ve-core.
 ---
 
 # ve-ui
@@ -47,3 +47,36 @@ Content on the destination tracks from `to` moves right just far enough for
 the clip to fit (not at all if it fits in a gap), and linked clips on other
 tracks move with it, so sound stays in sync. A clip under `to` is cut there.
 Agents use `edit.move` (overwrite, or `reorder` to swap places) instead.
+
+## `ui.cache_hint`
+
+Tell the engine where the preview's playhead is and what size it draws, so
+it renders frames ahead into the frame cache (see `render.frame` in
+ve-core) while the editor is idle. Send it when the playhead stops or jumps
+and when the preview size changes; it is cheap to repeat.
+
+| Param | Default | |
+| --- | --- | --- |
+| `at` | required | The playhead |
+| `width` | required | The `width` the preview passes to `render.frame` |
+| `format` | `jpeg` | The `format` it passes |
+| `active` | true | False stops rendering ahead (preview hidden) |
+
+Order: frames an edit just changed (a new transition or effect) nearest the
+playhead first, then the 10 s behind / 60 s ahead of the playhead, ahead
+first, then the rest of the timeline. It pauses while `render.frame` calls
+are coming in (scrubbing) and while a job runs. A new hint or a new
+revision restarts the walk; frames already cached are skipped. Returns the
+current [status](#uicache_status).
+
+## `ui.cache_status`
+
+No params. What is cached at the hinted size:
+
+```json
+{"revision": 12, "width": 640, "frames": 2400, "cached": [[0, 310], [900, 1200]], "pending": 1790}
+```
+
+`cached` holds `[from, to)` frame ranges, for a render bar on the ruler.
+The same object arrives as the `ui.cache` notification (after
+`events.subscribe`) while rendering ahead, at most a few times a second.

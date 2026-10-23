@@ -235,6 +235,14 @@ fn render_rgba(ctx: &mut Ctx<'_>, p: &Plan, at: Q) -> Result<Vec<u8>> {
 /// down to its frame), `width` pixels wide, with clip effects and
 /// transitions from `fx`.
 pub fn frame(tl: &Timeline, at: Q, width: u32, format: ImageFormat, fx: &Registry) -> Result<Image> {
+    // Single frames share the process-wide warm decoders (scrubbing).
+    let mut pool = decoder::shared()?;
+    frame_in(tl, at, width, format, fx, &mut pool)
+}
+
+/// [`frame`] with the caller's decoders: a background walk over many frames
+/// in order keeps its own, so it never fights scrubbing over the shared ones.
+pub fn frame_in(tl: &Timeline, at: Q, width: u32, format: ImageFormat, fx: &Registry, pool: &mut DecoderPool) -> Result<Image> {
     let canvas = project_canvas(tl).scaled_to_width(width);
     let r = canvas.rate.as_ratio();
     let at = (at * r).floor() / r;
@@ -243,11 +251,8 @@ pub fn frame(tl: &Timeline, at: Q, width: u32, format: ImageFormat, fx: &Registr
         return Err(RenderError::Invalid(format!("no frame there: the timeline has {} frames", (end * r).to_integer())));
     }
     let p = plan(tl, Span::new(at, at + Q::from_integer(1) / r))?;
-    // Single frames share the process-wide warm decoders (scrubbing).
     let sources = sources(tl);
-    let mut pool = decoder::shared()?;
-    let rgba = render_rgba(&mut Ctx { sources: &sources, pool: &mut pool, canvas: &canvas, fx }, &p, at)?;
-    drop(pool);
+    let rgba = render_rgba(&mut Ctx { sources: &sources, pool, canvas: &canvas, fx }, &p, at)?;
     let rgb = image::RgbImage::from_fn(canvas.width, canvas.height, |x, y| {
         let i = ((y * canvas.width + x) * 4) as usize;
         image::Rgb([rgba[i], rgba[i + 1], rgba[i + 2]])
@@ -261,6 +266,79 @@ pub fn frame(tl: &Timeline, at: Q, width: u32, format: ImageFormat, fx: &Registr
     rgb.write_to(&mut cursor, fmt).map_err(|e| RenderError::Io(format!("encoding the frame: {e}")))?;
     let warnings = p.warnings.into_iter().filter(|w| !w.contains(GPU_ONLY)).collect();
     Ok(Image { bytes, width: canvas.width, height: canvas.height, warnings })
+}
+
+/// Bump when anything about how a frame is drawn changes, so cached frames
+/// from an older engine are not reused.
+pub const FRAME_KEY_VERSION: u32 = 1;
+
+/// A hash of everything that decides the pixels of the frame at `at`, for
+/// the frame cache: the canvas, and per video track the source file (by
+/// content hash when the asset has one), the source frame shown, the
+/// transform and effect values at that frame and any transition with its
+/// progress. Edits that do not change a frame leave its key alone, so a
+/// ripple that only shifts later frames in time keeps them cached. The key
+/// does not say which renderer drew the frame: the GPU compositor and the
+/// ffmpeg path agree exactly on plain frames, and only the GPU draws the rest.
+pub fn frame_key(tl: &Timeline, at: Q, width: u32, format: ImageFormat, fx: &Registry) -> Result<String> {
+    let canvas = project_canvas(tl).scaled_to_width(width);
+    let r = canvas.rate.as_ratio();
+    let at = (at * r).floor() / r;
+    let end = timeline_end(tl);
+    if at < Q::from_integer(0) || at >= end {
+        return Err(RenderError::Invalid(format!("no frame there: the timeline has {} frames", (end * r).to_integer())));
+    }
+    let p = plan(tl, Span::new(at, at + Q::from_integer(1) / r))?;
+    let files: HashMap<PathBuf, String> = tl
+        .metadata
+        .ve
+        .assets
+        .iter()
+        .filter_map(|a| Some((local_path(&a.url)?, a.hash.clone()?)))
+        .collect();
+    let mut h = blake3::Hasher::new();
+    let mut put = |s: &str| {
+        h.update(s.as_bytes());
+        h.update(&[0]);
+    };
+    put(&format!("v{FRAME_KEY_VERSION} {}x{} {:?} {:?}", canvas.width, canvas.height, canvas.fit, format));
+    let layer = |put: &mut dyn FnMut(&str), seg: &Segment| -> Result<()> {
+        let file = match files.get(&seg.path) {
+            Some(hash) => hash.clone(),
+            None => {
+                let m = std::fs::metadata(&seg.path).ok();
+                let modified = m.as_ref().and_then(|m| m.modified().ok()).and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok());
+                format!("{} {:?} {:?}", seg.path.display(), m.map(|m| m.len()), modified)
+            }
+        };
+        put(&format!("file {file} frame {} rate {}", source_frame(seg, at), seg.media_rate));
+        if let Some(t) = transform_at(seg, at) {
+            put(&serde_json::to_string(&t).unwrap_or_default());
+        }
+        for pass in passes(seg, at, fx)? {
+            put(&format!("fx {} {:x} t={} p={}", pass.fx.reference(), pass.fx.hash, pass.time, pass.progress));
+            h_bytes(put, &pass.params);
+        }
+        Ok(())
+    };
+    for (k, track) in p.video.iter().enumerate() {
+        put(&format!("track {k}"));
+        if let Some(tr) = track.transitions.iter().find(|t| t.start <= at && at < t.end) {
+            let f = fx.require(&tr.meta.transition, Kind::Transition).map_err(|e| RenderError::Invalid(format!("{}: {e}", tr.meta.id)))?;
+            let local = at - tr.start;
+            put(&format!("transition {} {:x} {} {}", f.reference(), f.hash, local, tr.end - tr.start));
+            h_bytes(&mut put, &f.pack(&tr.meta.params, &indexmap::IndexMap::new(), local));
+            layer(&mut put, &tr.outgoing)?;
+            layer(&mut put, &tr.incoming)?;
+        } else if let Some(seg) = track.segments.iter().find(|s| s.start <= at && at < s.end) {
+            layer(&mut put, seg)?;
+        }
+    }
+    Ok(h.finalize().to_hex().to_string())
+}
+
+fn h_bytes(put: &mut dyn FnMut(&str), b: &[u8]) {
+    put(&b.iter().map(|x| format!("{x:02x}")).collect::<String>());
 }
 
 /// [`crate::encode`] through the GPU compositor: every frame of `span` is

@@ -3291,6 +3291,7 @@ dependencies = [
 name = "ve-render"
 version = "0.1.0"
 dependencies = [
+ "blake3",
  "ffmpeg-sidecar",
  "image",
  "image-compare",

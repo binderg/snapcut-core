@@ -13,6 +13,7 @@ pub mod client;
 pub mod commit;
 pub mod edit;
 pub mod events;
+pub mod frames;
 pub mod fx;
 pub mod jobs;
 pub mod measure;
@@ -42,6 +43,11 @@ pub struct Session {
     project: Mutex<Option<OpenProject>>,
     pub events: events::Events,
     pub jobs: jobs::Jobs,
+    /// Rendered frames by content key (`render.frame`).
+    pub frames: frames::FrameCache,
+    /// Background render-ahead for an editor's preview (`ui.cache_hint`).
+    #[cfg(feature = "ui-api")]
+    pub(crate) prefetch: ui::Prefetch,
     /// Set when this session is served by a daemon (`server::run`).
     daemon: OnceLock<DaemonInfo>,
     /// Signalled by `daemon.stop`.
@@ -54,6 +60,9 @@ impl Default for Session {
         Self {
             project: Mutex::default(),
             jobs: jobs::Jobs::new(events.clone()),
+            frames: frames::FrameCache::default(),
+            #[cfg(feature = "ui-api")]
+            prefetch: ui::Prefetch::default(),
             events,
             daemon: OnceLock::new(),
             shutdown: tokio::sync::Notify::new(),
@@ -228,6 +237,13 @@ pub fn registry(session: Arc<Session>) -> Arc<Registry> {
     #[cfg(feature = "ui-api")]
     on_project!("ui.thumbnail", "A poster frame (JPEG, base64) of a video asset, for media panels", false, ui::thumbnail);
     #[cfg(feature = "ui-api")]
+    {
+        let s = session.clone();
+        r.method("ui.cache_hint", "Preview render-ahead: cache frames around the playhead (changed frames first) in the background", false, move |p: ui::CacheHintParams| ui::cache_hint(&s, p));
+        let s = session.clone();
+        r.method("ui.cache_status", "Which timeline frames are cached at the hinted preview size", false, move |p: ui::CacheStatusParams| ui::cache_status(&s, p));
+    }
+    #[cfg(feature = "ui-api")]
     on_project!("ui.move_push", "Timeline drag: move a clip and push what is in the way just far enough", true, ui::move_push);
 
     on_project!("edit.insert", "Put an asset on the timeline (video + linked audio); insert or overwrite", true, edit::insert);
@@ -286,7 +302,8 @@ pub fn registry(session: Arc<Session>) -> Arc<Registry> {
 
     let s = session.clone();
     r.method("render.frame", "One frame of the timeline as JPEG/PNG (base64)", false, move |p: render::FrameParams| {
-        render::frame(&s.snapshot()?, p)
+        s.frames.touch_interactive();
+        render::frame(&s, &s.snapshot()?, p)
     });
     long!("render.contact_sheet", "A grid of evenly spaced frames from a range (base64 image)", false, render::SheetParams,
         |_: &Session, snap: &Snapshot, p| render::contact_sheet(snap, p));

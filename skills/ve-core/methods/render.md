@@ -23,10 +23,15 @@ media is not a warning: the call fails with `render_failure` naming the clip.
 {"at": "00:00:01:00", "width": 640, "height": 360, "mime": "image/jpeg", "data": "<base64>", "warnings": []}
 ```
 
-Show it with `<img src="data:image/jpeg;base64,...">`. Each call starts
-ffmpeg: about 250 ms per frame on small media, more for 4K or long-GOP phone
-footage far from a keyframe. Fine for a viewer that updates when scrubbing
-pauses or a few times a second, not for playback. There is no frame cache yet.
+Show it with `<img src="data:image/jpeg;base64,...">`.
+
+**Frame cache.** Frames are kept by what is in them (source frame, size,
+transform, effect and transition values at that frame), not by revision, in
+memory and on disk in the engine's cache folder. Asking again for a frame
+nothing changed answers from the cache (`"cached": true`, a few ms), also
+after unrelated edits and after a ripple that only moved it in time. A miss
+renders it: about 100 to 250 ms on small media, more for 4K or long-GOP phone
+footage far from a keyframe.
 
 ## `render.contact_sheet`
 

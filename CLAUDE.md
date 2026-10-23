@@ -220,6 +220,19 @@ opacity in the fragment), and the default placement stays 0-diff vs ffmpeg.
 Decode size follows the largest scale the clip reaches, capped at the
 source size. `needs_gpu` counts transforms; the ffmpeg path warns and draws
 the clip fitted. Rotated edges are not anti-aliased yet.
+Frame cache (`ve-daemon::frames`, `ve_render::compose::frame_key`):
+`render.frame` stores frames by a blake3 key of what decides their pixels
+(canvas, and per layer the source file hash, source frame, transform,
+effect/transition values at that frame), not by revision, in a 256 MB
+memory LRU and on disk in `<project cache>/frames/` (2 GB, oldest pruned).
+Unrelated edits and ripple shifts still hit (`"cached": true`, ~10 ms); the
+key ignores the renderer (GPU and ffmpeg agree on plain frames); a forced
+`VE_RENDERER` skips the cache. Render-ahead (`ui.cache_hint` /
+`ui.cache_status` + `ui.cache` event, UI-only so behind `ui-api`): one
+worker thread walks frames an edit changed first, then 10 s behind / 60 s
+ahead of the playhead, then the rest, on its own warm decoders (GPU path),
+pausing while `render.frame` calls come in or a job runs. Range previews
+(playback chunks) are not cached by content yet.
 GPU compositor spike (`ve-render::gpu`, `::compose`; the Phase 0 gate):
 wgpu 30 device created once per process (prefers the discrete GPU, falls
 back to WARP/llvmpipe); layers upload as `Rgba8UnormSrgb`, blend

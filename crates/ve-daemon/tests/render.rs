@@ -105,3 +105,56 @@ async fn analyze_cut_and_look() {
     assert_eq!(resp["error"]["code"], -31001, "{resp}");
     assert!(resp["error"]["message"].as_str().unwrap().contains("missing"), "{resp}");
 }
+
+/// `render.frame` keeps frames by what is in them: an unrelated edit or a
+/// ripple that only shifts a frame in time still hits; changing the frame misses.
+/// `ui.cache_hint` then renders the rest of the timeline in the background.
+#[tokio::test]
+async fn frame_cache_survives_unrelated_edits() {
+    // A fresh project path each run: cached frames live in the OS cache by project path.
+    let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+    let dir = scratch(&format!("frame-cache-{stamp}"));
+    make_talk(&dir.join("talk.mp4"));
+    let r = ve_daemon::build_registry();
+    ok(&r, "project.init", json!({"path": dir.join("edit"), "fps": "25", "width": 160, "height": 120})).await;
+    let asset = ok(&r, "media.import", json!({"paths": [dir.join("talk.mp4")], "base_rev": 0})).await["assets"][0]["id"].clone();
+    let ins = ok(&r, "edit.insert", json!({"asset": asset, "base_rev": 1})).await;
+    let video = ins["created"].as_array().unwrap().iter().find(|c| c["track"] == "V1").unwrap()["id"].clone();
+    let frame = |at: &str| json!({"at": at, "width": 160});
+    let cached = |v: &Value| v["cached"].as_bool().unwrap_or(false);
+
+    let first = ok(&r, "render.frame", frame("f80")).await;
+    assert!(!cached(&first));
+    let again = ok(&r, "render.frame", frame("f80")).await;
+    assert!(cached(&again));
+    assert_eq!(first["data"], again["data"]);
+
+    // Volume does not change the picture.
+    ok(&r, "edit.set_volume", json!({"clip": video, "db": -6, "base_rev": 2})).await;
+    assert!(cached(&ok(&r, "render.frame", frame("f80")).await));
+
+    // Cutting the first second moves source frame 80 to timeline frame 55: still cached.
+    ok(&r, "edit.ripple_delete", json!({"ranges": [{"from": "f0", "to": "f25"}], "base_rev": 3})).await;
+    let shifted = ok(&r, "render.frame", frame("f55")).await;
+    assert!(cached(&shifted));
+    assert_eq!(shifted["data"], first["data"]);
+
+    // A transform changes it.
+    let clip = ok(&r, "project.summary", json!({})).await["text"].as_str().unwrap().lines().find(|l| l.contains("clip_") && l.contains("talk")).unwrap().split_whitespace().find(|w| w.starts_with("clip_")).unwrap().to_owned();
+    ok(&r, "edit.set_transform", json!({"clip": clip, "scale": 0.5, "base_rev": 4})).await;
+    assert!(!cached(&ok(&r, "render.frame", frame("f55")).await));
+
+    // Render-ahead fills in the rest.
+    ok(&r, "ui.cache_hint", json!({"at": "f0", "width": 160})).await;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+    loop {
+        let st = ok(&r, "ui.cache_status", json!({})).await;
+        let total = st["frames"].as_i64().unwrap_or(0);
+        if st["revision"] == 5 && st["pending"] == 0 && total > 0 && st["cached"] == json!([[0, total]]) {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "render-ahead did not finish: {st}");
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
+    assert!(cached(&ok(&r, "render.frame", frame("f10")).await));
+}
