@@ -675,6 +675,41 @@ fn builtins() -> &'static [Arc<Fx>] {
     })
 }
 
+/// How long a kept registry is trusted before `effects/` is listed again.
+const RECHECK: std::time::Duration = std::time::Duration::from_millis(200);
+
+struct Loaded {
+    signature: u64,
+    checked: std::time::Instant,
+    registry: Registry,
+}
+
+fn loaded() -> &'static std::sync::Mutex<std::collections::HashMap<PathBuf, Loaded>> {
+    static LOADED: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<PathBuf, Loaded>>> = std::sync::OnceLock::new();
+    LOADED.get_or_init(Default::default)
+}
+
+/// A hash of the names, sizes and modification times of everything one
+/// level inside each effect folder: changes when any effect file does.
+fn signature(effects: &Path) -> u64 {
+    let mut h = DefaultHasher::new();
+    let mut dirs: Vec<std::fs::DirEntry> = std::fs::read_dir(effects).into_iter().flatten().flatten().collect();
+    dirs.sort_by_key(std::fs::DirEntry::file_name);
+    for d in dirs {
+        d.file_name().hash(&mut h);
+        let mut files: Vec<std::fs::DirEntry> = std::fs::read_dir(d.path()).into_iter().flatten().flatten().collect();
+        files.sort_by_key(std::fs::DirEntry::file_name);
+        for f in files {
+            f.file_name().hash(&mut h);
+            if let Ok(m) = f.metadata() {
+                m.len().hash(&mut h);
+                m.modified().ok().hash(&mut h);
+            }
+        }
+    }
+    h.finish()
+}
+
 /// Read `effect.json`, its code and its images (every PNG or JPEG next to it) from a folder.
 pub fn load_dir(dir: &Path, origin: Origin) -> Result<Fx, FxError> {
     let mp = dir.join("effect.json");
@@ -701,9 +736,44 @@ pub fn read_images(dir: &Path) -> Result<BTreeMap<String, Arc<FxImage>>, FxError
 
 impl Registry {
     /// Built-ins plus `<project>/effects/*/effect.json`.
+    ///
+    /// Loading validates every project effect (naga) and decodes its images,
+    /// which is far too slow to do per frame, so the result is kept per
+    /// project and reused while no file under `effects/` changed (names,
+    /// sizes and modification times; one directory listing per effect).
     pub fn for_project(root: Option<&Path>) -> Self {
+        let Some(root) = root else { return Self { list: builtins().to_vec(), problems: Vec::new() } };
+        let loaded = loaded();
+        if let Some(e) = loaded.lock().unwrap_or_else(|e| e.into_inner()).get(root)
+            && e.checked.elapsed() < RECHECK
+        {
+            return e.registry.clone();
+        }
+        let sig = signature(&root.join("effects"));
+        {
+            let mut m = loaded.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(e) = m.get_mut(root)
+                && e.signature == sig
+            {
+                e.checked = std::time::Instant::now();
+                return e.registry.clone();
+            }
+        }
+        let r = Self::load(root);
+        let entry = Loaded { signature: sig, checked: std::time::Instant::now(), registry: r.clone() };
+        loaded.lock().unwrap_or_else(|e| e.into_inner()).insert(root.to_owned(), entry);
+        r
+    }
+
+    /// Drop the kept registry of a project, so the next [`Self::for_project`]
+    /// reads `effects/` again (after writing an effect there).
+    pub fn forget(root: &Path) {
+        loaded().lock().unwrap_or_else(|e| e.into_inner()).remove(root);
+    }
+
+    /// [`Self::for_project`] without the reuse: read and validate everything.
+    pub fn load(root: &Path) -> Self {
         let mut r = Self { list: builtins().to_vec(), problems: Vec::new() };
-        let Some(root) = root else { return r };
         let Ok(entries) = std::fs::read_dir(root.join("effects")) else { return r };
         let mut dirs: Vec<PathBuf> = entries.flatten().map(|e| e.path()).filter(|p| p.join("effect.json").is_file()).collect();
         dirs.sort();
@@ -782,6 +852,30 @@ mod tests {
         assert!(r.get("core.color/desaturate@1").is_some());
         assert!(r.get("core.color/desaturate@2").is_none());
         assert!(r.require("core.transition/wipe", Kind::Effect).is_err());
+    }
+
+    #[test]
+    fn project_registry_is_kept_until_effects_change() {
+        let root = std::env::temp_dir().join(format!("ve-fx-reuse-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("effects")).unwrap();
+        assert_eq!(Registry::for_project(Some(&root)).list.len(), 9);
+        // A new effect folder shows up once the recheck window has passed, or at once after `forget`.
+        let dir = root.join("effects").join("tint2");
+        std::fs::create_dir_all(&dir).unwrap();
+        let src = "fn effect(uv: vec2<f32>) -> vec4<f32> { return src(uv); }";
+        let m = serde_json::json!({"id": "project.tint2", "version": "1.0.0", "kind": "effect", "name": "Tint 2", "shader": "effect.wgsl"});
+        std::fs::write(dir.join("effect.json"), m.to_string()).unwrap();
+        std::fs::write(dir.join("effect.wgsl"), src).unwrap();
+        Registry::forget(&root);
+        let r = Registry::for_project(Some(&root));
+        assert!(r.get("project.tint2").is_some(), "{:?}", r.problems);
+        // Changing a file is noticed without `forget`, after the recheck window.
+        std::fs::write(dir.join("effect.wgsl"), format!("{src}\n")).unwrap();
+        std::thread::sleep(RECHECK + std::time::Duration::from_millis(50));
+        let again = Registry::for_project(Some(&root));
+        assert_ne!(again.get("project.tint2").unwrap().hash, r.get("project.tint2").unwrap().hash);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

@@ -137,6 +137,7 @@ pub fn define(p: &mut OpenProject, a: DefineParams) -> Result<Defined, RpcError>
         for (name, bytes) in &raw {
             std::fs::write(dir.join(name), bytes).map_err(|e| internal(e.to_string()))?;
         }
+        Registry::forget(p.root());
     }
     Ok(Defined { effect: info(&fx), path: (!a.dry_run).then(|| dir.display().to_string()), tested_on: gpu.adapter.clone() })
 }
