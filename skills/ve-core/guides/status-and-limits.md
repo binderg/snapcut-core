@@ -10,7 +10,6 @@ plan around it. When something here gets built, this file changes.
 | **Imports as jobs** | `media.import` of big files still holds the project until done (renders, analysis and measurements run as jobs: [../methods/jobs.md](../methods/jobs.md)) |
 | **Video playback stream** / serving media over HTTP | `render.frame` for stills; `render.range_preview` MP4s; or a desktop shell plays source files directly |
 | **Track mute, hide, lock** | Remove clips or move them to another track |
-| **Effects and transitions in contact sheets** | Frames, range previews and exports use the GPU automatically when the range has effects or transitions; `render.contact_sheet` still shows plain cuts and unprocessed clips, with a warning. Use `render.frame` at the times you want to see |
 | **Titles, text, shapes, masks, LUTs, audio effects; `wasm` and `ofx` effect runtimes** | Write a `wgsl` effect ([writing-effects.md](writing-effects.md)); titles will come as generator plugins |
 | **Picture transforms** (scale, position, crop per clip) | Sources are fit to the project size (`master`) or cropped (vertical preset) only |
 | **Video measurements** (brightness, saturation, black or frozen frames, blur) | Not available; only audio measurements |

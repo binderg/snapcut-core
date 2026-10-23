@@ -262,7 +262,8 @@ codec noise of the ffmpeg path, effect+transition golden frames, colours,
 render errors, cancel mid-export; `tests/jobs.rs` runs it as a job. Speed
 (`bench_export`, 10-min 1080p 29.97, 160 cuts, x264 medium, dev build):
 ffmpeg 86 s (5.5 ms/frame), GPU 396 s (25.4 ms/frame), x264 alone 77 s.
-Contact sheets still warn (ffmpeg only). In-process decoding (`ffmpeg-the-third`) is
+Contact sheets use the GPU too when their range needs it
+(`compose::contact_sheet`, own decoders, same layout via `sheet_layout`). In-process decoding (`ffmpeg-the-third`) is
 planned for fast random scrubbing (ARCHITECTURE.md, "Decoding for the
 compositor"); it needs LLVM and an LGPL shared FFmpeg build, decide first.
 No CI yet; the Python check runs by hand.

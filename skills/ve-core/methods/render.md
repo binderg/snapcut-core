@@ -1,15 +1,22 @@
 # render.*
 
-Renders read the project as it is; none of them change it. They run ffmpeg
-with one filter graph compiled from the timeline, so a frame, a preview and
-an export of the same time show the same picture. Frame-exact: a cut at a
-frame boundary lands on that frame.
+Renders read the project as it is; none of them change it. Every render
+shows the finished picture: all video tracks stacked, speed changes, clip
+effects and transitions, exactly as the export will look. A frame, a contact
+sheet, a preview and an export of the same time show the same picture.
+Frame-exact: a cut at a frame boundary lands on that frame. No UI is needed;
+this is how an agent sees what is "on screen".
+
+There are two renderers and the engine picks one per call. A frame or range
+with any effect or transition goes through the GPU compositor; everything
+else through one ffmpeg filter graph (faster, and the same pixels where both
+apply). Clients don't choose.
 
 Ranges are `from` (default timeline start) and `to` (exclusive, default
 timeline end). Results carry `warnings` for things rendered differently than
-the document says, e.g. "2 transition(s) render as cuts until the Phase 2
-compositor", or a clip on an audio track whose media has no sound. Missing
-media is not a warning: the call fails with `render_failure` naming the clip.
+the document says, e.g. a clip on an audio track whose media has no sound.
+Missing media is not a warning: the call fails with `render_failure` naming
+the clip. A missing or broken effect fails the same way.
 
 ## `render.frame`
 
@@ -23,10 +30,13 @@ media is not a warning: the call fails with `render_failure` naming the clip.
 {"at": "00:00:01:00", "width": 640, "height": 360, "mime": "image/jpeg", "data": "<base64>", "warnings": []}
 ```
 
-Show it with `<img src="data:image/jpeg;base64,...">`. Each call starts
-ffmpeg: about 250 ms per frame on small media, more for 4K or long-GOP phone
-footage far from a keyframe. Fine for a viewer that updates when scrubbing
-pauses or a few times a second, not for playback. There is no frame cache yet.
+Show it with `<img src="data:image/jpeg;base64,...">`. Without effects,
+each call starts ffmpeg: about 250 ms per frame on small media, more for 4K
+or long-GOP phone footage far from a keyframe. With effects or transitions
+the GPU renders it; the first such frame in a daemon takes a few seconds (GPU
+setup), later ones reuse warm decoders. Fine for a viewer that updates when
+scrubbing pauses or a few times a second, not for playback. There is no frame
+cache yet.
 
 ## `render.contact_sheet`
 
@@ -39,8 +49,10 @@ pauses or a few times a second, not for playback. There is no frame cache yet.
 | `format` | `jpeg` | |
 
 Result: one image (`data`, `mime`, `width`, `height`) plus `columns`, `rows`
-and `times` (the timecode of each cell, row by row). Good for filmstrip
-thumbnails on a timeline: one call, then slice the grid.
+and `times` (the timecode of each cell, row by row). Each cell is the same
+picture `render.frame` gives at that time, effects and transitions included
+(a range with any renders every cell on the GPU, which is slower). Good for
+filmstrip thumbnails on a timeline: one call, then slice the grid.
 
 ## `render.range_preview`
 

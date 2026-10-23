@@ -241,6 +241,10 @@ async fn export_with_an_effect_runs_on_the_gpu_as_a_job() {
 
     let added = ok(&r, "effect.add", json!({"clip": id, "effect": "core.color/exposure@1", "params": {"stops": 1.5}, "base_rev": base})).await;
     assert_eq!(added["changed"], true);
+    // A contact sheet picks the GPU too, so it shows the effect and has nothing to warn about.
+    let sheet = ok(&r, "render.contact_sheet", json!({"count": 4, "width": 80})).await;
+    assert!(sheet.get("warnings").is_none(), "{sheet}");
+    assert_eq!(sheet["times"].as_array().unwrap().len(), 4);
     let started = ok(&r, "render.export", json!({"preset": "draft-540p", "background": true})).await;
     let j = wait(&r, &started["job_id"]).await;
     assert_eq!(j["state"], "done", "{j}");

@@ -175,9 +175,16 @@ ve frame --at 00:01:12:12 --width 640 -o cut.jpg   # exact frame at a cut
 ve preview --from 00:01:05:00 --to 00:01:20:00 -o check.mp4   # if you can watch video
 ```
 
-Open the images and look. At a cut, check the frame just before and just
-after (`--at` the cut, and one frame earlier). `ve sheet` prints the
-timecode of every cell so you can map what you see back to the timeline.
+Open the images and look. They show the finished picture, as the export
+will: every track, speed changes, effects and transitions. At a cut, check
+the frame just before and just after (`--at` the cut, and one frame
+earlier). `ve sheet` prints the timecode of every cell so you can map what
+you see back to the timeline. For full size or fine detail, ask for a wider
+PNG (a `.png` name gives PNG):
+
+```bash
+ve frame --at 00:01:12:12 --width 1920 -o cut.png
+```
 
 ## 7. Export
 

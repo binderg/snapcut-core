@@ -20,7 +20,7 @@ use crate::ffmpeg::{self, Inputs};
 use crate::fx::{Kind, Registry};
 use crate::gpu::{Gpu, Item, Pass, Picture, Rect};
 use crate::plan::{GPU_ONLY, Plan, Segment, plan, timeline_end};
-use crate::{Canvas, EncodeSettings, Encoded, Fit, Graph, Image, ImageFormat, RenderError, Span, encode_args, local_path, project_canvas};
+use crate::{Canvas, EncodeSettings, Encoded, Fit, Graph, Image, ImageFormat, RenderError, SHEET_PAD, Sheet, SheetLayout, Span, encode_args, local_path, project_canvas, sheet_layout};
 
 type Result<T> = std::result::Result<T, RenderError>;
 
@@ -207,15 +207,54 @@ pub fn frame(tl: &Timeline, at: Q, width: u32, format: ImageFormat, fx: &Registr
         let i = ((y * canvas.width + x) * 4) as usize;
         image::Rgb([rgba[i], rgba[i + 1], rgba[i + 2]])
     });
+    let bytes = encode_image(&rgb, format)?;
+    let warnings = p.warnings.into_iter().filter(|w| !w.contains(GPU_ONLY)).collect();
+    Ok(Image { bytes, width: canvas.width, height: canvas.height, warnings })
+}
+
+fn encode_image(rgb: &image::RgbImage, format: ImageFormat) -> Result<Vec<u8>> {
     let mut bytes = Vec::new();
     let mut cursor = std::io::Cursor::new(&mut bytes);
     let fmt = match format {
         ImageFormat::Png => image::ImageFormat::Png,
         ImageFormat::Jpeg => image::ImageFormat::Jpeg,
     };
-    rgb.write_to(&mut cursor, fmt).map_err(|e| RenderError::Io(format!("encoding the frame: {e}")))?;
-    let warnings = p.warnings.into_iter().filter(|w| !w.contains(GPU_ONLY)).collect();
-    Ok(Image { bytes, width: canvas.width, height: canvas.height, warnings })
+    rgb.write_to(&mut cursor, fmt).map_err(|e| RenderError::Io(format!("encoding the image: {e}")))?;
+    Ok(bytes)
+}
+
+/// [`crate::contact_sheet`] through the GPU compositor: the same cells and
+/// grid, each cell composited like [`frame`], so effects and transitions show.
+pub fn contact_sheet(tl: &Timeline, span: Span, count: u32, columns: Option<u32>, cell_width: u32, format: ImageFormat, fx: &Registry) -> Result<Sheet> {
+    let SheetLayout { canvas, columns: cols, rows, times } = sheet_layout(tl, span, count, columns, cell_width)?;
+    let r = canvas.rate.as_ratio();
+    let pad = SHEET_PAD;
+    let width = cols * canvas.width + (cols - 1) * pad + 2 * pad;
+    let height = rows * canvas.height + (rows - 1) * pad + 2 * pad;
+    let mut sheet = image::RgbImage::new(width, height);
+    let sources = sources(tl);
+    // Cells jump through the range: use own decoders so a sheet does not
+    // restart the shared ones a scrubbing viewer keeps warm.
+    let mut pool = DecoderPool::default();
+    let mut ctx = Ctx { sources: &sources, pool: &mut pool, canvas: &canvas, fx };
+    let mut warnings = Vec::new();
+    for (k, &t) in times.iter().enumerate() {
+        let p = plan(tl, Span::new(t, t + Q::from_integer(1) / r))?;
+        warnings.extend(p.warnings.iter().filter(|w| !w.contains(GPU_ONLY)).cloned());
+        let rgba = render_rgba(&mut ctx, &p, t)?;
+        let (col, row) = (k as u32 % cols, k as u32 / cols);
+        let (x0, y0) = (pad + col * (canvas.width + pad), pad + row * (canvas.height + pad));
+        for y in 0..canvas.height {
+            for x in 0..canvas.width {
+                let i = ((y * canvas.width + x) * 4) as usize;
+                sheet.put_pixel(x0 + x, y0 + y, image::Rgb([rgba[i], rgba[i + 1], rgba[i + 2]]));
+            }
+        }
+    }
+    warnings.sort();
+    warnings.dedup();
+    let bytes = encode_image(&sheet, format)?;
+    Ok(Sheet { image: Image { bytes, width, height, warnings }, columns: cols, rows, times })
 }
 
 /// [`crate::encode`] through the GPU compositor: every frame of `span` is

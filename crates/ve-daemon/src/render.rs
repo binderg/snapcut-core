@@ -180,7 +180,17 @@ pub fn contact_sheet(p: &Snapshot, a: SheetParams) -> Result<SheetResult, RpcErr
     let tl = &p.timeline;
     let rate = tl.output_rate();
     let sp = span(tl, a.from.as_ref(), a.to.as_ref())?;
-    let s = ve_render::contact_sheet(tl, sp, a.count, a.columns, a.width, a.format.into(), &work_dir(p)).map_err(render_error)?;
+    let gpu = match renderer_override() {
+        Some(forced) => forced,
+        None => ve_render::needs_gpu(tl, sp).map_err(render_error)?,
+    };
+    let s = if gpu {
+        let fx = ve_render::fx::Registry::for_project(Some(p.root()));
+        ve_render::compose::contact_sheet(tl, sp, a.count, a.columns, a.width, a.format.into(), &fx)
+    } else {
+        ve_render::contact_sheet(tl, sp, a.count, a.columns, a.width, a.format.into(), &work_dir(p))
+    }
+    .map_err(render_error)?;
     let times: Vec<String> = s.times.iter().map(|&t| tc(t, rate)).collect();
     Ok(SheetResult {
         image: ImageResult {

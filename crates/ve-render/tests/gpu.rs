@@ -345,6 +345,30 @@ fn effects_and_transitions_on_the_timeline() {
     assert!(plain.warnings.iter().any(|w| w.contains("GPU compositor")), "{:?}", plain.warnings);
 }
 
+#[test]
+fn gpu_contact_sheet_shows_effects_and_transitions() {
+    let work = dir("gpu-sheet");
+    let (tl, _, _) = fx_timeline(&work);
+    let span = ve_render::Span::new(fr(30), fr(70));
+    let sheet = ve_render::compose::contact_sheet(&tl, span, 4, Some(2), SIDE, ImageFormat::Png, &fx()).unwrap();
+    assert_eq!(sheet.times, vec![fr(35), fr(45), fr(55), fr(65)]);
+    assert!(sheet.image.warnings.is_empty(), "{:?}", sheet.image.warnings);
+    let img = rgb(&sheet.image.bytes);
+    assert_eq!((img.width(), img.height()), (sheet.image.width, sheet.image.height));
+    // Each cell is the compositor's own frame at that time (4 px border).
+    for (k, &t) in sheet.times.iter().enumerate() {
+        let golden = rgb(&ve_render::compose::frame(&tl, t, SIDE, ImageFormat::Png, &fx()).unwrap().bytes);
+        let (x0, y0) = (4 + (k as u32 % 2) * (SIDE + 4), 4 + (k as u32 / 2) * (SIDE + 4));
+        let cell = image::imageops::crop_imm(&img, x0, y0, SIDE, SIDE).to_image();
+        let (mean, max) = diff(&golden, &cell);
+        assert!(max <= 1, "cell {k}: mean {mean:.3}, max {max}");
+    }
+    // The ffmpeg sheet of the same range says what it leaves out.
+    let plain = ve_render::contact_sheet(&tl, span, 4, Some(2), SIDE, ImageFormat::Png, &work).unwrap();
+    assert!(plain.image.warnings.iter().any(|w| w.contains("GPU compositor")), "{:?}", plain.image.warnings);
+    assert_eq!((plain.image.width, plain.image.height), (sheet.image.width, sheet.image.height));
+}
+
 // ---- GPU export ----
 
 fn settings(tl: &Timeline) -> ve_render::EncodeSettings {

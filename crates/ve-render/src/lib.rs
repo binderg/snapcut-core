@@ -145,8 +145,19 @@ pub struct Sheet {
     pub times: Vec<Q>,
 }
 
-/// `count` evenly spaced frames of `span` in a grid, each `cell_width` wide.
-pub fn contact_sheet(tl: &Timeline, span: Span, count: u32, columns: Option<u32>, cell_width: u32, format: ImageFormat, work: &Path) -> Result<Sheet> {
+/// Black border around and between contact sheet cells, in pixels.
+pub(crate) const SHEET_PAD: u32 = 4;
+
+/// What both renderers draw for a contact sheet: cell size, grid and the
+/// frame time of each cell (row by row).
+pub(crate) struct SheetLayout {
+    pub canvas: Canvas,
+    pub columns: u32,
+    pub rows: u32,
+    pub times: Vec<Q>,
+}
+
+pub(crate) fn sheet_layout(tl: &Timeline, span: Span, count: u32, columns: Option<u32>, cell_width: u32) -> Result<SheetLayout> {
     if !(1..=100).contains(&count) {
         return Err(RenderError::Invalid("count must be 1 to 100".into()));
     }
@@ -162,6 +173,15 @@ pub fn contact_sheet(tl: &Timeline, span: Span, count: u32, columns: Option<u32>
         })
         .collect();
     times.dedup();
+    Ok(SheetLayout { canvas, columns: cols, rows, times })
+}
+
+/// `count` evenly spaced frames of `span` in a grid, each `cell_width` wide.
+/// Through ffmpeg: effects and transitions are not drawn (see
+/// [`compose::contact_sheet`]).
+pub fn contact_sheet(tl: &Timeline, span: Span, count: u32, columns: Option<u32>, cell_width: u32, format: ImageFormat, work: &Path) -> Result<Sheet> {
+    let SheetLayout { canvas, columns: cols, rows, times } = sheet_layout(tl, span, count, columns, cell_width)?;
+    let r = canvas.rate.as_ratio();
     let mut g = Graph::new();
     let mut warnings = Vec::new();
     let mut cells = Vec::new();
@@ -174,7 +194,7 @@ pub fn contact_sheet(tl: &Timeline, span: Span, count: u32, columns: Option<u32>
     warnings.dedup();
     let n = cells.len();
     let ins: String = cells.iter().map(|c| format!("[{c}]")).collect();
-    let pad = 4;
+    let pad = SHEET_PAD;
     g.chain(format!("{ins}concat=n={n}:v=1:a=0,tile=layout={cols}x{rows}:nb_frames={n}:padding={pad}:margin={pad}:color=black[sheet]"));
     let mut out = strings(&["-map", "[sheet]", "-frames:v", "1", "-f", "image2pipe"]);
     out.extend(format.args());
