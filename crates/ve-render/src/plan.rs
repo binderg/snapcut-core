@@ -6,7 +6,7 @@
 
 use std::path::PathBuf;
 
-use ve_model::meta::{EffectInstance, TransitionMeta};
+use ve_model::meta::{EffectInstance, Transform, TransitionMeta};
 use ve_model::otio::{Clip, Composable, MediaReference, Timeline, Track, TrackKind};
 use ve_model::time::{Q, Rate};
 use ve_ops::lane::{Lane, clip_id, clip_speed, media_bounds};
@@ -64,6 +64,8 @@ pub struct Segment {
     pub clip_duration: Q,
     /// The clip's effect stack (`metadata.ve.effects`).
     pub effects: Vec<EffectInstance>,
+    /// Placement on the canvas (`metadata.ve.clip.transform`), if not the default.
+    pub transform: Option<Transform>,
 }
 
 impl Segment {
@@ -103,7 +105,7 @@ pub struct Plan {
     pub video: Vec<TrackPlan>,
     pub audio: Vec<TrackPlan>,
     pub warnings: Vec<String>,
-    /// Transitions and effects in range: what only the GPU compositor renders.
+    /// Transitions, effects and transforms in range: what only the GPU compositor renders.
     pub gpu_features: usize,
 }
 
@@ -130,6 +132,7 @@ pub fn plan(tl: &Timeline, span: Span) -> Result<Plan, RenderError> {
     let mut out = Plan { span, video: Vec::new(), audio: Vec::new(), warnings: Vec::new(), gpu_features: 0 };
     let mut transitions = 0;
     let mut effects = 0;
+    let mut transforms = 0;
     for c in &tl.tracks.children {
         let Composable::Track(track) = c else {
             out.warnings.push("a top-level item that is not a track was skipped".into());
@@ -166,6 +169,7 @@ pub fn plan(tl: &Timeline, span: Span) -> Result<Plan, RenderError> {
             let tail = if e < end { Edge::RangeEdge } else if next_is_clip_at_end { Edge::Cut } else { Edge::Open };
             effects += clip.metadata.ve.effects.len();
             if let Some(seg) = segment(tl, track, clip, (start, end), (s, e), (head, tail), &mut out.warnings)? {
+                transforms += usize::from(track.kind == TrackKind::Video && seg.transform.is_some());
                 segs.push(seg);
             }
         }
@@ -200,10 +204,15 @@ pub fn plan(tl: &Timeline, span: Span) -> Result<Plan, RenderError> {
             TrackKind::Audio => out.audio.push(t),
         }
     }
-    out.gpu_features = transitions + effects;
+    out.gpu_features = transitions + effects + transforms;
     if transitions + effects > 0 {
         out.warnings.push(format!(
             "{transitions} transition(s) and {effects} effect(s) in range: {GPU_ONLY} them; this render shows plain cuts and unprocessed clips"
+        ));
+    }
+    if transforms > 0 {
+        out.warnings.push(format!(
+            "{transforms} clip(s) with a transform (position, scale, rotation, opacity or crop) in range: {GPU_ONLY} them; this render shows them fitted and centered"
         ));
     }
     Ok(out)
@@ -257,5 +266,6 @@ fn segment(
         clip_start: start,
         clip_duration: end - start,
         effects: clip.metadata.ve.effects.clone(),
+        transform: clip.metadata.ve.clip.as_ref().and_then(|m| m.transform.as_deref().cloned()).filter(|t| !t.is_identity()),
     }))
 }

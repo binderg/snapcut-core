@@ -13,8 +13,12 @@
 //!    opaque black in an `Rgba8UnormSrgb` target (blending in linear light),
 //!    then read back.
 //!
-//! Not here yet: transforms beyond placing a picture in a rectangle,
-//! Rec.709 vs sRGB transfer differences, texture reuse between frames.
+//! Each picture is drawn as a quad: its rectangle, cropped, rotated around
+//! its center and multiplied by its opacity ([`Xf`]); the default draws the
+//! rectangle exactly as before transforms existed.
+//!
+//! Not here yet: anti-aliased edges on rotated pictures, Rec.709 vs sRGB
+//! transfer differences, texture reuse between frames.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -45,6 +49,24 @@ pub struct Rect {
     pub h: f32,
 }
 
+/// How a picture is drawn into its rectangle: the part cut away on each
+/// side, rotation around the rectangle's center, and opacity.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Xf {
+    /// Fractions of the picture cut away: left, top, right, bottom.
+    pub crop: [f32; 4],
+    /// Radians, clockwise on screen.
+    pub rotation: f32,
+    /// 0..1; multiplies the premultiplied colour.
+    pub opacity: f32,
+}
+
+impl Default for Xf {
+    fn default() -> Self {
+        Self { crop: [0.0; 4], rotation: 0.0, opacity: 1.0 }
+    }
+}
+
 /// One effect or transition pass with its inputs evaluated for this frame.
 #[derive(Clone)]
 pub struct Pass {
@@ -65,6 +87,7 @@ pub struct Picture<'a> {
     pub width: u32,
     pub height: u32,
     pub rect: Rect,
+    pub xf: Xf,
     pub effects: Vec<Pass>,
 }
 
@@ -74,9 +97,11 @@ pub enum Item<'a> {
     Transition { outgoing: Picture<'a>, incoming: Picture<'a>, pass: Pass },
 }
 
-/// Draw a picture into a rectangle (`rect` in NDC: x0, y0, x1, y1).
+/// Draw a picture as a quad: corners in NDC (`a`: top left, top right;
+/// `b`: bottom left, bottom right), the texture part `uv` (u0, v0, u1, v1),
+/// opacity in `o.x`.
 const RECT_SHADER: &str = r"
-struct Place { rect: vec4<f32> };
+struct Place { a: vec4<f32>, b: vec4<f32>, uv: vec4<f32>, o: vec4<f32> };
 @group(0) @binding(0) var tex: texture_2d<f32>;
 @group(0) @binding(1) var samp: sampler;
 @group(0) @binding(2) var<uniform> place: Place;
@@ -88,15 +113,16 @@ fn vs(@builtin(vertex_index) i: u32) -> VsOut {
         vec2(0.0, 1.0), vec2(1.0, 0.0), vec2(1.0, 1.0),
     );
     let c = corners[i];
-    let r = place.rect;
+    let top = mix(place.a.xy, place.a.zw, c.x);
+    let bottom = mix(place.b.xy, place.b.zw, c.x);
     var out: VsOut;
-    out.pos = vec4(mix(r.x, r.z, c.x), mix(r.y, r.w, c.y), 0.0, 1.0);
-    out.uv = c;
+    out.pos = vec4(mix(top, bottom, c.y), 0.0, 1.0);
+    out.uv = mix(place.uv.xy, place.uv.zw, c);
     return out;
 }
 @fragment
 fn fs(in: VsOut) -> @location(0) vec4<f32> {
-    return textureSampleLevel(tex, samp, in.uv, 0.0);
+    return textureSampleLevel(tex, samp, in.uv, 0.0) * place.o.x;
 }
 ";
 
@@ -215,10 +241,26 @@ fn f16_to_f32(bits: u16) -> f32 {
     }
 }
 
-/// Pixel rect to NDC (y up) for a `w x h` target.
-fn ndc(r: Rect, w: u32, h: u32) -> Vec<u8> {
+/// The quad uniform for a picture in pixel rect `r`, drawn with `xf`, on a
+/// `w x h` target (NDC, y up). With the default `Xf` the corners are exactly
+/// the rect's.
+fn quad(r: Rect, xf: Xf, w: u32, h: u32) -> Vec<u8> {
     let (w, h) = (w as f32, h as f32);
-    [r.x / w * 2.0 - 1.0, 1.0 - r.y / h * 2.0, (r.x + r.w) / w * 2.0 - 1.0, 1.0 - (r.y + r.h) / h * 2.0]
+    let [l, t, rr, b] = xf.crop;
+    let (x0, x1) = (r.x + l * r.w, r.x + r.w - rr * r.w);
+    let (y0, y1) = (r.y + t * r.h, r.y + r.h - b * r.h);
+    let (cx, cy) = (r.x + r.w / 2.0, r.y + r.h / 2.0);
+    let (sin, cos) = xf.rotation.sin_cos();
+    let turn = |x: f32, y: f32| -> (f32, f32) {
+        if xf.rotation == 0.0 {
+            return (x, y);
+        }
+        let (dx, dy) = (x - cx, y - cy);
+        (cx + dx * cos - dy * sin, cy + dx * sin + dy * cos)
+    };
+    let ndc = |(x, y): (f32, f32)| [x / w * 2.0 - 1.0, 1.0 - y / h * 2.0];
+    let [tl, tr, bl, br] = [turn(x0, y0), turn(x1, y0), turn(x0, y1), turn(x1, y1)].map(ndc);
+    [tl[0], tl[1], tr[0], tr[1], bl[0], bl[1], br[0], br[1], l, t, 1.0 - rr, 1.0 - b, xf.opacity, 0.0, 0.0, 0.0]
         .iter()
         .flat_map(|v| v.to_le_bytes())
         .collect()
@@ -265,7 +307,7 @@ impl Gpu {
         });
         let rect_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("rect"),
-            entries: &[tex_entry(0), sampler_entry(1), uniform_entry(2, wgpu::ShaderStages::VERTEX)],
+            entries: &[tex_entry(0), sampler_entry(1), uniform_entry(2, wgpu::ShaderStages::VERTEX_FRAGMENT)],
         });
         let make = |label: &str, src: &str, layout: &wgpu::BindGroupLayout, format, blend| {
             let module = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some(label), source: wgpu::ShaderSource::Wgsl(src.into()) });
@@ -492,8 +534,8 @@ impl Gpu {
         Ok(cur)
     }
 
-    fn rect_group(&self, view: &wgpu::TextureView, rect: Rect, w: u32, h: u32) -> wgpu::BindGroup {
-        let place = self.uniform(&ndc(rect, w, h));
+    fn rect_group(&self, view: &wgpu::TextureView, rect: Rect, xf: Xf, w: u32, h: u32) -> wgpu::BindGroup {
+        let place = self.uniform(&quad(rect, xf, w, h));
         self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("rect"),
             layout: &self.rect_layout,
@@ -506,9 +548,9 @@ impl Gpu {
     }
 
     /// Put a picture's texture on a transparent canvas-size float texture.
-    fn on_canvas(&self, enc: &mut wgpu::CommandEncoder, tex: &wgpu::Texture, rect: Rect, w: u32, h: u32) -> wgpu::Texture {
+    fn on_canvas(&self, enc: &mut wgpu::CommandEncoder, tex: &wgpu::Texture, rect: Rect, xf: Xf, w: u32, h: u32) -> wgpu::Texture {
         let canvas = self.work_texture(w, h);
-        let group = self.rect_group(&tex.create_view(&Default::default()), rect, w, h);
+        let group = self.rect_group(&tex.create_view(&Default::default()), rect, xf, w, h);
         let out = canvas.create_view(&Default::default());
         let mut rp = begin(enc, &out, wgpu::Color::TRANSPARENT);
         rp.set_pipeline(&self.rect_work);
@@ -526,23 +568,23 @@ impl Gpu {
         }
         let mut enc = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("frame") });
         // Textures to draw last, with their rectangles.
-        let mut draws: Vec<(wgpu::Texture, Rect)> = Vec::with_capacity(items.len());
+        let mut draws: Vec<(wgpu::Texture, Rect, Xf)> = Vec::with_capacity(items.len());
         for item in items {
             match item {
                 Item::Picture(p) => {
                     let t = self.picture(&mut enc, p)?;
-                    draws.push((t, p.rect));
+                    draws.push((t, p.rect, p.xf));
                 }
                 Item::Transition { outgoing, incoming, pass } => {
                     let a = self.picture(&mut enc, outgoing)?;
                     let b = self.picture(&mut enc, incoming)?;
-                    let ca = self.on_canvas(&mut enc, &a, outgoing.rect, width, height);
-                    let cb = self.on_canvas(&mut enc, &b, incoming.rect, width, height);
+                    let ca = self.on_canvas(&mut enc, &a, outgoing.rect, outgoing.xf, width, height);
+                    let cb = self.on_canvas(&mut enc, &b, incoming.rect, incoming.xf, width, height);
                     let out = self.work_texture(width, height);
                     let pipe = self.fx_pipeline(&pass.fx).map_err(|e| RenderError::Invalid(e.0))?;
                     let (va, vb, vo) = (ca.create_view(&Default::default()), cb.create_view(&Default::default()), out.create_view(&Default::default()));
                     self.encode_pass(&mut enc, pass, &pipe, (&va, Some(&vb)), &vo, (width, height));
-                    draws.push((out, Rect { x: 0.0, y: 0.0, w: width as f32, h: height as f32 }));
+                    draws.push((out, Rect { x: 0.0, y: 0.0, w: width as f32, h: height as f32 }, Xf::default()));
                 }
             }
         }
@@ -556,7 +598,7 @@ impl Gpu {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
-        let groups: Vec<wgpu::BindGroup> = draws.iter().map(|(t, r)| self.rect_group(&t.create_view(&Default::default()), *r, width, height)).collect();
+        let groups: Vec<wgpu::BindGroup> = draws.iter().map(|(t, r, xf)| self.rect_group(&t.create_view(&Default::default()), *r, *xf, width, height)).collect();
         {
             let view = target.create_view(&Default::default());
             let mut rp = begin(&mut enc, &view, wgpu::Color::BLACK);
@@ -574,7 +616,7 @@ impl Gpu {
     pub fn composite(&self, width: u32, height: u32, layers: &[Layer<'_>]) -> Result<Vec<u8>> {
         let items: Vec<Item<'_>> = layers
             .iter()
-            .map(|l| Item::Picture(Picture { rgba: l.rgba, width: l.width, height: l.height, rect: l.rect, effects: Vec::new() }))
+            .map(|l| Item::Picture(Picture { rgba: l.rgba, width: l.width, height: l.height, rect: l.rect, xf: Xf::default(), effects: Vec::new() }))
             .collect();
         self.render(width, height, &items)
     }
@@ -635,7 +677,7 @@ impl Gpu {
         for progress in [0.0f32, 0.5, 1.0] {
             let pass = Pass { fx: Arc::new(fx.clone()), params: defaults.clone(), time: progress, progress, images: fx.images_for(&serde_json::Map::new()) };
             let mut enc = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("fx test") });
-            let pic = |rgba| Picture { rgba, width: S, height: S, rect: Rect { x: 0.0, y: 0.0, w: S as f32, h: S as f32 }, effects: Vec::new() };
+            let pic = |rgba| Picture { rgba, width: S, height: S, rect: Rect { x: 0.0, y: 0.0, w: S as f32, h: S as f32 }, xf: Xf::default(), effects: Vec::new() };
             let a = self.picture(&mut enc, &pic(&ga)).map_err(|e| FxError(e.to_string()))?;
             let b = self.picture(&mut enc, &pic(&gb)).map_err(|e| FxError(e.to_string()))?;
             let out = self.work_texture(S, S);
@@ -714,6 +756,29 @@ mod tests {
     }
 
     #[test]
+    fn crops_rotates_and_fades() {
+        let gpu = Gpu::shared().expect("a GPU or software adapter");
+        let red = solid(4, 4, [255, 0, 0, 255]);
+        let draw = |rect: Rect, xf: Xf| {
+            gpu.render(8, 8, &[Item::Picture(Picture { rgba: &red, width: 4, height: 4, rect, xf, effects: Vec::new() })]).unwrap()
+        };
+        // Left half cut away: it stays where it was, not stretched.
+        let out = draw(full(8), Xf { crop: [0.5, 0.0, 0.0, 0.0], ..Xf::default() });
+        assert_eq!(at(&out, 8, 1, 4), [0, 0, 0, 255]);
+        assert_eq!(at(&out, 8, 6, 4), [255, 0, 0, 255]);
+        // A wide strip turned a quarter turn becomes a tall one.
+        let strip = Rect { x: 0.0, y: 2.0, w: 8.0, h: 4.0 };
+        let out = draw(strip, Xf::default());
+        assert_eq!((at(&out, 8, 4, 0), at(&out, 8, 0, 4)), ([0, 0, 0, 255], [255, 0, 0, 255]));
+        let out = draw(strip, Xf { rotation: std::f32::consts::FRAC_PI_2, ..Xf::default() });
+        assert_eq!((at(&out, 8, 4, 0), at(&out, 8, 0, 4)), ([255, 0, 0, 255], [0, 0, 0, 255]));
+        // Half opacity over black, in linear light: about 188 once encoded.
+        let out = draw(full(8), Xf { opacity: 0.5, ..Xf::default() });
+        let px = at(&out, 8, 4, 4);
+        assert!((185..=190).contains(&px[0]) && px[1] == 0, "{px:?}");
+    }
+
+    #[test]
     fn empty_frame_is_black() {
         let gpu = Gpu::shared().expect("a GPU or software adapter");
         let out = gpu.composite(300, 2, &[]).unwrap();
@@ -740,13 +805,13 @@ mod tests {
         // Desaturate red fully: gray with red's luminance (0.2126 linear, about 127 encoded).
         let desat = reg.get("core.color/desaturate").unwrap();
         let out = gpu
-            .render(8, 8, &[Item::Picture(Picture { rgba: &red, width: 8, height: 8, rect: full(8), effects: vec![pass(&desat, serde_json::json!({}), 0.0)] })])
+            .render(8, 8, &[Item::Picture(Picture { rgba: &red, width: 8, height: 8, rect: full(8), xf: Xf::default(), effects: vec![pass(&desat, serde_json::json!({}), 0.0)] })])
             .unwrap();
         let px = at(&out, 8, 4, 4);
         assert!(px[0] == px[1] && px[1] == px[2] && (125..=129).contains(&px[0]), "{px:?}");
         // Dissolve red to blue halfway, in linear light: about 188 in each channel.
         let dissolve = reg.get("core.transition/dissolve").unwrap();
-        let pic = |rgba| Picture { rgba, width: 8, height: 8, rect: full(8), effects: Vec::new() };
+        let pic = |rgba| Picture { rgba, width: 8, height: 8, rect: full(8), xf: Xf::default(), effects: Vec::new() };
         let out = gpu.render(8, 8, &[Item::Transition { outgoing: pic(&red), incoming: pic(&blue), pass: pass(&dissolve, serde_json::json!({}), 0.5) }]).unwrap();
         let px = at(&out, 8, 4, 4);
         assert!((185..=190).contains(&px[0]) && px[1] == 0 && (185..=190).contains(&px[2]), "{px:?}");

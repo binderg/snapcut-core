@@ -232,6 +232,13 @@ impl Lane {
                 let (keep, give) = partition_markers(std::mem::take(&mut l.markers), media_split);
                 l.markers = keep;
                 r.markers = give;
+                let transform_keys = r.metadata.ve.clip.as_mut().and_then(|m| m.transform.as_mut()).map(|t| &mut t.keyframes);
+                for keys in transform_keys.into_iter().flat_map(|k| k.values_mut()) {
+                    for k in keys.iter_mut() {
+                        let s = k.t.seconds() - delta;
+                        set_seconds(&mut k.t, s);
+                    }
+                }
                 for fx in &mut r.metadata.ve.effects {
                     for keys in fx.keyframes.values_mut() {
                         for k in keys.iter_mut() {

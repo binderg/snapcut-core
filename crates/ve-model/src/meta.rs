@@ -222,12 +222,134 @@ pub struct ClipMeta {
     /// unless a call asks for one clip only (that is how J/L cuts are made).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub link: Option<Id>,
+    /// Where a video clip's picture sits on the canvas. Absent means the
+    /// default: fitted and centered, fully opaque.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transform: Option<Box<Transform>>,
 }
 
 impl ClipMeta {
     pub fn new(id: Id) -> Self {
-        Self { id, speed: unit_speed(), volume_db: 0.0, link: None }
+        Self { id, speed: unit_speed(), volume_db: 0.0, link: None, transform: None }
     }
+}
+
+/// `metadata.ve.clip.transform`: position, size, rotation, opacity and crop
+/// of a video clip's picture, applied after its effects, before it is
+/// stacked on the tracks below.
+///
+/// The starting point is the picture fitted to the canvas and centered (the
+/// project's fit mode). Spatial values are plain numbers (no exact-time
+/// rule applies to space); keys left at their default are not written.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Transform {
+    /// Horizontal offset of the picture's center from the canvas center, in
+    /// canvas widths (0.25 moves it a quarter of the canvas right).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub x: f64,
+    /// Vertical offset in canvas heights; positive is down.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub y: f64,
+    /// Size relative to the fitted picture (0.5 is half size).
+    #[serde(default = "one", skip_serializing_if = "is_one")]
+    pub scale: f64,
+    /// Degrees, clockwise, around the picture's center.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub rotation: f64,
+    /// 0 (invisible) to 1 (opaque).
+    #[serde(default = "one", skip_serializing_if = "is_one")]
+    pub opacity: f64,
+    /// Fraction of the picture cut away on each side (0 to 1). The rest stays
+    /// where it was; it does not grow to fill the space.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub crop_left: f64,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub crop_right: f64,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub crop_top: f64,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub crop_bottom: f64,
+    /// Field name -> keyframes (values are numbers). Times count from the
+    /// clip's start on the timeline, as for effects.
+    #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
+    pub keyframes: IndexMap<String, Vec<Keyframe>>,
+}
+
+impl Default for Transform {
+    fn default() -> Self {
+        Self {
+            x: 0.0,
+            y: 0.0,
+            scale: 1.0,
+            rotation: 0.0,
+            opacity: 1.0,
+            crop_left: 0.0,
+            crop_right: 0.0,
+            crop_top: 0.0,
+            crop_bottom: 0.0,
+            keyframes: IndexMap::new(),
+        }
+    }
+}
+
+impl Transform {
+    /// Every field a transform has, in the order they are reported.
+    pub const FIELDS: [&'static str; 9] = ["x", "y", "scale", "rotation", "opacity", "crop_left", "crop_right", "crop_top", "crop_bottom"];
+
+    pub fn get(&self, field: &str) -> Option<f64> {
+        Some(match field {
+            "x" => self.x,
+            "y" => self.y,
+            "scale" => self.scale,
+            "rotation" => self.rotation,
+            "opacity" => self.opacity,
+            "crop_left" => self.crop_left,
+            "crop_right" => self.crop_right,
+            "crop_top" => self.crop_top,
+            "crop_bottom" => self.crop_bottom,
+            _ => return None,
+        })
+    }
+
+    /// Set a field; false if there is no such field.
+    pub fn set(&mut self, field: &str, v: f64) -> bool {
+        let slot = match field {
+            "x" => &mut self.x,
+            "y" => &mut self.y,
+            "scale" => &mut self.scale,
+            "rotation" => &mut self.rotation,
+            "opacity" => &mut self.opacity,
+            "crop_left" => &mut self.crop_left,
+            "crop_right" => &mut self.crop_right,
+            "crop_top" => &mut self.crop_top,
+            "crop_bottom" => &mut self.crop_bottom,
+            _ => return false,
+        };
+        *slot = v;
+        true
+    }
+
+    /// The default placement with no keyframes: renders exactly as no transform.
+    pub fn is_identity(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// The default value of a field (what `null` resets it to).
+    pub fn default_of(field: &str) -> Option<f64> {
+        Self::default().get(field)
+    }
+}
+
+fn is_zero(v: &f64) -> bool {
+    *v == 0.0
+}
+
+fn is_one(v: &f64) -> bool {
+    *v == 1.0
+}
+
+fn one() -> f64 {
+    1.0
 }
 
 fn unit_speed() -> Q {

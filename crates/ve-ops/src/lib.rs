@@ -22,6 +22,7 @@ pub mod effects;
 pub mod lane;
 pub mod markers;
 pub mod tracks;
+pub mod transform;
 
 use serde_json::Value;
 use ve_model::Timeline;

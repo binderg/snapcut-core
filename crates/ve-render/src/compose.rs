@@ -13,12 +13,13 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use ve_model::Timeline;
+use ve_model::meta::Transform;
 use ve_model::time::Q;
 
 use crate::decoder::{self, DecoderPool};
 use crate::ffmpeg::{self, Inputs};
 use crate::fx::{Kind, Registry};
-use crate::gpu::{Gpu, Item, Pass, Picture, Rect};
+use crate::gpu::{Gpu, Item, Pass, Picture, Rect, Xf};
 use crate::plan::{GPU_ONLY, Plan, Segment, plan, timeline_end};
 use crate::{Canvas, EncodeSettings, Encoded, Fit, Graph, Image, ImageFormat, RenderError, Span, encode_args, local_path, project_canvas};
 
@@ -110,12 +111,57 @@ fn seconds(q: Q) -> f32 {
     (*q.numer() as f64 / *q.denom() as f64) as f32
 }
 
+/// A segment's transform at timeline time `t`, keyframes evaluated, or
+/// `None` for the default placement.
+fn transform_at(seg: &Segment, t: Q) -> Option<Transform> {
+    let tr = seg.transform.as_ref()?;
+    let mut v = tr.clone();
+    let local = t - seg.clip_start;
+    for (field, keys) in tr.keyframes.iter().filter(|(_, k)| !k.is_empty()) {
+        if let Some(x) = crate::fx::interpolate(keys, local).as_f64() {
+            v.set(field, x);
+        }
+    }
+    Some(v)
+}
+
+/// Where a segment's picture goes at `t`, how it is drawn, and the size to
+/// decode it at. The default placement is [`place`] unchanged (so it still
+/// matches the ffmpeg path); a transform scales the fitted rectangle around
+/// its center, moves it by canvas fractions, and crops, turns and fades it
+/// on the GPU.
+fn layout(seg: &Segment, t: Q, src: Source, canvas: &Canvas) -> (Rect, Xf, (u32, u32)) {
+    let base = place(canvas.fit, src.width, src.height, canvas.width, canvas.height);
+    let Some(tf) = transform_at(seg, t) else {
+        return (base, Xf::default(), (base.w as u32, base.h as u32));
+    };
+    let (cw, ch) = (canvas.width as f32, canvas.height as f32);
+    let scale = tf.scale as f32;
+    let (w, h) = (base.w * scale, base.h * scale);
+    let cx = base.x + base.w / 2.0 + tf.x as f32 * cw;
+    let cy = base.y + base.h / 2.0 + tf.y as f32 * ch;
+    let rect = Rect { x: cx - w / 2.0, y: cy - h / 2.0, w, h };
+    let xf = Xf {
+        crop: [tf.crop_left as f32, tf.crop_top as f32, tf.crop_right as f32, tf.crop_bottom as f32],
+        rotation: (tf.rotation as f32).to_radians(),
+        opacity: tf.opacity as f32,
+    };
+    // Decode at the largest size the clip reaches (so animated scale keeps one
+    // warm decoder), never above the source's own size.
+    let tr = seg.transform.as_ref().expect("transform_at found one");
+    let most = tr.keyframes.get("scale").into_iter().flatten().filter_map(|k| k.v.as_f64()).fold(tr.scale, f64::max) as f32;
+    let k = (most.min(src.width as f32 / base.w).min(src.height as f32 / base.h)).max(most.min(1.0));
+    let even = |v: f32| ((v / 2.0).round() as u32 * 2).max(2);
+    (rect, xf, (even(base.w * k), even(base.h * k)))
+}
+
 /// A segment's frame at `t`, decoded at its drawn size, with its effects.
 struct Decoded {
     rgba: Vec<u8>,
     width: u32,
     height: u32,
     rect: Rect,
+    xf: Xf,
     effects: Vec<Pass>,
 }
 
@@ -132,17 +178,16 @@ fn decoded(ctx: &mut Ctx<'_>, seg: &Segment, t: Q, slot: usize) -> Result<Decode
         .sources
         .get(&seg.path)
         .ok_or_else(|| RenderError::Media(format!("{}: {} has no probed video size", seg.clip, seg.path.display())))?;
-    let rect = place(ctx.canvas.fit, src.width, src.height, ctx.canvas.width, ctx.canvas.height);
-    let (dw, dh) = (rect.w as u32, rect.h as u32);
+    let (rect, xf, (dw, dh)) = layout(seg, t, src, ctx.canvas);
     let key = decoder::key(&seg.path, dw, dh, seg.media_rate, slot);
     let fx = ctx.fx;
     let rgba = ctx.pool.frame(&key, source_frame(seg, t))?;
-    Ok(Decoded { rgba, width: dw, height: dh, rect, effects: passes(seg, t, fx)? })
+    Ok(Decoded { rgba, width: dw, height: dh, rect, xf, effects: passes(seg, t, fx)? })
 }
 
 impl Decoded {
     fn picture(&self) -> Picture<'_> {
-        Picture { rgba: &self.rgba, width: self.width, height: self.height, rect: self.rect, effects: self.effects.clone() }
+        Picture { rgba: &self.rgba, width: self.width, height: self.height, rect: self.rect, xf: self.xf, effects: self.effects.clone() }
     }
 }
 

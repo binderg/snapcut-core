@@ -1,4 +1,4 @@
-//! The `track.*` commands: add, remove, rename and reorder tracks.
+//! The `track.*` commands: add, remove, rename, reorder, hide and mute tracks.
 //!
 //! A project can have any number of video and audio tracks. Tracks keep
 //! their stack order in the document; among video tracks a later one draws
@@ -28,6 +28,8 @@ pub struct TrackPlace {
     pub index: usize,
     /// Clips on the track.
     pub clips: usize,
+    /// False when the track is hidden (video) or muted (audio): renders skip it.
+    pub enabled: bool,
 }
 
 /// What a track command did.
@@ -101,6 +103,7 @@ pub fn list(tl: &Timeline) -> Vec<TrackPlace> {
                 kind: kind_word(t.kind).to_owned(),
                 index,
                 clips: clip_count(t),
+                enabled: t.enabled,
             }
         })
         .collect()
@@ -245,6 +248,18 @@ pub fn rename(tl: &Timeline, r: &str, name: &str) -> Result<(Timeline, TrackRepo
     Ok((next.clone(), report(&next, &id)))
 }
 
+/// `track.set`: hide or show a track (`enabled`). A disabled video track
+/// is not drawn and a disabled audio track is not heard; edits still apply
+/// to its clips. This is OTIO's own `enabled` flag, so other editors see it.
+pub fn set_enabled(tl: &Timeline, r: &str, enabled: bool) -> Result<(Timeline, TrackReport)> {
+    let i = find(tl, r)?;
+    let mut next = tl.clone();
+    let Composable::Track(t) = &mut next.tracks.children[i] else { unreachable!() };
+    t.enabled = enabled;
+    let id = track_id(t).cloned().unwrap_or_else(|| Id::from_raw("-"));
+    Ok((next.clone(), report(&next, &id)))
+}
+
 /// `track.move`: put a track at `index` among tracks of its kind (0 is the
 /// first; for video, the bottom layer).
 pub fn reorder(tl: &Timeline, r: &str, index: usize) -> Result<(Timeline, TrackReport)> {
@@ -293,6 +308,18 @@ mod tests {
         assert_eq!(r.track.name, "V3");
         assert_eq!(order(&tl), ["V3", "V1", "V2", "Titles", "A1", "A2"]);
         assert!(tl.ids().contains(&r.track.id));
+    }
+
+    #[test]
+    fn hide_and_show() {
+        let tl = project();
+        let (tl, r) = set_enabled(&tl, "V1", false).unwrap();
+        assert!(!r.track.enabled);
+        assert!(r.tracks.iter().find(|t| t.name == "A1").unwrap().enabled);
+        assert!(!track_at(&tl, find(&tl, "V1").unwrap()).enabled);
+        let (tl, r) = set_enabled(&tl, "V1", true).unwrap();
+        assert!(r.track.enabled && track_at(&tl, 0).enabled);
+        assert!(set_enabled(&tl, "V9", false).is_err());
     }
 
     #[test]

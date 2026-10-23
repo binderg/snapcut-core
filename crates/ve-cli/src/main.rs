@@ -204,6 +204,44 @@ enum Command {
     },
     /// Break a clip's link with its partners (video and its audio): `ve unlink clip_7f3a`.
     Unlink { clip: String },
+    /// Place a video clip's picture: `ve transform clip_7f3a --scale 0.4 --x 0.3 --y 0.3`
+    /// (picture in picture, bottom right). `--reset` puts it back to fitted and centered.
+    Transform {
+        clip: String,
+        /// Offset of the picture's center from the canvas center, in canvas widths.
+        #[arg(long, allow_hyphen_values = true)]
+        x: Option<f64>,
+        /// Offset in canvas heights; positive is down.
+        #[arg(long, allow_hyphen_values = true)]
+        y: Option<f64>,
+        /// Size relative to the fitted picture.
+        #[arg(long)]
+        scale: Option<f64>,
+        /// Degrees clockwise.
+        #[arg(long, allow_hyphen_values = true)]
+        rotation: Option<f64>,
+        /// 0 (invisible) to 1 (opaque).
+        #[arg(long)]
+        opacity: Option<f64>,
+        /// Crop each side, as a fraction of the picture.
+        #[arg(long)]
+        crop_left: Option<f64>,
+        #[arg(long)]
+        crop_right: Option<f64>,
+        #[arg(long)]
+        crop_top: Option<f64>,
+        #[arg(long)]
+        crop_bottom: Option<f64>,
+        /// `field@time=value` keyframes (time from the clip start): `--key opacity@0s=0 --key opacity@1s=1`.
+        #[arg(long = "key", value_name = "FIELD@TIME=VALUE")]
+        keys: Vec<String>,
+        /// Remove a field's keyframes: `--clear-keys opacity`.
+        #[arg(long = "clear-keys")]
+        clear: Vec<String>,
+        /// Start from the default before applying the rest.
+        #[arg(long)]
+        reset: bool,
+    },
     /// Timeline markers.
     #[command(subcommand)]
     Marker(MarkerCmd),
@@ -472,6 +510,12 @@ enum TrackCmd {
     Rename { track: String, name: String },
     /// `ve track move V3 0`: new position among tracks of its kind.
     Move { track: String, index: usize },
+    /// `ve track hide V2` (or `mute A2`): renders skip the track; its clips stay.
+    #[command(alias = "mute")]
+    Hide { track: String },
+    /// `ve track show V2` (or `unmute A2`).
+    #[command(alias = "unmute")]
+    Show { track: String },
 }
 
 #[derive(Subcommand)]
@@ -737,6 +781,28 @@ fn plan(cmd: &Command, json_output: bool) -> Plan {
         }
         Command::Volume { clip, db, unlinked } => m("edit.set_volume", json!({ "clip": clip, "db": db, "linked": !unlinked })),
         Command::Unlink { clip } => m("edit.unlink", json!({ "clip": clip })),
+        Command::Transform { clip, x, y, scale, rotation, opacity, crop_left, crop_right, crop_top, crop_bottom, keys, clear, reset } => {
+            let mut p = json!({ "clip": clip, "reset": reset });
+            for (k, v) in [
+                ("x", x),
+                ("y", y),
+                ("scale", scale),
+                ("rotation", rotation),
+                ("opacity", opacity),
+                ("crop_left", crop_left),
+                ("crop_right", crop_right),
+                ("crop_top", crop_top),
+                ("crop_bottom", crop_bottom),
+            ] {
+                if let Some(v) = v {
+                    p[k] = json!(v);
+                }
+            }
+            if !keys.is_empty() || !clear.is_empty() {
+                p["keyframes"] = key_map(keys, clear, json_output);
+            }
+            m("edit.set_transform", p)
+        }
         Command::Marker(MarkerCmd::Add { at, duration, name, color, comment }) => {
             m("marker.add", json!({ "at": at, "duration": duration, "name": name, "color": color, "comment": comment }))
         }
@@ -748,6 +814,8 @@ fn plan(cmd: &Command, json_output: bool) -> Plan {
         Command::Track(TrackCmd::Rm { track, force }) => m("track.remove", json!({ "track": track, "force": force })),
         Command::Track(TrackCmd::Rename { track, name }) => m("track.rename", json!({ "track": track, "name": name })),
         Command::Track(TrackCmd::Move { track, index }) => m("track.move", json!({ "track": track, "index": index })),
+        Command::Track(TrackCmd::Hide { track }) => m("track.set", json!({ "track": track, "enabled": false })),
+        Command::Track(TrackCmd::Show { track }) => m("track.set", json!({ "track": track, "enabled": true })),
         Command::Fx(FxCmd::List) => q("fx.list", json!({})),
         Command::Fx(FxCmd::Define { folder, dry_run }) => {
             let mp = folder.join("effect.json");
@@ -758,7 +826,7 @@ fn plan(cmd: &Command, json_output: bool) -> Plan {
             let source = std::fs::read_to_string(&sp).unwrap_or_else(|e| usage_error(format!("{}: {e}", sp.display()), json_output));
             // Images for image params travel with the shader.
             let mut files = serde_json::Map::new();
-            for e in std::fs::read_dir(&folder).into_iter().flatten().flatten() {
+            for e in std::fs::read_dir(folder).into_iter().flatten().flatten() {
                 let name = e.file_name().to_string_lossy().into_owned();
                 if [".png", ".jpg", ".jpeg"].iter().any(|x| name.to_ascii_lowercase().ends_with(x)) {
                     let bytes = std::fs::read(e.path()).unwrap_or_else(|err| usage_error(format!("{name}: {err}"), json_output));
@@ -980,15 +1048,30 @@ fn print_commit(r: &Value) {
     for id in r["removed"].as_array().into_iter().flatten() {
         println!("removed  {}", id.as_str().unwrap_or("?"));
     }
+    if r["opacity"].is_number() && r["clip"].is_string() {
+        let mut line = format!("transform of {}:", r["clip"].as_str().unwrap_or("?"));
+        for f in ["x", "y", "scale", "rotation", "opacity", "crop_left", "crop_right", "crop_top", "crop_bottom"] {
+            line.push_str(&format!(" {f}={}", r[f]));
+        }
+        if let Some(k) = r["keyframed"].as_array().filter(|k| !k.is_empty()) {
+            line.push_str(&format!("  keyframed: {}", k.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(", ")));
+        }
+        println!("{line}");
+    }
     for t in r["tracks"].as_array().into_iter().flatten() {
         let mark = if t["id"] == r["track"]["id"] { "*" } else { " " };
         println!(
-            "{mark} {:8} {:12} {} #{}  clips {}",
+            "{mark} {:8} {:12} {} #{}  clips {}{}",
             t["name"].as_str().unwrap_or("?"),
             t["id"].as_str().unwrap_or("?"),
             t["kind"].as_str().unwrap_or("?"),
             t["index"],
-            t["clips"]
+            t["clips"],
+            match (t["enabled"].as_bool(), t["kind"].as_str()) {
+                (Some(false), Some("audio")) => "  (muted)",
+                (Some(false), _) => "  (hidden)",
+                _ => "",
+            }
         );
     }
     if let Some(list) = r["effects"].as_array() {
@@ -1400,6 +1483,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         | Command::Speed { .. }
         | Command::Volume { .. }
         | Command::Unlink { .. }
+        | Command::Transform { .. }
         | Command::Marker(_)
         | Command::Track(_)
         | Command::Effect(_)

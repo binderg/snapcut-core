@@ -33,12 +33,14 @@ schemas: `system.describe`.
 | `edit.delete` | yes | Remove clips, leave gaps | [edit.md](edit.md) |
 | `edit.set_speed` | yes | Change a clip's speed (exact ratio) | [edit.md](edit.md) |
 | `edit.set_volume` | yes | Set a clip's audio gain | [edit.md](edit.md) |
+| `edit.set_transform` | yes | Position, scale, rotate, fade or crop a video clip's picture (keyframes) | [edit.md](edit.md) |
 | `edit.unlink` | yes | Break a clip's link with its partners | [edit.md](edit.md) |
 | `edit.normalize` | yes | Hit a loudness target with one gain on the audio clips (job) | [measure.md](measure.md) |
 | `track.add` | yes | Add a video or audio track (any number of each) | [tracks.md](tracks.md) |
 | `track.remove` | yes | Remove a track (with its clips only when forced) | [tracks.md](tracks.md) |
 | `track.rename` | yes | Rename a track | [tracks.md](tracks.md) |
 | `track.move` | yes | Change a track's position (video: stacking order) | [tracks.md](tracks.md) |
+| `track.set` | yes | Hide a video track or mute an audio track | [tracks.md](tracks.md) |
 | `track.list` | | Every track with kind, position, clip count | [tracks.md](tracks.md) |
 | `fx.list` | | Effects and transitions available, with param schemas | [effects.md](effects.md) |
 | `fx.define` | | Validate (naga + GPU test render) and save a project effect | [effects.md](effects.md) |

@@ -155,7 +155,7 @@ pub struct KeyframeArg {
     pub ease: Option<String>,
 }
 
-fn keyframes(p: &OpenProject, keys: &std::collections::BTreeMap<String, Vec<KeyframeArg>>) -> Result<IndexMap<String, Vec<ve_model::meta::Keyframe>>, RpcError> {
+pub(crate) fn keyframes(p: &OpenProject, keys: &std::collections::BTreeMap<String, Vec<KeyframeArg>>) -> Result<IndexMap<String, Vec<ve_model::meta::Keyframe>>, RpcError> {
     let rate = p.timeline.output_rate();
     keys.iter()
         .map(|(name, list)| {

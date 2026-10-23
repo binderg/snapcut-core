@@ -238,6 +238,19 @@ impl Fmt<'_> {
             if m.volume_db != 0.0 {
                 let _ = write!(out, "  vol {:+}dB", m.volume_db);
             }
+            if let Some(t) = &m.transform {
+                let _ = write!(out, "  transform");
+                for f in crate::meta::Transform::FIELDS {
+                    let (v, d) = (t.get(f).unwrap_or(0.0), crate::meta::Transform::default_of(f).unwrap_or(0.0));
+                    if v != d {
+                        let _ = write!(out, " {f}={v}");
+                    }
+                }
+                if !t.keyframes.is_empty() {
+                    let keyed: Vec<&str> = t.keyframes.keys().map(String::as_str).collect();
+                    let _ = write!(out, " keyed={}", keyed.join(","));
+                }
+            }
         }
         for fx in &c.metadata.ve.effects {
             let _ = write!(out, "  {} {}", fx.id, fx.effect);

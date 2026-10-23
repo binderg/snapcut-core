@@ -616,3 +616,53 @@ fn gpu_export_reports_render_errors() {
     assert!(started.elapsed() < Duration::from_secs(20), "took {:?}", started.elapsed());
     assert!(!out.exists(), "no file is left behind");
 }
+
+/// Picture in picture: V2 at half size in the bottom-right quarter over V1,
+/// fading in with an opacity keyframe.
+#[test]
+fn transforms_place_and_fade_a_layer() {
+    use ve_model::meta::Keyframe;
+    use ve_model::time::RationalTime;
+    use ve_ops::transform::{self, TransformChange};
+    let work = dir("gpu-transform");
+    let red = work.join("red.mkv");
+    let blue = work.join("blue.mkv");
+    for (path, c) in [(&red, "red"), (&blue, "blue")] {
+        ffmpeg(&["-f", "lavfi", "-i", &format!("color=c={c}:s={SIDE}x{SIDE}:r={FPS}"), "-t", "1", "-c:v", "ffv1", "-pix_fmt", "yuv420p", path.to_str().unwrap()]);
+    }
+    let output = OutputSettings { width: SIDE, height: SIDE, rate: Rate::integer(FPS), sample_rate: 48_000, color_space: "bt709".into() };
+    let mut tl = ve_model::doc::new_project("pip", output);
+    add_asset(&mut tl, "asset_red", &red);
+    add_asset(&mut tl, "asset_blue", &blue);
+    tl = edit::insert(&tl, &insert("asset_red", None, None, None, false)).unwrap().0;
+    tl = ve_ops::tracks::add(&tl, TrackKind::Video, None, None).unwrap().0;
+    let (next, r) = edit::insert(&tl, &insert("asset_blue", Some("V2"), Some(fr(0)), None, true)).unwrap();
+    tl = next;
+    let top = r.created[0].id.clone();
+    let key = |f: i64, v: f64| Keyframe { t: RationalTime::from_frames(f, Rate::integer(FPS)), v: v.into(), ease: "linear".into() };
+    let change = TransformChange {
+        reset: false,
+        values: vec![("scale".into(), Some(0.5)), ("x".into(), Some(0.25)), ("y".into(), Some(0.25))],
+        keyframes: [("opacity".to_owned(), vec![key(0, 0.0), key(10, 1.0)])].into_iter().collect(),
+    };
+    tl = transform::set(&tl, &top, &change).unwrap().0;
+    assert!(ve_render::needs_gpu(&tl, ve_render::Span::new(fr(0), fr(1))).unwrap());
+
+    let at = |n: i64| rgb(&ve_render::compose::frame(&tl, fr(n), SIDE, ImageFormat::Png, &fx()).unwrap().bytes);
+    let close = |got: [u8; 3], want: [f64; 3]| (0..3).all(|c| (f64::from(got[c]) - want[c]).abs() <= 3.0);
+    // Fully in: V1 shows top left, V2 fills the bottom-right quarter.
+    let img = at(15);
+    let (r, b) = (img.get_pixel(16, 16).0, img.get_pixel(48, 48).0);
+    assert!(r[0] > 200 && r[2] < 40, "{r:?}");
+    assert!(b[2] > 200 && b[0] < 40, "{b:?}");
+    assert_eq!(img.get_pixel(16, 48).0, r, "outside the small picture is V1");
+    // Halfway through the fade: an even mix in linear light.
+    let mid = at(5).get_pixel(48, 48).0;
+    let want: [f64; 3] = std::array::from_fn(|c| enc(0.5 * lin(r[c]) + 0.5 * lin(b[c])));
+    assert!(close(mid, want), "got {mid:?}, want {want:.1?}");
+    // At frame 0 it is invisible.
+    assert_eq!(at(0).get_pixel(48, 48).0, r);
+    // The ffmpeg path draws it plain and says so.
+    let plain = ve_render::frame(&tl, fr(15), SIDE, ImageFormat::Png, &work).unwrap();
+    assert!(plain.warnings.iter().any(|w| w.contains("transform")), "{:?}", plain.warnings);
+}

@@ -14,6 +14,7 @@ use ve_ops::EditReport;
 use ve_ops::edit::{self, Delete, Insert, Move, RippleDelete, SetSpeed, SetVolume, Split, Trim};
 use ve_ops::markers::{self, NewMarker};
 use ve_ops::tracks::{self, TrackPlace, TrackReport};
+use ve_ops::transform::{self, TransformChange, TransformReport};
 use ve_protocol::{Actor, ActorKind, RpcError};
 
 use crate::commit::{Committed, actor_label, commit, commit_doc, mutation_params, parse_ratio, parse_time};
@@ -286,6 +287,70 @@ pub fn unlink(p: &mut OpenProject, a: UnlinkParams) -> Result<Committed<EditRepo
     commit(p, a.mutation(), "edit.unlink", |tl| edit::unlink(tl, &a.clip).map_err(edit_err))
 }
 
+/// A field that may be missing (keep), `null` (reset to its default) or a number.
+fn nullable<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Option<f64>>, D::Error> {
+    Option::<f64>::deserialize(d).map(Some)
+}
+
+mutation_params! {
+    /// `edit.set_transform`: position, size, rotation, opacity and crop of a
+    /// video clip's picture. Fields left out keep their value; `null` resets one.
+    pub struct SetTransformParams {
+        /// A clip on a video track.
+        pub clip: Id,
+        /// Offset of the picture's center from the canvas center, in canvas widths (-10 to 10).
+        #[serde(default, deserialize_with = "nullable")]
+        pub x: Option<Option<f64>>,
+        /// Offset in canvas heights; positive is down.
+        #[serde(default, deserialize_with = "nullable")]
+        pub y: Option<Option<f64>>,
+        /// Size relative to the fitted picture (0 to 20; default 1).
+        #[serde(default, deserialize_with = "nullable")]
+        pub scale: Option<Option<f64>>,
+        /// Degrees clockwise around the picture's center.
+        #[serde(default, deserialize_with = "nullable")]
+        pub rotation: Option<Option<f64>>,
+        /// 0 (invisible) to 1 (opaque, default).
+        #[serde(default, deserialize_with = "nullable")]
+        pub opacity: Option<Option<f64>>,
+        /// Fraction of the picture cut off this side (0 to 0.99).
+        #[serde(default, deserialize_with = "nullable")]
+        pub crop_left: Option<Option<f64>>,
+        #[serde(default, deserialize_with = "nullable")]
+        pub crop_right: Option<Option<f64>>,
+        #[serde(default, deserialize_with = "nullable")]
+        pub crop_top: Option<Option<f64>>,
+        #[serde(default, deserialize_with = "nullable")]
+        pub crop_bottom: Option<Option<f64>>,
+        /// Field -> keyframes (times from the clip's start), replacing that field's keyframes; `[]` removes them.
+        #[serde(default)]
+        pub keyframes: Option<std::collections::BTreeMap<String, Vec<crate::fx::KeyframeArg>>>,
+        /// Start from the default (fitted, centered, opaque, no keyframes) before applying the rest.
+        #[serde(default)]
+        pub reset: bool,
+    }
+}
+
+pub fn set_transform(p: &mut OpenProject, a: SetTransformParams) -> Result<Committed<TransformReport>, RpcError> {
+    let fields = [
+        ("x", a.x),
+        ("y", a.y),
+        ("scale", a.scale),
+        ("rotation", a.rotation),
+        ("opacity", a.opacity),
+        ("crop_left", a.crop_left),
+        ("crop_right", a.crop_right),
+        ("crop_top", a.crop_top),
+        ("crop_bottom", a.crop_bottom),
+    ];
+    let change = TransformChange {
+        reset: a.reset,
+        values: fields.into_iter().filter_map(|(k, v)| v.map(|v| (k.to_owned(), v))).collect(),
+        keyframes: a.keyframes.as_ref().map(|k| crate::fx::keyframes(p, k)).transpose()?.unwrap_or_default(),
+    };
+    commit(p, a.mutation(), "edit.set_transform", |tl| transform::set(tl, &a.clip, &change).map_err(edit_err))
+}
+
 // --- markers ---
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
@@ -514,6 +579,20 @@ mutation_params! {
 
 pub fn track_rename(p: &mut OpenProject, a: TrackRenameParams) -> Result<Committed<TrackReport>, RpcError> {
     commit(p, a.mutation(), "track.rename", |tl| tracks::rename(tl, &a.track, &a.name).map_err(edit_err))
+}
+
+mutation_params! {
+    /// `track.set`: hide or show a video track, mute or unmute an audio track.
+    pub struct TrackSetParams {
+        /// Track ID or name.
+        pub track: String,
+        /// False hides a video track or mutes an audio track; renders skip it.
+        pub enabled: bool,
+    }
+}
+
+pub fn track_set(p: &mut OpenProject, a: TrackSetParams) -> Result<Committed<TrackReport>, RpcError> {
+    commit(p, a.mutation(), "track.set", |tl| tracks::set_enabled(tl, &a.track, a.enabled).map_err(edit_err))
 }
 
 mutation_params! {

@@ -238,11 +238,13 @@ pub fn registry(session: Arc<Session>) -> Arc<Registry> {
     on_project!("edit.delete", "Remove clips and leave gaps", true, edit::delete);
     on_project!("edit.set_speed", "Change a clip's speed (exact ratio); writes OTIO LinearTimeWarp too", true, edit::set_speed);
     on_project!("edit.set_volume", "Set a clip's audio gain in dB", true, edit::set_volume);
+    on_project!("edit.set_transform", "Position, scale, rotate, fade (opacity) or crop a video clip's picture", true, edit::set_transform);
     on_project!("edit.unlink", "Break a clip's link with its partners so each is edited alone", true, edit::unlink);
     on_project!("track.add", "Add a video or audio track (any number of each)", true, edit::track_add);
     on_project!("track.remove", "Remove a track (with its clips only when forced)", true, edit::track_remove);
     on_project!("track.rename", "Rename a track", true, edit::track_rename);
     on_project!("track.move", "Change a track's position among tracks of its kind (video: stacking order)", true, edit::track_move);
+    on_project!("track.set", "Hide or show a video track, mute or unmute an audio track", true, edit::track_set);
     on_project!("track.list", "Every track with its kind, position and clip count", false, |p: &mut OpenProject, _: NoParams| Ok(edit::track_list(p)));
     on_project!("fx.list", "Effects and transitions this project can use, with their param schemas", false, |p: &mut OpenProject, _: NoParams| Ok(fx::list(p)));
     on_project!("fx.define", "Validate a WGSL effect or transition (naga, then a GPU test render) and save it to the project", false, fx::define);

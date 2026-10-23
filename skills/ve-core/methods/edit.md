@@ -134,6 +134,48 @@ speed`). Writes OTIO's `LinearTimeWarp` too. Audio is pitch-corrected
 `{"clip": id, "db": -6, "linked": true}`. Sets (not adds) the gain of the
 clip's audio, -100 to +30 dB. On a video clip it applies to its linked audio.
 
+## `edit.set_transform`
+
+Where a video clip's picture sits on the canvas: picture in picture, a logo
+in a corner, a split screen, a slow zoom, a fade. Applied after the clip's
+effects, before it is stacked on the tracks below (video track 0 is the
+bottom layer; see [tracks.md](tracks.md)).
+
+| Param | Default | |
+| --- | --- | --- |
+| `clip` | required | A clip on a video track (for an A/V clip, its video side) |
+| `x` | 0 | Offset of the picture's center from the canvas center, in canvas widths (-10 to 10) |
+| `y` | 0 | Same in canvas heights; positive is down |
+| `scale` | 1 | Size relative to the picture fitted to the canvas (0 to 20) |
+| `rotation` | 0 | Degrees, clockwise, around the picture's center |
+| `opacity` | 1 | 0 invisible to 1 opaque |
+| `crop_left`, `crop_right`, `crop_top`, `crop_bottom` | 0 | Fraction cut off that side (0 to 0.99; opposite sides under 0.99 together). The rest stays where it was |
+| `keyframes` | | Field -> `[{"at": "1s", "value": 0.5, "ease": "linear"}]`, times from the clip's start; replaces that field's keys, `[]` removes them. `ease` is `linear` or `hold` |
+| `reset` | false | Start from the default before applying the rest |
+
+Fields left out keep their value; `null` puts one back to its default.
+A transform back at the default (and no keyframes) is removed from the
+document. Keyframes move with the right half when a clip is split.
+
+```json
+{"clip": "clip_9c1e", "scale": 0.35, "x": 0.3, "y": 0.3,
+ "keyframes": {"opacity": [{"at": "0s", "value": 0}, {"at": "0.5s", "value": 1}]}}
+```
+
+puts the clip in the bottom-right corner at 35% size and fades it in over
+half a second. Returns the clip's whole transform:
+
+```json
+{"clip": "clip_9c1e", "x": 0.3, "y": 0.3, "scale": 0.35, "rotation": 0.0, "opacity": 1.0,
+ "crop_left": 0.0, "crop_right": 0.0, "crop_top": 0.0, "crop_bottom": 0.0,
+ "keyframed": ["opacity"], "revision": 12, "changed": true, "patch": [...]}
+```
+
+It is stored in `metadata.ve.clip.transform`. Only the GPU compositor draws
+transforms: renders with one in range use it automatically, like effects;
+contact sheets (ffmpeg) show the clip fitted and centered, with a warning.
+Rotated edges are not anti-aliased yet.
+
 ## `edit.unlink`
 
 `{"clip": id}`. Breaks the link between a clip and its partners (a video clip

@@ -14,15 +14,16 @@ The edit methods (`base_rev`, `dry_run`, `actor`, a patch, a
 `project.changed` event, undoable) return:
 
 ```json
-{"track": {"id": "trk_50b7f3", "name": "V2", "kind": "video", "index": 1, "clips": 0},
- "tracks": [{"id": "trk_ee8c2a", "name": "V1", "kind": "video", "index": 0, "clips": 1},
-            {"id": "trk_50b7f3", "name": "V2", "kind": "video", "index": 1, "clips": 0},
-            {"id": "trk_0b54dd", "name": "A1", "kind": "audio", "index": 0, "clips": 1}],
+{"track": {"id": "trk_50b7f3", "name": "V2", "kind": "video", "index": 1, "clips": 0, "enabled": true},
+ "tracks": [{"id": "trk_ee8c2a", "name": "V1", "kind": "video", "index": 0, "clips": 1, "enabled": true},
+            {"id": "trk_50b7f3", "name": "V2", "kind": "video", "index": 1, "clips": 0, "enabled": true},
+            {"id": "trk_0b54dd", "name": "A1", "kind": "audio", "index": 0, "clips": 1, "enabled": true}],
  "revision": 3, "changed": true, "patch": [...]}
 ```
 
 `track` is the track acted on (as it was, for a removal); `tracks` is every
-track afterwards, in document order; `clips` counts the items on a track.
+track afterwards, in document order; `clips` counts the items on a track;
+`enabled` is false for a hidden video track or a muted audio track.
 
 ## `track.add` (edit)
 
@@ -49,11 +50,21 @@ another track's ID.
 `{"track": "V3", "index": 0}`. New position among tracks of its kind
 (`index 0` on a video track sends it to the bottom).
 
+## `track.set` (edit)
+
+`{"track": "V2", "enabled": false}` hides a video track (renders do not
+draw it) or mutes an audio track (renders do not mix it). `true` brings it
+back. Edits still apply to its clips. This is OTIO's own `enabled` flag, so
+other editors see it too.
+
 ## `track.list`
 
 No params. `{"revision": 8, "tracks": [ ...as above... ]}`. The same data is
 in the document (`tracks.children`); this is a shortcut for agents and tools.
 
-Not yet: a method to mute or hide a track, locking, and track effects.
-Renders already skip a track whose OTIO `enabled` flag is false (a file from
-another editor can carry one); no method sets it yet.
+**Layers.** Each upper video track draws over the ones below. Where an
+upper clip covers the whole canvas the tracks below do not show; use
+`edit.set_transform` ([edit.md](edit.md#editset_transform)) to shrink,
+move, crop or fade it so they do.
+
+Not yet: locking, solo, and track effects.

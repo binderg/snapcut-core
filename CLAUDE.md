@@ -208,8 +208,18 @@ rebuild; `VE_DAEMON_ORIGIN` tells the daemon which binary it stands for.
 Tracks (`ve-ops::tracks`): `track.add|remove|rename|move|list`, any number
 of video and audio tracks. Positions (`index`) count within a kind; for video
 that is the stacking order (0 is the bottom). Removing a track with clips
-needs `force`. CLI `ve track list|add|rm|rename|move`. Renders already skip a
-track with OTIO `enabled: false`; no method sets it yet.
+needs `force`. CLI `ve track list|add|rm|rename|move|hide|show` (`mute`/`unmute`
+are aliases). `track.set {enabled}` writes OTIO's own `enabled` flag: renders
+skip a disabled video track (hidden) or audio track (muted).
+Transforms (`ve-ops::transform`, `edit.set_transform`, CLI `ve transform`):
+`metadata.ve.clip.transform` holds x/y (canvas fractions from center), scale
+(of the fitted size), rotation (degrees clockwise), opacity, crop per side,
+with keyframes like effects (clip-relative, moved on split). GPU only: the
+rect shader draws a quad (crop as a UV sub-rect, rotation on the CPU,
+opacity in the fragment), and the default placement stays 0-diff vs ffmpeg.
+Decode size follows the largest scale the clip reaches, capped at the
+source size. `needs_gpu` counts transforms; the ffmpeg path warns and draws
+the clip fitted. Rotated edges are not anti-aliased yet.
 GPU compositor spike (`ve-render::gpu`, `::compose`; the Phase 0 gate):
 wgpu 30 device created once per process (prefers the discrete GPU, falls
 back to WARP/llvmpipe); layers upload as `Rgba8UnormSrgb`, blend
