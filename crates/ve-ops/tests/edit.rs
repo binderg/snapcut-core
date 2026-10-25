@@ -431,6 +431,62 @@ fn reorder_refuses_to_pull_links_apart() {
     assert!(err.is_err());
 }
 
+/// Three A/V shots with a 4 s video-only B-roll clip between shots 1 and 2
+/// (A1 has a 4 s hole under it).
+fn shots_with_broll() -> (Timeline, Vec<(Id, Id)>, Id) {
+    let (tl, s) = three_shots();
+    let tl = edit::insert(&tl, &insert_video(sec(10), 4)).unwrap().0;
+    let broll = rows(&tl).into_iter().find(|r| r.link.is_none()).unwrap().id;
+    (tl, s, broll)
+}
+
+fn assert_pairs_in_sync(tl: &Timeline, s: &[(Id, Id)]) {
+    for (v, a) in s {
+        assert_eq!(start_of(tl, v), start_of(tl, a), "{v} and {a} out of sync");
+    }
+}
+
+#[test]
+fn ripple_trim_of_unlinked_clip_moves_later_pairs_on_both_tracks() {
+    let (tl, s, broll) = shots_with_broll();
+    let trim = |tl: &Timeline, out: Q| {
+        edit::trim(tl, &Trim { clip: broll.clone(), in_delta: None, out_delta: Some(out), roll: false, linked: false })
+    };
+    // Longer: shots 2 and 3 move right 2 s with their sound.
+    let (longer, _) = trim(&tl, sec(2)).unwrap();
+    assert_pairs_in_sync(&longer, &s);
+    assert_eq!(start_of(&longer, &s[1].1), sec(16));
+    // Shorter: the hole under the B-roll on A1 gives the sound room to close up.
+    let (shorter, _) = trim(&tl, sec(-2)).unwrap();
+    assert_pairs_in_sync(&shorter, &s);
+    assert_eq!(start_of(&shorter, &s[2].1), sec(22));
+}
+
+#[test]
+fn speed_and_ripple_delete_on_one_track_keep_pairs_in_sync() {
+    let (tl, s, broll) = shots_with_broll();
+    let (fast, _) = edit::set_speed(&tl, &SetSpeed { clip: broll.clone(), speed: sec(2), linked: false, ripple: true }).unwrap();
+    assert_pairs_in_sync(&fast, &s);
+    assert_eq!(start_of(&fast, &s[1].0), sec(12));
+    let del = RippleDelete { ranges: vec![(sec(10), sec(14))], markers: None, tracks: vec!["V1".into()], clips: vec![], linked: true };
+    let (cut, _) = edit::ripple_delete(&tl, &del).unwrap();
+    assert_pairs_in_sync(&cut, &s);
+    assert_eq!(start_of(&cut, &s[1].0), sec(10));
+}
+
+#[test]
+fn ripple_on_one_side_is_refused_when_the_partner_track_has_no_room() {
+    let (tl, s) = three_shots();
+    // Shorten shot 1's picture only: shot 2's sound would have to slide under shot 1's sound.
+    let err = edit::trim(&tl, &Trim { clip: s[0].0.clone(), in_delta: None, out_delta: Some(sec(-2)), roll: false, linked: false })
+        .unwrap_err();
+    assert!(err.0.contains("no room"), "{err}");
+    // Trimming both sides together is fine: everything after closes up on both tracks.
+    let (tl, _) =
+        edit::trim(&tl, &Trim { clip: s[0].0.clone(), in_delta: None, out_delta: Some(sec(-2)), roll: false, linked: true }).unwrap();
+    assert_pairs_in_sync(&tl, &s[1..]);
+}
+
 // --- property tests ---
 
 #[derive(Debug, Clone)]
@@ -451,8 +507,8 @@ fn arb_op() -> impl Strategy<Value = Op> {
         (0usize..8, -60i64..60, -60i64..60, any::<bool>()).prop_map(|(pick, din, dout, roll)| Op::Trim { pick, din, dout, roll }),
         (0usize..8, 1i64..5, 1i64..5).prop_map(|(pick, num, den)| Op::Speed { pick, num, den }),
         (0usize..8, -300i64..300, any::<bool>()).prop_map(|(pick, by, push)| Op::Move { pick, by, push }),
-        // Only A/V inserts here: ripple trims and speed changes on an unlinked
-        // clip still push its own track only, which would pull later pairs apart.
+        // Only A/V inserts here: the checks below expect every clip to have a twin.
+        // `unlinked_ripples_keep_links_in_sync` covers video-only clips.
         (0i64..9000, 1i64..300).prop_map(|(at, len)| Op::Insert { at, len, audio: true }),
         (0usize..8, 0usize..8).prop_map(|(pick, to)| Op::Reorder { pick, to }),
     ]
@@ -557,6 +613,38 @@ proptest! {
                 prop_assert_eq!(twins.len(), 2, "{:?}", r);
                 prop_assert_eq!(twins[0].start, twins[1].start);
                 prop_assert_eq!(twins[0].media, twins[1].media);
+            }
+            tl = next;
+        }
+    }
+
+    /// Video-only clips, then ripples on one track (unlinked trims and speed
+    /// changes, ripple deletes on V1): every link keeps its members' offsets,
+    /// or the edit is refused.
+    #[test]
+    fn unlinked_ripples_keep_links_in_sync(ops in prop::collection::vec((0u8..4, 0i64..3000, -90i64..90, 1usize..8), 1..12)) {
+        let (mut tl, _) = three_shots();
+        for (kind, a, b, pick) in ops {
+            let vids = ids_of(&rows(&tl), TrackKind::Video);
+            let clip = vids[pick % vids.len()].clone();
+            let next = match kind {
+                0 => edit::insert(&tl, &{ let mut p = insert_video(fr(a % 900), 0); p.duration = Some(fr(b.abs() + 1)); p }),
+                1 => edit::trim(&tl, &Trim { clip, in_delta: (b % 2 == 0).then(|| fr(b / 3)), out_delta: Some(fr(b)), roll: false, linked: false }),
+                2 => edit::set_speed(&tl, &SetSpeed { clip, speed: Q::new(pick as i64, 1 + (a % 4)), linked: false, ripple: true }),
+                _ => edit::ripple_delete(&tl, &RippleDelete {
+                    ranges: vec![(fr(a % 900), fr(a % 900 + b.abs() + 1))], markers: None, tracks: vec!["V1".into()], clips: vec![], linked: true,
+                }),
+            };
+            let Ok((next, _)) = next else { continue };
+            let before = rows(&tl);
+            let after = rows(&next);
+            let start = |r: &[Row], id: &Id| r.iter().find(|x| &x.id == id).map(|x| x.start);
+            for x in after.iter().filter(|x| x.link.is_some()) {
+                for y in after.iter().filter(|y| y.link == x.link && y.id != x.id) {
+                    if let (Some(bx), Some(by)) = (start(&before, &x.id), start(&before, &y.id)) {
+                        prop_assert_eq!(x.start - y.start, bx - by, "{} and {} drifted: {:?}", x.id, y.id, after);
+                    }
+                }
             }
             tl = next;
         }

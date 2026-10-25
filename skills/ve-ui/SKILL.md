@@ -5,6 +5,9 @@ description: ui.* methods for human editors (media panel thumbnails, drag-to-pus
 
 # ve-ui
 
+**Experimental.** These methods may change or move in any release, without
+the deprecation window the core methods get.
+
 **Temporary home.** These methods exist for human UIs only and are meant to
 move into a UI plugin once the plugin host (`ve-plugin`) exists. Today they
 live in `ve-daemon::ui` behind the `ui-api` cargo feature (default on); an

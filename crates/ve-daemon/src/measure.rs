@@ -338,9 +338,13 @@ fn cached<T: Serialize + DeserializeOwned>(
 fn cache_path(hash: &str, method: &str, key: &Value) -> Option<PathBuf> {
     let base = cache_base().ok()?;
     let key = blake3::hash(format!("v{CACHE_VERSION} {key}").as_bytes()).to_hex();
-    // Asset hashes are blake3 hex; keep the folder name short and path-safe.
-    let dir: String = hash.chars().filter(char::is_ascii_alphanumeric).take(32).collect();
-    Some(base.join("measure").join(dir).join(format!("{method}-{}.json", &key[..16])))
+    Some(base.join("measure").join(cache_dir_name(hash)).join(format!("{method}-{}.json", &key[..16])))
+}
+
+/// Folder name for one file's measurements. Asset hashes are blake3 hex;
+/// keep the name short and path-safe.
+pub(crate) fn cache_dir_name(hash: &str) -> String {
+    hash.chars().filter(char::is_ascii_alphanumeric).take(32).collect()
 }
 
 fn write_cache<T: Serialize>(path: &Path, value: &T) -> std::io::Result<()> {

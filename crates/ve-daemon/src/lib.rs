@@ -9,6 +9,7 @@
 //! This crate also wires every method into the shared [`ve_protocol::Registry`].
 
 pub mod analyze;
+pub mod cache;
 pub mod client;
 pub mod commit;
 pub mod edit;
@@ -337,6 +338,15 @@ pub fn registry(session: Arc<Session>) -> Arc<Registry> {
     let s = session.clone();
     r.method("jobs.cancel", "Stop a background job (queued: at once; running: its ffmpeg run is killed)", false, move |p: JobParams| {
         s.jobs.cancel(&p.job_id)
+    });
+
+    let s = session.clone();
+    r.method("cache.status", "How much the project's rebuildable caches (frames, previews, renders, measurements) hold", false, move |_: NoParams| {
+        cache::status(&s)
+    });
+    let s = session.clone();
+    r.method("cache.clear", "Delete the project's rebuildable caches (all, or some kinds); refused while a job runs", false, move |p: cache::ClearParams| {
+        cache::clear(&s, p)
     });
 
     let s = session.clone();

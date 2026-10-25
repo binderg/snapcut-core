@@ -1,0 +1,83 @@
+name: Release
+
+# Push a tag like v0.1.0-rc.1 to build every platform and publish a GitHub
+# release. Tags with a hyphen (rc, beta) are marked as pre-releases.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: build (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-22.04, target: x86_64-unknown-linux-gnu }
+          - { os: ubuntu-22.04-arm, target: aarch64-unknown-linux-gnu }
+          - { os: macos-14, target: aarch64-apple-darwin }
+          - { os: macos-14, target: x86_64-apple-darwin }
+          - { os: windows-2022, target: x86_64-pc-windows-msvc }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup target add ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Build
+        run: cargo build --release --locked -p ve-cli --target ${{ matrix.target }}
+
+      # Archive names carry no version, so releases/latest/download/<name>
+      # always points at the newest build (the install scripts rely on it).
+      - name: Package
+        shell: bash
+        run: |
+          name="ve-${{ matrix.target }}"
+          bin=ve
+          if [ "$RUNNER_OS" = Windows ]; then bin=ve.exe; fi
+          mkdir -p "dist/$name"
+          cp "target/${{ matrix.target }}/release/$bin" "dist/$name/"
+          cp -r README.md CHANGELOG.md LICENSE-MIT LICENSE-APACHE skills "dist/$name/"
+          cd dist
+          if [ "$RUNNER_OS" = Windows ]; then
+            7z a "$name.zip" "$name" > /dev/null
+          else
+            tar czf "$name.tar.gz" "$name"
+          fi
+          rm -rf "$name"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: dist/*
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        run: cd dist && sha256sum * > SHA256SUMS.txt
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          pre=""
+          case "$GITHUB_REF_NAME" in *-*) pre="--prerelease" ;; esac
+          gh release create "$GITHUB_REF_NAME" dist/* install.sh install.ps1 \
+            --title "$GITHUB_REF_NAME" \
+            --notes "See [CHANGELOG.md](https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_REF_NAME/CHANGELOG.md). Needs FFmpeg on PATH." \
+            $pre

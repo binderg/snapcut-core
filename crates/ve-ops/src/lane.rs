@@ -312,6 +312,12 @@ impl Lane {
         }
     }
 
+    /// Turn plain gaps into holes, so content can slide into them.
+    /// [`Lane::into_children`] fills holes with gaps again.
+    pub fn drop_plain_gaps(&mut self) {
+        self.items.retain(|p| !matches!(&p.item, Composable::Gap(g) if is_plain_gap(g)));
+    }
+
     /// Put an item into free space.
     pub fn place(&mut self, p: Placed) {
         let i = self.items.partition_point(|q| q.start <= p.start);

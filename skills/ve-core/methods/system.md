@@ -2,7 +2,7 @@
 
 ## `system.version`
 
-No params. `{"engine": "0.1.0", "protocol": 1, "schema": "0.1.0"}`.
+No params. `{"engine": "0.1.0-rc.1", "protocol": 1, "schema": "0.1.0"}`.
 `protocol` changes only on breaking protocol changes; `schema` is the project
 file schema this engine writes.
 
@@ -16,7 +16,7 @@ No params. The OpenRPC document for every method. See
 No params. Only on a daemon (errors with `invalid_params` in-process).
 
 ```json
-{"pid": 32752, "engine": "0.1.0",
+{"pid": 32752, "engine": "0.1.0-rc.1",
  "exe": {"path": "C:\\...\\ve.exe", "modified": "1761090000000000000"},
  "project": "C:\\Users\\me\\Videos\\my-edit",
  "socket": "ve-6b692bae2d27fa88",

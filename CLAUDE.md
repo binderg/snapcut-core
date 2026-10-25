@@ -1,13 +1,11 @@
-# CLAUDE.md — Headless Video Engine
+# CLAUDE.md: Headless Video Engine
 
 Headless, agent-friendly video editing engine in Rust (CapCut alternative). The
 engine is the product; every UI, agent, script and plugin is a client of one
 JSON-RPC 2.0 protocol. Primary use case: an agent editing real footage
 (talking heads, podcasts, phone clips, screen recordings) alongside the user.
 
-- Full design: `ARCHITECTURE.md` (exported copy). Live doc, which is ahead of the
-  export and has a "Core crate stack" tab with researched crate picks:
-  https://claude.ai/artifact/2wLqcMJu4wNw995uEt4exS
+- Full design: `ARCHITECTURE.md`. Release notes: `CHANGELOG.md`.
 - `ve` is a placeholder name for the product, binary and `metadata.ve` namespace.
 
 ## Decisions already made (do not relitigate without asking)
@@ -77,7 +75,8 @@ JSON-RPC 2.0 protocol. Primary use case: an agent editing real footage
 - Never add `dssim-core` (AGPL). Golden frames use `image-compare`.
 - `symphonia` is MPL-2.0 (fine; file-level copyleft).
 - gl-transitions importer must carry each shader's own license header.
-- Engine license itself is still undecided (`license = "TBD"`).
+- The engine is `MIT OR Apache-2.0` (`LICENSE-MIT`, `LICENSE-APACHE`). New
+  dependencies must be compatible with that (no GPL/AGPL in shipped code).
 
 ## Workspace
 
@@ -94,8 +93,8 @@ copies the workspace lints by hand for that reason.
 ## Build
 
 - Toolchain pinned in `rust-toolchain.toml` (1.97).
-- This folder is inside OneDrive: set `CARGO_TARGET_DIR` to a path outside
-  OneDrive before building, or `target/` syncs gigabytes.
+- If the checkout is in a synced folder (OneDrive, Dropbox), set
+  `CARGO_TARGET_DIR` to a path outside it, or `target/` syncs gigabytes.
 - `cargo test --workspace`, `cargo clippy --workspace --all-targets` must stay clean.
 - Phase 1 needs `ffmpeg` and `ffprobe` on PATH.
 
@@ -129,7 +128,7 @@ set_volume, marker add/remove, as pure fns over flattened tracks
 (`ve-ops::lane`), with proptests (patches invert, linked clips stay in sync,
 clips never read past their media). Clips inserted from an A/V asset share a
 `metadata.ve.clip.link` and are edited together unless `linked: false` (how
-J/L cuts are made: roll one side). Insert (non-overwrite) also cuts the linked partners of a clip it splits and pushes any track holding a partner of a clip that moves, from that partner's start; ripple trim, speed and ripple delete on an *unlinked* clip still move only its own track (can pull later pairs apart; open). Timeline times snap to the project frame
+J/L cuts are made: roll one side). Insert (non-overwrite) also cuts the linked partners of a clip it splits and pushes any track holding a partner of a clip that moves, from that partner's start; ripple trim, speed and ripple delete on one side only (an unlinked clip, or `tracks` naming some tracks) make every other track holding a partner of a clip that moved follow from that partner's start (`follow_links`), and are refused when that track has no room (so a link is never pulled apart). Timeline times snap to the project frame
 grid. Speed convention: `source_range.duration` is timeline time, media used
 is `duration * speed` (OTIO's time-warp convention), and `LinearTimeWarp` is
 written too. Patches come from our own prefix/suffix JSON diff
@@ -161,7 +160,7 @@ the start (ms timestamps make seeks off by up to 0.5 ms). Methods
 `render.export` (MP4 in `<cache>/projects/<hash>/renders/`, CLI moves it to
 `-o`), `render.presets` (`ve-export`: master, youtube-1080p/720p,
 vertical-1080x1920 (crop-fill), draft-540p). Encoder: libx264 if the local
-ffmpeg has it, else hardware, openh264, mpeg4. Synchronous (no jobs yet).
+ffmpeg has it, else hardware, openh264, mpeg4.
 `VE_KEEP_GRAPH=1` keeps the generated graph for debugging. Tests check exact
 frames and samples against sources whose luma/samples encode position.
 Analyzers (`ve-analyze`, `ve-daemon::analyze`): `analyze.silence`
@@ -185,8 +184,13 @@ queued by `commit_doc` and broadcast after each call under the session lock
 (so in revision order; it can reach the caller before its own response).
 `events.lagged` and `project.reloaded` mean refetch. The daemon re-reads
 `project.otio` when its mtime/size changes under it (external edits), so it
-never overwrites them. Calls still serialize on the session mutex: a long
-export blocks other calls until jobs exist. Named pipe ACL is the Windows
+never overwrites them. Slow work (export, previews, analysis, measurements)
+runs on a project snapshot without the session lock, optionally as a
+background job (`ve-daemon::jobs`, `jobs.list|get|cancel`, 2 at once).
+`cache.status|clear` (`ve-daemon::cache`, CLI `ve cache`) report and delete
+the rebuildable caches (frames, previews, renders, this project's
+measurements), refused while a job runs; undo history is never touched.
+Named pipe ACL is the Windows
 default (not locked down further).
 Measurements (`ve-analyze::{loudness,levels,pitch}`, `ve-daemon::measure`,
 `ve-render::source`): read-only `measure.loudness` (ffmpeg `ebur128`,
@@ -307,7 +311,10 @@ ffmpeg 86 s (5.5 ms/frame), GPU 396 s (25.4 ms/frame), x264 alone 77 s.
 Contact sheets still warn (ffmpeg only). In-process decoding (`ffmpeg-the-third`) is
 planned for fast random scrubbing (ARCHITECTURE.md, "Decoding for the
 compositor"); it needs LLVM and an LGPL shared FFmpeg build, decide first.
-No CI yet; the Python check runs by hand.
+CI (`.github/workflows/ci.yml`): clippy `-D warnings` and tests on Linux,
+macOS and Windows, plus the Python OTIO check. Releases
+(`release.yml`): a `v*` tag builds five targets and publishes a GitHub
+release with `install.sh` / `install.ps1`. Version 0.1.0-rc.1.
 
 Phase 1 gate: **an agent cuts a 10-minute talking head end to end via the CLI only.**
 
@@ -327,15 +334,10 @@ Not done yet, and what the gate still needs (suggested order, not decided):
 - Run the gate for real: an agent with only the skill cutting real footage
   (so far only a synthetic 10-min talking head has been cut end to end).
 - (done) Daemon socket + connect-or-spawn + WebSocket + `project.changed`.
-- Jobs: export, analyze and measure are synchronous and hold the session
-  lock, so a UI or agent waits behind them.
 - Video measurements: exposure/brightness, saturation, color cast, histogram
   (`signalstats`), black/frozen frames, letterboxing, interlacing, blur.
-- Proxies on import (needs jobs); faster seeks for long-GOP phone footage.
-- HLS playback stream for web frontends (after jobs; plan in ARCHITECTURE.md,
-  "Frame server").
-- Per-clip transforms, transitions and effects wait for the wgpu compositor
-  (owner's call, Oct 22 2026: no half-way ffmpeg versions).
+- Proxies on import (jobs exist now); faster seeks for long-GOP phone footage.
+- HLS playback stream for web frontends (plan in ARCHITECTURE.md, "Frame server").
 - `ve-plugin` host, then move the analyzers to `plugins/core` (dogfooding).
 - Effect packs (plugins with only effect manifests + WGSL), installed per user
   and scanned at startup, with copy on use into the project's `effects/`.

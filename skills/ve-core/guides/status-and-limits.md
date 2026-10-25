@@ -1,23 +1,23 @@
 # Status and limits
 
-What the core does not do yet, as of protocol 1 / engine 0.1, so clients can
-plan around it. When something here gets built, this file changes.
+What the core does not do yet, as of protocol 1 / engine 0.1.0-rc.1, so
+clients can plan around it. When something here gets built, this file
+changes.
 
 ## Not built yet
 
 | Missing | What to do meanwhile |
 | --- | --- |
 | **Imports as jobs** | `media.import` of big files still holds the project until done (renders, analysis and measurements run as jobs: [../methods/jobs.md](../methods/jobs.md)) |
-| **Video playback stream** / serving media over HTTP | `render.frame` for stills; `render.range_preview` MP4s; or a desktop shell plays source files directly |
-| **Track mute, hide, lock** | Remove clips or move them to another track |
-| **Effects and transitions in contact sheets** | Frames, range previews and exports use the GPU automatically when the range has effects or transitions; `render.contact_sheet` still shows plain cuts and unprocessed clips, with a warning. Use `render.frame` at the times you want to see |
+| **Video playback stream** / serving media over HTTP | `render.frame` for stills (cached by content, ~10 ms on a hit); `render.range_preview` MP4 chunks; or a desktop shell plays source files directly |
+| **Track lock** | Hide and mute exist (`track.set {enabled}`); nothing stops edits on a track yet |
+| **Effects, transitions and transforms in contact sheets** | Frames, range previews and exports use the GPU automatically when the range needs it; `render.contact_sheet` still shows plain cuts and unprocessed clips, with a warning. Use `render.frame` at the times you want to see |
+| **Anti-aliased edges** on rotated clips | Edges of a rotated picture are hard; fine for small angles |
 | **Titles, text, shapes, masks, LUTs, audio effects; `wasm` and `ofx` effect runtimes** | Write a `wgsl` effect ([writing-effects.md](writing-effects.md)); titles will come as generator plugins |
-| **Picture transforms** (scale, position, crop per clip) | Sources are fit to the project size (`master`) or cropped (vertical preset) only |
 | **Video measurements** (brightness, saturation, black or frozen frames, blur) | Not available; only audio measurements |
 | **Per-clip measurements** (`clip` param, a report of every clip) | Measure an asset (whole file) or a timeline range |
-| **Proxies** for heavy footage | Frames come from originals |
+| **Proxies** for heavy footage | Frames come from originals, so long-GOP phone footage seeks slowly |
 | **Plugins** (and anything AI: transcription, captions, keying) | No plugin host yet; the core will never bundle models |
-| **Frame cache** | Each `render.frame` runs ffmpeg |
 | **More than one project per daemon** | One daemon per project folder; connect to each separately |
 | **Remote access** | Loopback only, by design for now |
 

@@ -3,10 +3,10 @@ resolver = "3"
 members = ["crates/*"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.0-rc.1"
 edition = "2024"
 rust-version = "1.88"
-license = "TBD" # open decision: MIT/Apache-2.0 vs MPL/AGPL
+license = "MIT OR Apache-2.0"
 publish = false
 
 # Every third-party version is pinned here, once. Member crates inherit with

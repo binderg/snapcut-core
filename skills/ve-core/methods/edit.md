@@ -13,6 +13,16 @@ and an audio clip sharing `metadata.ve.clip.link`. `split`, `trim`, `move`,
 unless `linked: false`. That keeps sound in sync; turn it off for J/L cuts or
 to change one side.
 
+**Ripples never pull links apart.** When a ripple (`trim` without `roll`,
+`set_speed` with `ripple`, `ripple_delete`) moves content on some tracks
+only (one side with `linked: false`, a video-only clip, or `tracks` naming
+some tracks), every other track holding a partner of a clip that moved
+moves with it by the same amount, from that partner's start. The edit fails
+with `invalid_params` ("has no room to move with them") when that track is
+full where it would have to slide, for example shortening only the picture
+of a shot whose sound runs on into the next one. Then edit both sides, or
+make room first.
+
 **Audio crossfades.** Every audio cut gets a 20 ms crossfade at render time.
 Nothing to do in the edit.
 
@@ -104,7 +114,7 @@ Remove time and close the gap. Give any of:
 | `ranges` | `[{"from": "...", "to": "..."}]` | Timeline ranges; overlapping ones merge |
 | `markers` | `"silence"` | The ranges of every timeline marker with this name |
 | `clips` | `[ids]` | These clips (and linked ones), each gap closed on its own track |
-| `tracks` | all tracks | Limit ranges to these tracks (all tracks keeps A/V in sync) |
+| `tracks` | all tracks | Limit ranges to these tracks (linked partners elsewhere still follow, see above) |
 | `linked` | true | |
 
 Clips partly inside a range are trimmed. Timeline markers inside a range are

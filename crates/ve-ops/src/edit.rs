@@ -210,6 +210,19 @@ impl Doc {
         Ok(out)
     }
 
+    /// Timeline start of every clip, to see later what a ripple moved.
+    fn starts(&self) -> HashMap<Id, Q> {
+        let mut out = HashMap::new();
+        for i in self.track_indices() {
+            for p in &self.lane_ref(i).items {
+                if let Some(id) = p.clip().and_then(clip_id) {
+                    out.insert(id.clone(), p.start);
+                }
+            }
+        }
+        out
+    }
+
     fn mark_changed(&mut self, id: &Id) {
         if !self.changed.contains(id) && !self.created.contains(id) {
             self.changed.push(id.clone());
@@ -534,6 +547,108 @@ fn make_room(d: &mut Doc, targets: &[(usize, Q, Q)], room: Room) -> Result<HashS
     Ok(from.into_keys().collect())
 }
 
+/// After a ripple moved content on the `pinned` lanes, keep links in sync.
+/// Every other lane holding a partner of a clip that moved shifts by the same
+/// amount from that partner's start (so J/L offsets keep), up to its next
+/// partner that moved by a different amount. `old` holds clip starts from
+/// before the edit. Refused when a lane has no room to move, or a link would
+/// still be pulled apart. Returns the lanes that followed.
+fn follow_links(d: &mut Doc, old: &HashMap<Id, Q>, pinned: &HashSet<usize>) -> Result<HashSet<usize>> {
+    let zero = Q::from_integer(0);
+    // (link, how far the clip moved, clip id) for every linked clip on a lane.
+    let moves = |d: &Doc, lane: usize| -> Vec<(Id, Q, Id)> {
+        d.lane_ref(lane)
+            .items
+            .iter()
+            .filter_map(|p| {
+                let c = p.clip()?;
+                let id = clip_id(c)?;
+                Some((clip_link(c)?.clone(), p.start - *old.get(id)?, id.clone()))
+            })
+            .collect()
+    };
+    let mut settled = pinned.clone();
+    let mut followers: HashSet<usize> = HashSet::new();
+    loop {
+        let mut by_link: HashMap<Id, Q> = HashMap::new();
+        for &l in &settled {
+            for (link, dt, _) in moves(d, l) {
+                by_link.entry(link).or_insert(dt);
+            }
+        }
+        let mut grew = false;
+        for l in d.track_indices() {
+            if settled.contains(&l) {
+                continue;
+            }
+            let mut anchors: Vec<(Q, Q)> = d
+                .lane_ref(l)
+                .items
+                .iter()
+                .filter_map(|p| Some((p.start, *by_link.get(p.clip().and_then(clip_link)?)?)))
+                .collect();
+            if anchors.iter().all(|a| a.1 == zero) {
+                continue;
+            }
+            anchors.sort();
+            let lane = d.lane(l);
+            lane.drop_plain_gaps();
+            for p in &mut lane.items {
+                let k = anchors.partition_point(|a| a.0 <= p.start);
+                if k > 0 {
+                    p.start += anchors[k - 1].1;
+                }
+            }
+            lane.items.sort_by(|a, b| a.start.cmp(&b.start).then(a.duration().cmp(&b.duration())));
+            settled.insert(l);
+            followers.insert(l);
+            grew = true;
+        }
+        if !grew {
+            break;
+        }
+    }
+
+    let name = |p: &Placed| p.clip().and_then(clip_id).map_or("a clip".to_owned(), ToString::to_string);
+    for &l in &followers {
+        let lane = d.lane_ref(l);
+        let clash = lane.items.windows(2).find(|w| w[1].start < w[0].end()).map(|w| (w[1].start, name(&w[0])));
+        if let Some((at, id)) = clash {
+            return Err(EditError::new(format!(
+                "this ripple moves clips that are linked to clips on track {t}, but {t} has no room to move with them \
+                 ({id} is in the way at {}); edit both sides together, or make room on {t} first",
+                tc(at, d.rate),
+                t = d.track_name(l)
+            )));
+        }
+        if lane.items.iter().any(|p| p.start < zero) {
+            return Err(EditError::new(format!(
+                "this ripple would move linked clips on track {} before the timeline start",
+                d.track_name(l)
+            )));
+        }
+    }
+    // A follower may still disagree with a partner elsewhere (two partners pulling one lane apart).
+    let mut seen: HashMap<Id, (Q, bool)> = HashMap::new();
+    for &l in &settled {
+        let follower = followers.contains(&l);
+        for (link, dt, id) in moves(d, l) {
+            match seen.get(&link) {
+                Some(&(other, f)) if other != dt && (f || follower) => {
+                    return Err(EditError::new(format!(
+                        "this ripple would pull {id} away from its linked clips; edit both sides together"
+                    )));
+                }
+                Some(_) => {}
+                None => {
+                    seen.insert(link, (dt, follower));
+                }
+            }
+        }
+    }
+    Ok(followers)
+}
+
 /// File names in URLs are percent-encoded (`IMG%204410.MOV`); show them plainly.
 fn urlencoding_decode(s: &str) -> String {
     let bytes = s.as_bytes();
@@ -640,7 +755,10 @@ pub fn trim(tl: &Timeline, p: &Trim) -> Result<(Timeline, EditReport)> {
     if din == zero && dout == zero {
         return Err(EditError::new("nothing to trim: give an in or out delta of at least one frame"));
     }
-    for (lane, id) in d.group(&p.clip, p.linked)? {
+    let old = d.starts();
+    let group = d.group(&p.clip, p.linked)?;
+    let pinned: HashSet<usize> = group.iter().map(|g| g.0).collect();
+    for (lane, id) in group {
         d.mark_changed(&id);
         if p.roll {
             if din != zero {
@@ -665,6 +783,9 @@ pub fn trim(tl: &Timeline, p: &Trim) -> Result<(Timeline, EditReport)> {
                 set_clip_duration(c, dur);
             }
         }
+    }
+    if !p.roll {
+        follow_links(&mut d, &old, &pinned)?;
     }
     d.finish()
 }
@@ -1002,9 +1123,10 @@ pub fn ripple_delete(tl: &Timeline, p: &RippleDelete) -> Result<(Timeline, EditR
     }
 
     let global = merge(global);
-    let rippled: HashSet<usize> = per_lane.keys().copied().collect();
-    // Decide marker rippling against the document before any track changes.
-    let ripple_marks: Vec<(Q, Q)> = global.iter().copied().filter(|&(a, _)| d.all_tracks_rippled(&rippled, a)).collect();
+    let mut rippled: HashSet<usize> = per_lane.keys().copied().collect();
+    let old = d.starts();
+    // Marker rippling is decided against track ends from before the edit.
+    let ends: HashMap<usize, Q> = d.track_indices().into_iter().map(|i| (i, d.lane_ref(i).end())).collect();
     for (lane, ranges) in per_lane {
         let mut ids = std::mem::replace(&mut d.ids, Ids::new(HashSet::new()));
         let l = d.lane(lane);
@@ -1014,6 +1136,9 @@ pub fn ripple_delete(tl: &Timeline, p: &RippleDelete) -> Result<(Timeline, EditR
         }
         d.ids = ids;
     }
+    rippled.extend(follow_links(&mut d, &old, &rippled)?);
+    let ripple_marks: Vec<(Q, Q)> =
+        global.iter().copied().filter(|&(a, _)| ends.iter().all(|(i, &end)| rippled.contains(i) || end <= a)).collect();
     for (a, b) in ripple_marks.into_iter().rev() {
         ripple_markers_delete(&mut d.tl.tracks.markers, a, b);
     }
@@ -1076,7 +1201,10 @@ pub fn set_speed(tl: &Timeline, p: &SetSpeed) -> Result<(Timeline, EditReport)> 
     if p.speed < lo || p.speed > hi {
         return Err(EditError::new("speed must be between 1/100 and 100 (reverse playback is not supported yet)"));
     }
-    for (lane, id) in d.group(&p.clip, p.linked)? {
+    let old = d.starts();
+    let group = d.group(&p.clip, p.linked)?;
+    let pinned: HashSet<usize> = group.iter().map(|g| g.0).collect();
+    for (lane, id) in group {
         let (_, j) = d.locate(&id)?;
         let it = &d.lane_ref(lane).items[j];
         let (start, old_dur) = (it.start, it.duration());
@@ -1099,6 +1227,9 @@ pub fn set_speed(tl: &Timeline, p: &SetSpeed) -> Result<(Timeline, EditReport)> 
         set_clip_duration(c, new_dur);
         apply_speed(c, p.speed, &id);
         d.mark_changed(&id);
+    }
+    if p.ripple {
+        follow_links(&mut d, &old, &pinned)?;
     }
     d.finish()
 }

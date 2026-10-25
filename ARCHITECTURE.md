@@ -1,6 +1,6 @@
-# Headless Video Engine — Architecture
+# Headless Video Engine: Architecture
 
-Oct 20, 2026 · Gershon Binder · Live doc: https://claude.ai/artifact/2wLqcMJu4wNw995uEt4exS
+Design document, first written Oct 20, 2026 by Gershon Binder. The status of each part is in the TODO list at the end and in the changelog.
 
 ## Overview and goals
 
@@ -494,13 +494,13 @@ The method registry and JSON Schema generation start in Phase 1 even though the 
 
 ## Open decisions and risks
 
-**Decisions to make before Phase 1 ends**
+**Decisions**
 
 - [ ] Product name and CLI binary name (`ve` is a placeholder; the metadata namespace follows it).
-- [ ] License for the engine: permissive (MIT/Apache-2.0) for maximum adoption, or copyleft (MPL/AGPL) to keep forks open. This also decides what a commercial frontend or hosted version can look like.
-- [ ] Store the project as pure OTIO JSON, or as a folder (`project.otio` + `effects/` + `plugins/` + `cache/`). The folder is likely right because project-local effects and plugins need a home.
-- [ ] Whether `ve-model` reuses an existing OTIO Rust binding or implements the schema directly with `serde`. Direct `serde` structs are simpler and keep the core pure Rust.
-- [ ] Target platforms for v1: Windows + macOS first, Linux close behind.
+- [x] License: MIT OR Apache-2.0 (decided Oct 25, 2026), the Rust ecosystem default, so anyone can build on the engine, including commercial frontends.
+- [x] The project is a folder (`project.otio` + `effects/` + `plugins/`); caches live in the OS cache dir.
+- [x] `ve-model` implements the OTIO schema directly with `serde` (no binding), checked against Python `opentimelineio`.
+- [ ] Target platforms for v1: Windows, macOS and Linux. Development so far is on Windows; macOS and Linux need a full test run before the first release.
 
 **Risks**
 

@@ -344,6 +344,25 @@ enum Command {
     /// The project's background engine process (started on demand by other commands).
     #[command(subcommand)]
     Daemon(DaemonCmd),
+
+    /// Cached frames, previews, renders and measurements: show their size, or `ve cache clear`.
+    Cache {
+        #[command(subcommand)]
+        cmd: Option<CacheCmd>,
+    },
+}
+
+#[derive(Subcommand)]
+enum CacheCmd {
+    /// Delete the project's caches (everything is rebuilt when needed). Undo history is kept.
+    Clear {
+        /// Only these: frames, previews, renders, measure. Default: all.
+        #[arg(value_delimiter = ',')]
+        kinds: Vec<String>,
+        /// Show what would be freed without deleting anything.
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -935,6 +954,10 @@ fn plan(cmd: &Command, json_output: bool) -> Plan {
         Command::Jobs { cmd: None } => q("jobs.list", json!({})),
         Command::Jobs { cmd: Some(JobsCmd::Get { job_id }) } => q("jobs.get", json!({ "job_id": job_id })),
         Command::Jobs { cmd: Some(JobsCmd::Cancel { job_id }) } => q("jobs.cancel", json!({ "job_id": job_id })),
+        Command::Cache { cmd: None } => q("cache.status", json!({})),
+        Command::Cache { cmd: Some(CacheCmd::Clear { kinds, dry_run }) } => {
+            q("cache.clear", json!({ "kinds": kinds, "dry_run": dry_run }))
+        }
         Command::Call { .. } | Command::Daemon(_) => unreachable!("planned in main"),
     }
 }
@@ -1507,7 +1530,32 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 println!("cancelling {}", result["job_id"].as_str().unwrap_or("?"));
             }
         }
+        Command::Cache { cmd } => {
+            for e in result["entries"].as_array().into_iter().flatten() {
+                let (bytes, files) = (e["bytes"].as_u64().unwrap_or(0), e["files"].as_u64().unwrap_or(0));
+                let noun = if files == 1 { "file" } else { "files" };
+                println!("{:<9} {:>10}  {files} {noun}", e["kind"].as_str().unwrap_or("?"), size_text(bytes));
+            }
+            let total = size_text(result["total_bytes"].as_u64().unwrap_or(0));
+            match (cmd, result["cleared"].as_bool()) {
+                (_, Some(true)) => println!("freed {total}"),
+                (Some(_), _) => println!("would free {total}"),
+                (None, _) => println!("total {total}"),
+            }
+        }
         _ => println!("{}", serde_json::to_string_pretty(&result)?),
     }
     Ok(())
+}
+
+/// `1.4 GB`, `320 MB`, `12 KB`.
+fn size_text(bytes: u64) -> String {
+    const UNITS: [&str; 4] = ["B", "KB", "MB", "GB"];
+    let mut v = bytes as f64;
+    let mut u = 0;
+    while v >= 1000.0 && u < UNITS.len() - 1 {
+        v /= 1000.0;
+        u += 1;
+    }
+    if u == 0 || v >= 100.0 { format!("{v:.0} {}", UNITS[u]) } else { format!("{v:.1} {}", UNITS[u]) }
 }

@@ -100,7 +100,10 @@ Exit codes: 0 ok, 2 bad arguments (the message says what), 3 stale revision,
 **Linked clips.** Inserting a file with picture and sound makes a video clip
 and an audio clip that share a link. `split`, `trim`, `move`, `speed`,
 `delete` and `ripple-delete clip_…` act on both, which keeps them in sync.
-Add `--unlinked` to act on one clip only.
+Add `--unlinked` to act on one clip only. A ripple never pulls later pairs
+apart: when one side moves, the other track follows. If it has no room (you
+shortened only the picture and the sound runs on), the command fails with
+"no room"; edit both sides or use `--roll`.
 
 **J and L cuts.** Roll one side of the cut with `--unlinked`:
 
@@ -201,11 +204,17 @@ A 1080p export runs at about twice real time on a 4-core machine; run it last.
   HDR (`hdr10`, `hlg`) and full-range video. HDR or 10-bit sources exported
   to an 8-bit preset may look washed out: mention it.
 - `ve describe` prints the full protocol (every method and parameter); `ve call <method> '<json>'` sends any of them directly.
-- Transitions and effects don't render yet (cuts only); captions and
-  transcription come from plugins, not the core.
+- Effects, transitions and transforms render on the GPU, in frames, previews
+  and exports; an export with them takes several times longer than plain
+  cuts. `ve sheet` still shows plain cuts only: check effects with `ve frame`.
+- Captions and transcription come from plugins, not the core (none ship yet).
 - If a render says media is missing, the source file moved; tell the user.
 - Commands go through a background `ve` process for the project. It starts on
   its own, exits after 10 idle minutes, and restarts itself after a rebuild.
   `ve daemon status` shows it; `ve daemon stop` ends it (nothing is lost, every
   edit is saved). The user may be editing the same project at the same time,
   which is what exit code 3 catches.
+- Rendered frames and previews are cached outside the project (a few GB at
+  most per project). `ve cache` shows how much; `ve cache clear` frees it
+  (nothing in the project changes, undo is kept). Only clear when the user
+  asks or disk space is short.

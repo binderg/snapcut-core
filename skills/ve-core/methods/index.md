@@ -17,6 +17,8 @@ schemas: `system.describe`.
 | `jobs.list` | | Background jobs, without results | [jobs.md](jobs.md) |
 | `jobs.get` | | One job: state, progress, result or error | [jobs.md](jobs.md) |
 | `jobs.cancel` | | Stop a job | [jobs.md](jobs.md) |
+| `cache.status` | | Size of the project's rebuildable caches | [cache.md](cache.md) |
+| `cache.clear` | | Delete them (all, or some kinds) | [cache.md](cache.md) |
 | `project.init` | | Create a project folder and open it (no project) | [project.md](project.md) |
 | `project.open` | | Open (and lock) a project folder | [project.md](project.md) |
 | `project.save` | | Write the project to disk (edits already save) | [project.md](project.md) |

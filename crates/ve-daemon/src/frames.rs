@@ -107,6 +107,13 @@ impl FrameCache {
         }
     }
 
+    /// Drop every frame held in memory (after the disk cache was deleted).
+    pub fn forget_memory(&self) {
+        let mut m = self.memory.lock().unwrap_or_else(|e| e.into_inner());
+        m.map.clear();
+        m.bytes = 0;
+    }
+
     pub fn touch_interactive(&self) {
         *self.last_interactive.lock().unwrap_or_else(|e| e.into_inner()) = Some(Instant::now());
     }
