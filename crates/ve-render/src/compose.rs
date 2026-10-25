@@ -84,6 +84,10 @@ pub fn place(fit: Fit, w: u32, h: u32, cw: u32, ch: u32) -> Rect {
 
 /// The source frame a segment shows at timeline time `t`.
 fn source_frame(seg: &Segment, t: Q) -> i64 {
+    // A still shows the same picture throughout, so every frame keys the same.
+    if seg.still {
+        return 0;
+    }
     let media_t = seg.media_start + (t - seg.start) * seg.speed;
     let r = seg.media_rate.as_ratio();
     let mut n = (media_t * r).floor().to_integer();
@@ -179,7 +183,7 @@ fn decoded(ctx: &mut Ctx<'_>, seg: &Segment, t: Q, slot: usize) -> Result<Decode
         .get(&seg.path)
         .ok_or_else(|| RenderError::Media(format!("{}: {} has no probed video size", seg.clip, seg.path.display())))?;
     let (rect, xf, (dw, dh)) = layout(seg, t, src, ctx.canvas);
-    let key = decoder::key(&seg.path, dw, dh, seg.media_rate, slot);
+    let key = decoder::Key { still: seg.still, ..decoder::key(&seg.path, dw, dh, seg.media_rate, slot) };
     let fx = ctx.fx;
     let rgba = ctx.pool.frame(&key, source_frame(seg, t))?;
     Ok(Decoded { rgba, width: dw, height: dh, rect, xf, effects: passes(seg, t, fx)? })

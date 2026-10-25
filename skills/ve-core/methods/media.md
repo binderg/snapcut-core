@@ -38,6 +38,13 @@ was already imported (same content, maybe a different path).
 Importing does not put anything on the timeline; follow with `edit.insert`.
 No proxies are made yet.
 
+**Still images** (PNG, JPEG, WebP, BMP, TIFF, single-frame GIF) import like
+any file. Their `media.video.still` is true and `media.duration` is zero:
+an image has no length of its own, its clip decides how long it shows (see
+`edit.insert`). Transparency (PNG, WebP) is kept, so a logo on an upper
+video track shows the tracks below through its clear parts. Animated GIFs
+are video.
+
 ## `media.remove` (edits)
 
 | Param | Type | |

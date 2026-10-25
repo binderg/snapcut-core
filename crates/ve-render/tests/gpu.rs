@@ -686,3 +686,66 @@ fn range_keys_match_single_frame_keys() {
     // Different frames differ (the ramp changes every frame).
     assert_ne!(all[10], all[11]);
 }
+
+/// A 64x64 PNG: left half opaque red, right half fully transparent.
+fn half_red_png(work: &Path) -> PathBuf {
+    let png = work.join("half red.png");
+    ffmpeg(&[
+        "-f", "lavfi", "-i", "color=red:s=32x64,format=rgba",
+        "-f", "lavfi", "-i", "color=black@0:s=32x64,format=rgba",
+        "-filter_complex", "[0][1]hstack,format=rgba", "-frames:v", "1", png.to_str().unwrap(),
+    ]);
+    png
+}
+
+#[test]
+fn still_images_render_with_transparency_on_both_paths() {
+    let work = dir("stills");
+    let ramp = ramp(&work);
+    let png = half_red_png(&work);
+    let output = OutputSettings { width: SIDE, height: SIDE, rate: Rate::integer(FPS), sample_rate: 48_000, color_space: "bt709".into() };
+    let mut tl = ve_model::doc::new_project("t", output);
+    add_asset(&mut tl, "asset_ramp", &ramp);
+    add_asset(&mut tl, "asset_png", &png);
+    assert!(tl.metadata.ve.assets[1].media.as_ref().unwrap().video.as_ref().unwrap().still);
+    tl = edit::insert(&tl, &insert("asset_ramp", None, None, None, false)).unwrap().0;
+    tl = ve_ops::tracks::add(&tl, TrackKind::Video, None, None).unwrap().0;
+    // The image over frames 10-59 on V2.
+    tl = edit::insert(&tl, &insert("asset_png", Some("V2"), Some(fr(10)), Some(fr(50)), true)).unwrap().0;
+
+    for n in [5, 10, 30, 59, 60] {
+        let reference = rgb(&ve_render::frame(&tl, fr(n), SIDE, ImageFormat::Png, &work).unwrap().bytes);
+        let gpu = rgb(&ve_render::compose::frame(&tl, fr(n), SIDE, ImageFormat::Png, &fx()).unwrap().bytes);
+        let (mean, max) = diff(&reference, &gpu);
+        eprintln!("frame {n}: mean diff {mean:.3}, max {max}");
+        let shown = (10..60).contains(&n);
+        for img in [&reference, &gpu] {
+            let left = img.get_pixel(8, 32).0;
+            let right = img.get_pixel(56, 32).0;
+            if shown {
+                assert!(left[0] > 200 && left[1] < 60 && left[2] < 60, "frame {n}: left should be red, got {left:?}");
+            }
+            // The transparent half (and the whole frame without the image) shows the gray ramp.
+            let gray = right.iter().max().unwrap() - right.iter().min().unwrap() <= 4;
+            assert!(gray, "frame {n}: right should be the gray ramp, got {right:?}");
+        }
+        // Opaque and fully transparent areas agree; only the red/clear edge may differ.
+        assert!(mean < 2.0, "frame {n}: mean {mean:.3}");
+    }
+    // The still always keys the same source frame, so the frame cache can share it.
+    let k = |n| ve_render::compose::frame_key(&tl, fr(n), SIDE, ImageFormat::Png, &fx()).unwrap();
+    assert_ne!(k(10), k(11), "the ramp under it still changes");
+
+    // An image alone on V1 sits on black, and exports exactly its frames.
+    let output = OutputSettings { width: SIDE, height: SIDE, rate: Rate::integer(FPS), sample_rate: 48_000, color_space: "bt709".into() };
+    let mut solo = ve_model::doc::new_project("t", output);
+    add_asset(&mut solo, "asset_png", &png);
+    solo = edit::insert(&solo, &insert("asset_png", None, None, Some(fr(30)), false)).unwrap().0;
+    let f = rgb(&ve_render::frame(&solo, fr(3), SIDE, ImageFormat::Png, &work).unwrap().bytes);
+    assert!(f.get_pixel(8, 32).0[0] > 200, "red on the left");
+    assert!(f.get_pixel(56, 32).0.iter().all(|&c| c < 20), "black where the image is clear");
+    let out = work.join("solo.mp4");
+    let enc = ve_render::encode(&solo, span_all(&solo), &settings(&solo), &out, &work).unwrap();
+    assert_eq!(enc.frames, 30);
+    assert_eq!(decode_all(&out).len(), 30);
+}

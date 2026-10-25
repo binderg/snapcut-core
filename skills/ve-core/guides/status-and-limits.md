@@ -13,7 +13,8 @@ changes.
 | **Track lock** | Hide and mute exist (`track.set {enabled}`); nothing stops edits on a track yet |
 | **Effects, transitions and transforms in contact sheets** | Frames, range previews and exports use the GPU automatically when the range needs it; `render.contact_sheet` still shows plain cuts and unprocessed clips, with a warning. Use `render.frame` at the times you want to see |
 | **Anti-aliased edges** on rotated clips | Edges of a rotated picture are hard; fine for small angles |
-| **Titles, text, shapes, masks, LUTs, audio effects; `wasm` and `ofx` effect runtimes** | Write a `wgsl` effect ([writing-effects.md](writing-effects.md)); titles will come as generator plugins |
+| **Titles, text, captions** | Planned: text clips drawn by the core's GPU text renderer, captions on the same renderer. Meanwhile, make the title as a PNG and import it (stills keep transparency) |
+| **Shapes, masks, LUTs, audio effects; `wasm` and `ofx` effect runtimes** | Write a `wgsl` effect ([writing-effects.md](writing-effects.md)); animated templates will come as generator plugins |
 | **Video measurements** (brightness, saturation, black or frozen frames, blur) | Not available; only audio measurements |
 | **Per-clip measurements** (`clip` param, a report of every clip) | Measure an asset (whole file) or a timeline range |
 | **Proxies** for heavy footage | Frames come from originals, so long-GOP phone footage seeks slowly |

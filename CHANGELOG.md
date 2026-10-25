@@ -34,6 +34,8 @@ not final (the command is `ve`).
   J and L cuts. A ripple on one side never pulls later linked pairs apart:
   the partner track follows, or the edit is refused when it has no room.
 - Any number of video and audio tracks; hide and mute.
+- Still images (PNG, JPEG, WebP, BMP, TIFF, single-frame GIF) as clips of
+  any length, with transparency kept: logos, title cards, photos.
 - Per-clip transforms (position, scale, rotation, opacity, crop) with
   keyframes.
 - Every edit: optimistic concurrency (`base_rev`), dry runs, an actor, and
@@ -82,5 +84,6 @@ not final (the command is `ve`).
 - Tested mostly on Windows so far.
 - No proxies yet, so long-GOP phone footage seeks slowly.
 - Contact sheets ignore effects and transforms.
-- No plugin host yet (no transcription or captions).
+- No titles or text yet (planned next), and no plugin host (no
+  transcription or captions).
 - Exports with effects take several times longer than plain cuts.

@@ -131,6 +131,7 @@ straight to `edit.ripple_delete` by name.
 | `media.video.rate` | Exact nominal frame rate `[num, den]` (`[30000, 1001]` is 29.97) |
 | `media.video.rotation` | Display rotation (90/180/270, phone video); absent when 0 |
 | `media.video.vfr` | Variable frame rate (common on phones); renders conform it |
+| `media.video.still` | A still image: one picture, `duration` zero, `rate` meaningless; absent for video |
 | `media.video.color` | Pixel format, bit depth, chroma, range, primaries, transfer, matrix, `sdr`/`hdr10`/`hlg`. Fields the file does not state are absent |
 | `media.audio` | First audio stream only |
 

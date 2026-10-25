@@ -51,6 +51,8 @@ pub struct Key {
     pub rate: Rate,
     /// Which layer (track) asks; keeps one stream per layer.
     pub slot: usize,
+    /// A still image: decoded once (with its transparency) and kept, not streamed.
+    pub still: bool,
 }
 
 struct Decoder {
@@ -137,10 +139,42 @@ impl Drop for Decoder {
     }
 }
 
+/// Most decoded still images kept per pool; the least recently used goes first.
+pub const MAX_STILLS: usize = 32;
+
+/// Decode a still image once at `width x height`, as straight-alpha RGBA.
+/// Scaled in 4:2:0 YUV with alpha, as the Phase 1 graph does for stills.
+fn decode_still(key: &Key) -> Result<Vec<u8>> {
+    let out = Command::new(ffmpeg_path())
+        .args(["-hide_banner", "-nostdin", "-nostats", "-loglevel", "error", "-i"])
+        .arg(&key.path)
+        .args(["-map", "0:v:0", "-frames:v", "1", "-vf"])
+        .arg(format!("scale={}:{},format=yuva420p", key.width, key.height))
+        .args(["-f", "rawvideo", "-pix_fmt", "rgba", "-"])
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| RenderError::Io(format!("starting ffmpeg: {e}")))?;
+    let size = (key.width as usize) * (key.height as usize) * 4;
+    if !out.status.success() || out.stdout.len() < size {
+        return Err(RenderError::Ffmpeg {
+            message: format!("decoder: could not read the image {}", key.path.display()),
+            stderr: String::from_utf8_lossy(&out.stderr).trim().to_owned(),
+        });
+    }
+    let mut rgba = out.stdout;
+    rgba.truncate(size);
+    Ok(rgba)
+}
+
+/// A decoded still: its file and the size it was decoded at.
+type StillKey = (PathBuf, u32, u32);
+
 /// Open decoders, by what they produce.
 #[derive(Default)]
 pub struct DecoderPool {
     open: HashMap<Key, Decoder>,
+    /// Decoded still images by path and size (the slot does not matter), with last use.
+    stills: HashMap<StillKey, (Arc<Vec<u8>>, Instant)>,
     /// Processes started (for tests and stats).
     pub starts: u64,
 }
@@ -156,6 +190,9 @@ impl DecoderPool {
     /// `key.width x key.height`, as RGBA. Past the end of the file, the last
     /// frame.
     pub fn frame(&mut self, key: &Key, n: i64) -> Result<Vec<u8>> {
+        if key.still {
+            return Ok(self.still(key)?.as_ref().clone());
+        }
         self.close_idle();
         let n = n.max(0);
         let size = (key.width as usize) * (key.height as usize) * 4;
@@ -185,6 +222,24 @@ impl DecoderPool {
         let msg = d.error(&format!("no frame {n} in {}", key.path.display()));
         self.open.remove(key);
         if n > 0 { self.last_frame(key, n) } else { Err(msg) }
+    }
+
+    /// A still image at the key's size, decoded on first use.
+    fn still(&mut self, key: &Key) -> Result<Arc<Vec<u8>>> {
+        let k = (key.path.clone(), key.width, key.height);
+        if let Some((rgba, used)) = self.stills.get_mut(&k) {
+            *used = Instant::now();
+            return Ok(Arc::clone(rgba));
+        }
+        let rgba = Arc::new(decode_still(key)?);
+        self.starts += 1;
+        if self.stills.len() >= MAX_STILLS
+            && let Some(oldest) = self.stills.iter().min_by_key(|(_, (_, t))| *t).map(|(k, _)| k.clone())
+        {
+            self.stills.remove(&oldest);
+        }
+        self.stills.insert(k, (Arc::clone(&rgba), Instant::now()));
+        Ok(rgba)
     }
 
     /// Step back from `n` until a frame decodes (only for a request past the end).
@@ -228,6 +283,7 @@ impl DecoderPool {
     /// Close every decoder (tests, or when the project changes media).
     pub fn clear(&mut self) {
         self.open.clear();
+        self.stills.clear();
     }
 
     pub fn open_count(&self) -> usize {
@@ -242,5 +298,5 @@ pub fn shared() -> Result<std::sync::MutexGuard<'static, DecoderPool>> {
 
 /// Keep `Path` in the public signature family for callers building keys.
 pub fn key(path: &Path, width: u32, height: u32, rate: Rate, slot: usize) -> Key {
-    Key { path: path.to_path_buf(), width, height, rate, slot }
+    Key { path: path.to_path_buf(), width, height, rate, slot, still: false }
 }

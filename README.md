@@ -28,7 +28,7 @@ DaVinci Resolve, Premiere or Avid.
   target.
 - **Look at it**: exact frames, contact sheets, short preview clips.
 - **Picture**: position, scale, rotation, opacity and crop per clip, with
-  keyframes. GPU effects and transitions (WGSL shaders), with an API for
+  keyframes. Still images (logos, title cards, photos) with transparency. GPU effects and transitions (WGSL shaders), with an API for
   writing your own.
 - **Export**: H.264 MP4 presets (master, YouTube 1080p/720p, vertical
   1080x1920), frame- and sample-exact, with a short crossfade on every audio

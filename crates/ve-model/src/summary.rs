@@ -93,10 +93,15 @@ pub fn summary(tl: &Timeline) -> String {
 }
 
 /// One line describing probed media: duration, picture and sound.
-/// `00:10:00;00  1920x1080 29.97fps h264 rot90 vfr  aac 48000Hz 2ch`
+/// `00:10:00;00  1920x1080 29.97fps h264 rot90 vfr  aac 48000Hz 2ch`, or
+/// for a still image `image  1200x800 png`.
 pub fn media_line(m: &MediaInfo) -> String {
     let mut out = String::new();
     let d = m.duration;
+    if let Some(v) = m.video.as_ref().filter(|v| v.still) {
+        let _ = write!(out, "image  {}x{} {}", v.width, v.height, v.codec);
+        return out;
+    }
     if m.video.is_some() {
         out.push_str(&to_smpte(d, d.rate.has_drop_frame()).unwrap_or_else(|_| clock(d)));
     } else {

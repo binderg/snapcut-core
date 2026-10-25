@@ -323,7 +323,8 @@ pub struct Insert {
     pub at: Option<Q>,
     /// Media in-point, seconds from the start of the file. Defaults to 0.
     pub source_in: Option<Q>,
-    /// Media out-point (exclusive). Defaults to `source_in + duration`, else the end of the file.
+    /// Media out-point (exclusive). Defaults to `source_in + duration`, else
+    /// the end of the file ([`STILL_SECONDS`] for a still image).
     pub source_out: Option<Q>,
     pub duration: Option<Q>,
     pub video: bool,
@@ -331,6 +332,9 @@ pub struct Insert {
     /// Overwrite what is there instead of pushing later content right.
     pub overwrite: bool,
 }
+
+/// Default length of a still image put on the timeline without one.
+pub const STILL_SECONDS: i64 = 5;
 
 pub fn insert(tl: &Timeline, p: &Insert) -> Result<(Timeline, EditReport)> {
     let mut d = Doc::new(tl)?;
@@ -346,8 +350,11 @@ pub fn insert(tl: &Timeline, p: &Insert) -> Result<(Timeline, EditReport)> {
         .media
         .clone()
         .ok_or_else(|| EditError::new(format!("asset {} has no media info; import it again", asset.id)))?;
+    // A still image has no length of its own: it lasts as long as its clip,
+    // timed at the project rate, and can be trimmed to any length.
+    let still = media.video.as_ref().is_some_and(|v| v.still);
     let media_end = media.duration.seconds();
-    let mrate = media.duration.rate;
+    let mrate = if still { d.rate } else { media.duration.rate };
 
     let mut kinds = Vec::new();
     if media.video.is_some() && p.video {
@@ -365,9 +372,10 @@ pub fn insert(tl: &Timeline, p: &Insert) -> Result<(Timeline, EditReport)> {
     let src_out = match (p.source_out, p.duration) {
         (Some(o), _) => o,
         (None, Some(dur)) => src_in + dur,
+        (None, None) if still => src_in + Q::from_integer(STILL_SECONDS),
         (None, None) => media_end,
     };
-    if src_in < zero || src_out > media_end || src_in >= src_out {
+    if src_in < zero || (src_out > media_end && !still) || src_in >= src_out {
         return Err(EditError::new(format!(
             "media range {}..{} is outside {} (0..{})",
             seconds_text(src_in),
@@ -411,7 +419,8 @@ pub fn insert(tl: &Timeline, p: &Insert) -> Result<(Timeline, EditReport)> {
     let name = asset.url.rsplit('/').next().unwrap_or("clip").to_owned();
     let name = urlencoding_decode(&name);
     let link = (targets.len() > 1).then(|| d.ids.fresh("lnk"));
-    let avail = TimeRange::new(RationalTime::zero(mrate), media.duration);
+    // Stills have no available range, so nothing limits their length.
+    let avail = (!still).then(|| TimeRange::new(RationalTime::zero(mrate), media.duration));
     let target_lanes: Vec<usize> = targets.iter().map(|&(_, l)| l).collect();
     let rippled = if p.overwrite {
         HashSet::new()
@@ -422,7 +431,7 @@ pub fn insert(tl: &Timeline, p: &Insert) -> Result<(Timeline, EditReport)> {
     for lane in target_lanes {
         let id = d.ids.fresh("clip");
         let range = TimeRange::new(at_rate(src_in, mrate), at_rate(dur, mrate));
-        let mut clip = Clip::new(name.clone(), MediaReference::External(ExternalReference::new(asset.url.clone(), Some(avail))), range);
+        let mut clip = Clip::new(name.clone(), MediaReference::External(ExternalReference::new(asset.url.clone(), avail)), range);
         clip.metadata.ve.clip = Some(ClipMeta { link: link.clone(), ..ClipMeta::new(id.clone()) });
         let mut ids = std::mem::replace(&mut d.ids, Ids::new(HashSet::new()));
         let l = d.lane(lane);

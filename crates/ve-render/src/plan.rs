@@ -66,6 +66,9 @@ pub struct Segment {
     pub effects: Vec<EffectInstance>,
     /// Placement on the canvas (`metadata.ve.clip.transform`), if not the default.
     pub transform: Option<Transform>,
+    /// A still image: the same picture for the whole segment, possibly with
+    /// transparency. `media_rate` is the project rate.
+    pub still: bool,
 }
 
 impl Segment {
@@ -251,6 +254,7 @@ fn segment(
     }
     let src = clip.source_range.expect("lanes fill in source ranges");
     let speed = clip_speed(clip);
+    let still = asset.and_then(|m| m.video.as_ref()).is_some_and(|v| v.still);
     Ok(Some(Segment {
         clip: id,
         path,
@@ -259,7 +263,7 @@ fn segment(
         media_start: src.start_time.seconds() + (s - start) * speed,
         speed,
         volume_db: clip.metadata.ve.clip.as_ref().map_or(0.0, |m| m.volume_db),
-        media_rate: asset.and_then(|m| m.video.as_ref()).map_or(src.start_time.rate, |v| v.rate),
+        media_rate: if still { tl.output_rate() } else { asset.and_then(|m| m.video.as_ref()).map_or(src.start_time.rate, |v| v.rate) },
         bounds: media_bounds(clip),
         head,
         tail,
@@ -267,5 +271,6 @@ fn segment(
         clip_duration: end - start,
         effects: clip.metadata.ve.effects.clone(),
         transform: clip.metadata.ve.clip.as_ref().and_then(|m| m.transform.as_deref().cloned()).filter(|t| !t.is_identity()),
+        still,
     }))
 }

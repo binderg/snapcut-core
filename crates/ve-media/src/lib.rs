@@ -110,6 +110,7 @@ struct FfProbe {
 #[derive(Deserialize, Default)]
 struct FfFormat {
     duration: Option<String>,
+    format_name: Option<String>,
     size: Option<String>,
 }
 
@@ -124,6 +125,7 @@ struct FfStream {
     avg_frame_rate: Option<String>,
     time_base: Option<String>,
     duration_ts: Option<i64>,
+    nb_frames: Option<String>,
     sample_rate: Option<String>,
     channels: Option<u32>,
     pix_fmt: Option<String>,
@@ -164,6 +166,7 @@ pub fn summarize(ffprobe: &Value) -> Option<MediaInfo> {
     let v = p.streams.iter().find(|s| kind(s, "video") && s.disposition.attached_pic == 0);
     let a = p.streams.iter().find(|s| kind(s, "audio"));
 
+    let still = v.is_some_and(|s| is_still(&p.format, s));
     let video = v.and_then(|s| {
         let r = s.r_frame_rate.as_deref().and_then(parse_ratio);
         let avg = s.avg_frame_rate.as_deref().and_then(parse_ratio);
@@ -173,7 +176,8 @@ pub fn summarize(ffprobe: &Value) -> Option<MediaInfo> {
             height: s.height?,
             rate: nominal_rate(r, avg)?,
             rotation: rotation(s),
-            vfr: matches!((r, avg), (Some(r), Some(avg)) if r != avg),
+            vfr: !still && matches!((r, avg), (Some(r), Some(avg)) if r != avg),
+            still,
             color: color(s),
         })
     });
@@ -190,12 +194,12 @@ pub fn summarize(ffprobe: &Value) -> Option<MediaInfo> {
         (None, Some(ai)) => (Rate::integer(i64::from(ai.sample_rate)), a),
         (None, None) => return None,
     };
-    let seconds = stream
-        .and_then(|s| Some(Q::from_integer(s.duration_ts?) * parse_ratio(s.time_base.as_deref()?)?))
+    let seconds = if still { Some(Q::from_integer(0)) } else { None }
+        .or_else(|| stream.and_then(|s| Some(Q::from_integer(s.duration_ts?) * parse_ratio(s.time_base.as_deref()?)?))
         .or_else(|| {
             let d = p.format.duration.as_deref()?;
             ve_model::timecode::parse(&format!("{d}s"), Rate::integer(1)).ok().map(|t| t.value)
-        })
+        }))
         .unwrap_or(Q::from_integer(0));
     Some(MediaInfo {
         duration: RationalTime { value: seconds * rate.as_ratio(), rate },
@@ -203,6 +207,17 @@ pub fn summarize(ffprobe: &Value) -> Option<MediaInfo> {
         audio,
         size_bytes: p.format.size.as_deref().and_then(|s| s.parse().ok()).unwrap_or(0),
     })
+}
+
+/// A still image: ffmpeg's image demuxers (`png_pipe`, `jpeg_pipe`,
+/// `webp_pipe`, `image2`, ...), or a GIF with a single frame. Animated GIFs
+/// are video.
+fn is_still(f: &FfFormat, s: &FfStream) -> bool {
+    match f.format_name.as_deref() {
+        Some(name) if name.ends_with("_pipe") || name == "image2" => true,
+        Some("gif") => s.nb_frames.as_deref() == Some("1"),
+        _ => false,
+    }
 }
 
 /// ffprobe writes rates and time bases as `30000/1001`; `0/0` means unknown.
@@ -398,6 +413,22 @@ mod tests {
         s.as_object_mut().unwrap().remove("duration_ts");
         let m = summarize(&json!({"streams": [s], "format": {"duration": "4.000000"}})).unwrap();
         assert_eq!(m.duration.value, Q::from_integer(100));
+    }
+
+    #[test]
+    fn images_are_stills() {
+        let png = json!({"codec_type": "video", "codec_name": "png", "width": 400, "height": 300,
+                         "r_frame_rate": "25/1", "avg_frame_rate": "0/0", "pix_fmt": "rgba"});
+        let m = summarize(&json!({"streams": [png], "format": {"format_name": "png_pipe"}})).unwrap();
+        let v = m.video.unwrap();
+        assert!(v.still && !v.vfr);
+        assert_eq!(m.duration.value, Q::from_integer(0));
+        // One-frame GIF is a still; an animated one is video.
+        let gif = |n: &str| json!({"streams": [{"codec_type": "video", "codec_name": "gif", "width": 4, "height": 4,
+            "r_frame_rate": "25/1", "avg_frame_rate": "25/1", "nb_frames": n, "time_base": "1/100", "duration_ts": 100}],
+            "format": {"format_name": "gif"}});
+        assert!(summarize(&gif("1")).unwrap().video.unwrap().still);
+        assert!(!summarize(&gif("25")).unwrap().video.unwrap().still);
     }
 
     #[test]

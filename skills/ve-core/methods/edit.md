@@ -35,7 +35,7 @@ Put an asset (or part of it) on the timeline.
 | `asset` | required | Asset ID |
 | `at` | end of the target tracks | Timeline position |
 | `source_in` | start of file | Media in-point, at the media's rate |
-| `source_out` | end of file | Media out-point (exclusive) |
+| `source_out` | end of file (5 s for a still image) | Media out-point (exclusive) |
 | `duration` | | Length instead of `source_out` |
 | `track` | first video track (first audio track for audio-only assets) | Track for the picture |
 | `audio_track` | first audio track | Track for the sound of an A/V asset |
@@ -49,6 +49,11 @@ of a clip that moves is pushed too, from that partner's start (so J/L
 offsets are kept). Tracks with nothing linked to the moving clips do not
 move. Timeline markers move too when every track with later content moved.
 `created` lists the new clip(s).
+
+A **still image** goes on the video track only, for `duration` (default
+5 s), timed at the project rate. It has no media limit, so it can be trimmed
+or sped to any length. Place it with `edit.set_transform` (a logo in a
+corner: `scale` 0.2, `x`/`y` toward the edge).
 
 ## `edit.split`
 

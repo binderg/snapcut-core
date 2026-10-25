@@ -205,7 +205,13 @@ optional `resolution` series. Samples stream out of ffmpeg as f32
 timeline results are not. `edit.normalize` measures the mix and adds one gain
 to overlapping audio clips (`ve_ops::edit::add_gain`), limited by a true-peak
 ceiling. Probe now records color (pixel format, bit depth, chroma, range,
-primaries, transfer, matrix, sdr/hdr10/hlg). ve-analyze is built at
+primaries, transfer, matrix, sdr/hdr10/hlg). Still images (image demuxers
+`*_pipe`/`image2`, one-frame GIFs) get `media.video.still`, duration 0;
+insert gives them 5 s (`STILL_SECONDS`) at the project rate and no
+`available_range`. The ffmpeg path repeats the picture with the `loop`
+filter (yuva420p, over black on the bottom track); the GPU path decodes it
+once per size (`decoder::decode_still`, kept in the pool) and keys it as
+source frame 0. Both paths agree exactly on hard alpha edges. ve-analyze is built at
 opt-level 2 in dev (per-sample loops). On Windows the CLI starts daemons from
 a copy of `ve.exe` in `<cache>/ve/bin/` so a running daemon never blocks a
 rebuild; `VE_DAEMON_ORIGIN` tells the daemon which binary it stands for.

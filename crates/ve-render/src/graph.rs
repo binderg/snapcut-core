@@ -246,6 +246,12 @@ impl Graph {
         let mut out = Vec::with_capacity(placed.len());
         let mut i = 0;
         while i < placed.len() {
+            if placed[i].2.still {
+                let (f0, f1, s) = placed[i];
+                out.push(self.still_segment(s, f1 - f0, c, transparent));
+                i += 1;
+                continue;
+            }
             // Extend the run while the same file keeps going forward.
             let mut j = i + 1;
             while j < placed.len()
@@ -304,6 +310,29 @@ impl Graph {
             i = j;
         }
         out
+    }
+
+    /// A still image as `frames` frames at the output rate. The one decoded
+    /// picture repeats (`loop`, which works for every image format), keeps
+    /// its transparency, and on the bottom track sits on black.
+    fn still_segment(&mut self, s: &Segment, frames: i64, c: &Canvas, transparent: bool) -> String {
+        let input = self.input(s.path.clone(), Q::from_integer(0), Kind::Video);
+        self.inputs[input].threads = Some(1);
+        let r = c.rate.as_ratio();
+        let pic = self.label("st");
+        self.chain(format!(
+            "[{input}:v:0]loop=loop=-1:size=1:start=0,setpts=N*{}/{}/TB,{},trim=end_frame={frames},setpts=PTS-STARTPTS[{pic}]",
+            r.denom(),
+            r.numer(),
+            Self::fit_filters(c, true)
+        ));
+        if transparent {
+            return pic;
+        }
+        let bg = self.blank_video(c, frames, false);
+        let l = self.label("v");
+        self.chain(format!("[{bg}][{pic}]overlay=eof_action=pass:shortest=0,format=yuv420p,setsar=1[{l}]"));
+        l
     }
 
     /// The mixed audio of `plan`, stereo at the canvas sample rate, exactly

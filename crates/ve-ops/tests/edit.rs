@@ -37,7 +37,7 @@ fn project() -> Timeline {
         provenance: None,
         media: Some(MediaInfo {
             duration: RationalTime::from_frames(300 * FPS, Rate::integer(FPS)),
-            video: Some(VideoInfo { codec: "h264".into(), width: 1920, height: 1080, rate: Rate::integer(FPS), rotation: 0, vfr: false, color: None }),
+            video: Some(VideoInfo { codec: "h264".into(), width: 1920, height: 1080, rate: Rate::integer(FPS), rotation: 0, vfr: false, still: false, color: None }),
             audio: Some(AudioInfo { codec: "aac".into(), sample_rate: 48_000, channels: 2 }),
             size_bytes: 0,
         }),
@@ -788,4 +788,40 @@ fn transitions_sit_on_cuts_and_need_handles() {
     let e = effects::add_transition(&tl, &new(sec(310), Align::Start)).unwrap_err();
     assert!(e.0.contains("after its out point"), "{e}");
     assert!(effects::add_transition(&tl, &new(sec(310), Align::End)).is_ok(), "ending at the cut needs no media after it");
+}
+
+#[test]
+fn still_images_get_a_default_length_and_no_media_limit() {
+    use ve_model::meta::{Asset, AssetKind, MediaInfo, VideoInfo};
+    let mut tl = project();
+    tl.metadata.ve.assets.push(Asset {
+        id: Id::from_raw("asset_logo"),
+        url: "file:///media/logo.png".into(),
+        kind: AssetKind::Source,
+        hash: None,
+        provenance: None,
+        media: Some(MediaInfo {
+            duration: RationalTime::from_frames(0, Rate::integer(25)),
+            video: Some(VideoInfo { codec: "png".into(), width: 400, height: 300, rate: Rate::integer(25), rotation: 0, vfr: false, still: true, color: None }),
+            audio: None,
+            size_bytes: 0,
+        }),
+    });
+    let mut p = insert_video(sec(2), 0);
+    p.asset = Id::from_raw("asset_logo");
+    p.duration = None;
+    p.source_in = None;
+    let (tl, rep) = edit::insert(&tl, &p).unwrap();
+    assert_eq!((rep.created[0].start.as_str(), rep.created[0].end.as_str()), ("00:00:02:00", "00:00:07:00"), "5 s by default");
+    assert_eq!(rows(&tl).len(), 1, "no audio clip for an image");
+    let id = rows(&tl)[0].id.clone();
+    // Any length: a still never runs out of media.
+    let (tl, _) = edit::trim(&tl, &Trim { clip: id.clone(), in_delta: None, out_delta: Some(sec(600)), roll: false, linked: true }).unwrap();
+    assert_eq!(rows(&tl)[0].dur, sec(605));
+    // Timed at the project rate, not the 25 fps ffprobe reports for images.
+    let mut p2 = insert_video(sec(0), 0);
+    p2.asset = Id::from_raw("asset_logo");
+    p2.duration = Some(fr(7));
+    let (tl, _) = edit::insert(&tl, &p2).unwrap();
+    assert_eq!(rows(&tl).iter().find(|r| r.id != id).unwrap().dur, fr(7));
 }

@@ -178,7 +178,7 @@ mod tests {
             provenance: None,
             media: Some(MediaInfo {
                 duration: RationalTime::from_frames(250, Rate::integer(25)),
-                video: Some(VideoInfo { codec: "h264".into(), width: 640, height: 360, rate: Rate::integer(25), rotation: 0, vfr: false, color: None }),
+                video: Some(VideoInfo { codec: "h264".into(), width: 640, height: 360, rate: Rate::integer(25), rotation: 0, vfr: false, still: false, color: None }),
                 audio: Some(AudioInfo { codec: "aac".into(), sample_rate: 48_000, channels: 2 }),
                 size_bytes: 0,
             }),

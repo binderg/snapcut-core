@@ -132,6 +132,10 @@ pub struct VideoInfo {
     /// Frame timing varies (common on phones); renders must conform it.
     #[serde(default, skip_serializing_if = "is_default")]
     pub vfr: bool,
+    /// A still image (PNG, JPEG, ...): one picture, shown for as long as the
+    /// clip lasts. `duration` is zero and `rate` means nothing.
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub still: bool,
     /// How the pixels encode color, as far as the file says.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<ColorInfo>,
