@@ -45,15 +45,25 @@ pub(crate) fn document(title: &str, version: &str, specs: &[MethodSpec], with_de
 }
 
 fn method(spec: &MethodSpec) -> Method {
-    let required: Vec<String> = spec
-        .params
+    method_from(spec.name, spec.summary, spec.mutates, &spec.params, spec.result.clone())
+}
+
+/// A method added at run time (plugins), as an OpenRPC method object.
+pub(crate) fn dyn_method(m: &crate::DynMethod) -> Value {
+    let schema = |v: &Value| Schema::try_from(v.clone()).unwrap_or_else(|_| schemars::json_schema!(true));
+    let mut out = method_from(&m.name, &m.summary, m.mutates, &schema(&m.params), schema(&m.result));
+    out.extensions.0.insert("x-plugin".into(), Value::String(m.plugin.clone()));
+    serde_json::to_value(out).unwrap_or(Value::Null)
+}
+
+fn method_from(name: &str, summary: &str, mutates: bool, params_schema: &Schema, result: Schema) -> Method {
+    let required: Vec<String> = params_schema
         .get("required")
         .and_then(Value::as_array)
         .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
         .unwrap_or_default();
 
-    let params = spec
-        .params
+    let params = params_schema
         .get("properties")
         .and_then(Value::as_object)
         .map(|props| {
@@ -72,17 +82,17 @@ fn method(spec: &MethodSpec) -> Method {
         .unwrap_or_default();
 
     let mut m = Method {
-        name: spec.name.into(),
-        summary: Some(spec.summary.into()),
+        name: name.into(),
+        summary: Some(summary.into()),
         params,
         result: Some(ReferenceOr::Item(ContentDescriptor {
             name: "result".into(),
-            schema: spec.result.clone(),
+            schema: result,
             ..Default::default()
         })),
         param_structure: Some(ParamStructure::ByName),
         ..Default::default()
     };
-    m.extensions.0.insert("x-mutates".into(), Value::Bool(spec.mutates));
+    m.extensions.0.insert("x-mutates".into(), Value::Bool(mutates));
     m
 }

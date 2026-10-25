@@ -66,3 +66,26 @@ goes; the media file on disk is never touched. Undo brings the row back.
 
 No params. `{"revision": 4, "assets": [ ...asset rows... ]}`, the same rows
 as `metadata.ve.assets` in the document.
+
+## `media.extract_audio`
+
+Decode an asset's first audio stream, whole, to a plain file in the
+engine's cache, so plugins (speech to text, beat detection) never need a
+decoder of their own.
+
+| Param | Type | |
+| --- | --- | --- |
+| `asset` | string | The asset |
+| `sample_rate` | integer | Default 16000 (what speech models expect); 8000 to 192000 |
+| `channels` | integer | 1 (default, a mono downmix) or 2 |
+| `format` | `wav` \| `flac` | Default `wav` (16-bit PCM). `flac` is lossless and about a third the size, for uploads |
+
+```json
+{"path": "C:\Users\me\AppData\Local\ve\cache\ve\projects\6b69...\audio\ba7c...-16000-1.flac",
+ "format": "flac", "sample_rate": 16000, "channels": 1, "duration": "602.433s", "cached": false}
+```
+
+The file is kept by the file's content hash and the settings, so a second
+call answers at once (`cached: true`). Read it; do not move or change it.
+`cache.clear` with kind `audio` deletes these files. The asset must have
+audio and be a local file (`invalid_params` otherwise).

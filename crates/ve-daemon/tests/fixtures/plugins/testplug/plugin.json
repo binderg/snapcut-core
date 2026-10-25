@@ -1,0 +1,29 @@
+{
+  "id": "testplug",
+  "version": "0.1.0",
+  "engine": ">=0.1.0-rc.1",
+  "protocol": "1",
+  "name": "Test plugin",
+  "description": "Exercises the plugin host in the engine's tests.",
+  "contributes": {
+    "commands": [
+      {
+        "method": "testplug.echo",
+        "summary": "Say it back",
+        "params": { "type": "object", "properties": { "text": { "type": "string" } }, "required": ["text"] },
+        "cli": { "name": "echo-test", "args": ["text"] }
+      },
+      {
+        "method": "testplug.transcribe",
+        "summary": "Fake speech to text",
+        "params": { "type": "object", "properties": { "asset": { "type": "string" } }, "required": ["asset"] },
+        "job": true
+      },
+      { "method": "testplug.mark", "summary": "Add two markers", "mutates": true },
+      { "method": "testplug.slow", "summary": "Count slowly", "job": true },
+      { "method": "testplug.stubborn", "summary": "Ignore cancel", "job": true },
+      { "method": "testplug.crash", "summary": "Exit mid-call" }
+    ]
+  },
+  "run": { "command": "python3", "args": ["main.py"], "windows": { "command": "python" } }
+}

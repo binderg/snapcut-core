@@ -54,6 +54,14 @@ pub(crate) fn current() -> Option<Arc<Control>> {
     CURRENT.with(|c| c.borrow().clone())
 }
 
+/// Report progress for this thread's job from work that is not an ffmpeg
+/// run (a plugin's `$/progress`), in the same unit as the job's length.
+pub fn report_progress(seconds: f64) {
+    if let Some(c) = current() {
+        c.progress(seconds);
+    }
+}
+
 /// Whether this thread's job was cancelled (for work between ffmpeg runs).
 pub fn cancelled() -> bool {
     current().is_some_and(|c| c.cancelled())

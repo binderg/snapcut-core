@@ -16,6 +16,7 @@ pub mod otio;
 pub mod summary;
 pub mod time;
 pub mod timecode;
+pub mod transcript;
 
 pub use id::Id;
 pub use meta::Meta;

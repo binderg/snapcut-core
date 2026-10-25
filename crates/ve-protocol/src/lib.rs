@@ -8,7 +8,7 @@
 mod error;
 mod openrpc;
 
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use jsonrpsee::RpcModule;
 use jsonrpsee::types::{ErrorObjectOwned, Params};
@@ -53,11 +53,33 @@ pub struct MethodSpec {
     pub result: schemars::Schema,
 }
 
+/// A method that exists only at run time (a plugin's), as `describe` shows it.
+#[derive(Debug, Clone)]
+pub struct DynMethod {
+    pub name: String,
+    pub summary: String,
+    pub mutates: bool,
+    /// JSON Schema of the by-name params object.
+    pub params: serde_json::Value,
+    pub result: serde_json::Value,
+    /// Plugin id that provides it.
+    pub plugin: String,
+}
+
+/// Methods that come and go at run time (plugins). The registry asks it for
+/// any method it does not have itself, and adds its methods to `describe`.
+pub trait Extension: Send + Sync {
+    fn methods(&self) -> Vec<DynMethod>;
+    /// Run `method`; `None` when it is not one of this extension's.
+    fn call(&self, method: &str, params: serde_json::Value) -> Option<Result<serde_json::Value, RpcError>>;
+}
+
 /// Method registry shared by every transport.
 pub struct Registry {
     module: RpcModule<()>,
     specs: Vec<MethodSpec>,
     sealed: bool,
+    extension: RwLock<Option<Arc<dyn Extension>>>,
 }
 
 impl Default for Registry {
@@ -68,7 +90,7 @@ impl Default for Registry {
 
 impl Registry {
     pub fn new() -> Self {
-        Self { module: RpcModule::new(()), specs: Vec::new(), sealed: false }
+        Self { module: RpcModule::new(()), specs: Vec::new(), sealed: false, extension: RwLock::new(None) }
     }
 
     /// Register a synchronous method. `P` is the by-name params object, `R` the result.
@@ -111,9 +133,28 @@ impl Registry {
         &self.specs
     }
 
+    /// Whether a method is built in (not provided by an extension).
+    pub fn has_method(&self, name: &str) -> bool {
+        self.module.method(name).is_some()
+    }
+
+    /// Hand methods the registry does not have to `ext` (the plugin host).
+    pub fn set_extension(&self, ext: Arc<dyn Extension>) {
+        *self.extension.write().unwrap_or_else(|e| e.into_inner()) = Some(ext);
+    }
+
+    fn extension(&self) -> Option<Arc<dyn Extension>> {
+        self.extension.read().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
     /// Dispatch one raw JSON-RPC request and return the raw JSON response.
     /// Malformed JSON gets a spec-compliant parse error response.
     pub async fn dispatch(&self, raw_request: &str) -> String {
+        if let Some(ext) = self.extension()
+            && let Some(resp) = self.dispatch_extension(&*ext, raw_request).await
+        {
+            return resp;
+        }
         match self.module.raw_json_request(raw_request, 1).await {
             Ok((resp, _subscription)) => resp.get().to_owned(),
             Err(e) => serde_json::json!({
@@ -123,6 +164,44 @@ impl Registry {
             })
             .to_string(),
         }
+    }
+}
+
+impl Registry {
+    /// Calls to methods only the extension has, and `system.describe` (which
+    /// then lists the extension's methods too). `None`: a normal call.
+    async fn dispatch_extension(&self, ext: &dyn Extension, raw: &str) -> Option<String> {
+        #[derive(Deserialize)]
+        struct Request {
+            #[serde(default)]
+            id: Option<serde_json::Value>,
+            method: String,
+            #[serde(default)]
+            params: Option<serde_json::Value>,
+        }
+        let req: Request = serde_json::from_str(raw).ok()?;
+        let id = req.id.unwrap_or(serde_json::Value::Null);
+        if req.method == "system.describe" {
+            let (raw_resp, _) = self.module.raw_json_request(raw, 1).await.ok()?;
+            let mut resp: serde_json::Value = serde_json::from_str(raw_resp.get()).ok()?;
+            if let Some(methods) = resp["result"]["methods"].as_array_mut() {
+                methods.extend(ext.methods().iter().map(openrpc::dyn_method));
+            }
+            return Some(resp.to_string());
+        }
+        if self.has_method(&req.method) {
+            return None;
+        }
+        let params = req.params.unwrap_or_else(|| serde_json::json!({}));
+        let outcome = ext.call(&req.method, params)?;
+        Some(match outcome {
+            Ok(result) => serde_json::json!({ "jsonrpc": "2.0", "id": id, "result": result }),
+            Err(e) => serde_json::json!({
+                "jsonrpc": "2.0", "id": id,
+                "error": { "code": e.code.rpc_code(), "message": e.message, "data": e.data },
+            }),
+        }
+        .to_string())
     }
 }
 
@@ -176,6 +255,48 @@ mod tests {
             .await;
         let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
         assert_eq!(v["error"]["code"], -32602);
+    }
+
+    struct Echo;
+    impl Extension for Echo {
+        fn methods(&self) -> Vec<DynMethod> {
+            vec![DynMethod {
+                name: "echo.say".into(),
+                summary: "Say it back".into(),
+                mutates: false,
+                params: serde_json::json!({"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}),
+                result: serde_json::json!({"type": "object"}),
+                plugin: "test.echo".into(),
+            }]
+        }
+        fn call(&self, method: &str, params: serde_json::Value) -> Option<Result<serde_json::Value, RpcError>> {
+            match method {
+                "echo.say" => Some(Ok(params)),
+                "echo.fail" => Some(Err(RpcError::new(ErrorCode::PluginError, "nope"))),
+                _ => None,
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn extension_methods_dispatch_and_describe() {
+        let r = registry();
+        r.set_extension(Arc::new(Echo));
+        let resp: serde_json::Value =
+            serde_json::from_str(&r.dispatch(r#"{"jsonrpc":"2.0","id":7,"method":"echo.say","params":{"text":"hi"}}"#).await).unwrap();
+        assert_eq!(resp["id"], 7);
+        assert_eq!(resp["result"]["text"], "hi");
+        let resp: serde_json::Value = serde_json::from_str(&r.dispatch(r#"{"jsonrpc":"2.0","id":1,"method":"echo.fail"}"#).await).unwrap();
+        assert_eq!(resp["error"]["code"], -31002);
+        // Built-ins still win, and unknown methods are still unknown.
+        let resp: serde_json::Value = serde_json::from_str(&r.dispatch(r#"{"jsonrpc":"2.0","id":1,"method":"system.version"}"#).await).unwrap();
+        assert_eq!(resp["result"]["protocol"], 1);
+        let resp: serde_json::Value = serde_json::from_str(&r.dispatch(r#"{"jsonrpc":"2.0","id":1,"method":"nope.nope"}"#).await).unwrap();
+        assert_eq!(resp["error"]["code"], -32601);
+        let resp: serde_json::Value = serde_json::from_str(&r.dispatch(r#"{"jsonrpc":"2.0","id":1,"method":"system.describe"}"#).await).unwrap();
+        let echo = resp["result"]["methods"].as_array().unwrap().iter().find(|m| m["name"] == "echo.say").unwrap().clone();
+        assert_eq!(echo["x-plugin"], "test.echo");
+        assert_eq!(echo["params"][0]["name"], "text");
     }
 
     #[tokio::test]

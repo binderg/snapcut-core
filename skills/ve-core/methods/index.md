@@ -28,6 +28,12 @@ schemas: `system.describe`.
 | `media.import` | yes | Add files to the asset table | [media.md](media.md) |
 | `media.remove` | yes | Remove unused assets from the table | [media.md](media.md) |
 | `media.assets` | | The asset table | [media.md](media.md) |
+| `media.extract_audio` | | An asset's audio as a WAV or FLAC file in the engine cache, for plugins | [media.md](media.md) |
+| `transcript.set` | | Store an asset's transcript (words, speakers, provenance) | [transcript.md](transcript.md) |
+| `transcript.get` | | An asset's transcript, or the words on the timeline (words or text) | [transcript.md](transcript.md) |
+| `transcript.list` | | Assets that have a transcript | [transcript.md](transcript.md) |
+| `transcript.remove` | | Delete an asset's transcript | [transcript.md](transcript.md) |
+| `plugin.list` | | Installed plugins, their commands and secrets (no project) | [plugin.md](plugin.md) |
 | `edit.insert` | yes | Put an asset (or part of it) on the timeline | [edit.md](edit.md) |
 | `edit.split` | yes | Cut clips in two at a time | [edit.md](edit.md) |
 | `edit.trim` | yes | Move a clip's in or out point (ripple or roll) | [edit.md](edit.md) |
@@ -71,6 +77,10 @@ schemas: `system.describe`.
 | `measure.levels` | | RMS, peak, clipping, DC, noise floor, balance, phase (job) | [measure.md](measure.md) |
 | `measure.waveform` | | Min/max/RMS peaks for drawing (job) | [measure.md](measure.md) |
 | `measure.pitch` | | Pitch: median, range, note, contour (job) | [measure.md](measure.md) |
+
+Plugins add methods of their own (`deepgram.transcribe`); they are listed by
+`plugin.list` and in `system.describe` with `"x-plugin"`, not here
+([plugin.md](plugin.md)).
 
 The `ve` CLI has a subcommand for most of these (`ve trim`, `ve measure
 loudness`, ...) and `ve call <method> '<json>'` for any of them; `--json`

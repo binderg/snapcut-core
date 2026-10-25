@@ -145,3 +145,109 @@ fn media_error(e: MediaError) -> RpcError {
     };
     RpcError::new(code, e.to_string())
 }
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ExtractAudioParams {
+    /// The asset whose first audio stream to extract, whole.
+    pub asset: Id,
+    /// Samples per second. Default 16000, what speech models expect.
+    #[serde(default = "default_extract_rate")]
+    pub sample_rate: u32,
+    /// 1 (default, a mono downmix) or 2.
+    #[serde(default = "default_extract_channels")]
+    pub channels: u32,
+    /// `wav` (16-bit PCM, default) or `flac` (lossless, about a third the size, for uploads).
+    #[serde(default)]
+    pub format: AudioFormat,
+}
+
+fn default_extract_rate() -> u32 {
+    16_000
+}
+
+fn default_extract_channels() -> u32 {
+    1
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum AudioFormat {
+    #[default]
+    Wav,
+    Flac,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ExtractAudioResult {
+    /// The file, in the engine's cache. Read it, do not move or change it.
+    pub path: PathBuf,
+    pub format: AudioFormat,
+    pub sample_rate: u32,
+    pub channels: u32,
+    /// The asset's duration (`"12.345s"`).
+    pub duration: ve_model::transcript::Seconds,
+    /// The file was already in the cache.
+    pub cached: bool,
+}
+
+/// Decode an asset's audio to a plain file for a plugin (speech to text,
+/// beat detection), so plugins never need their own decoder. Files are kept
+/// by content hash and settings in `<project cache>/audio/`.
+pub fn extract_audio(snap: &crate::Snapshot, p: ExtractAudioParams) -> Result<ExtractAudioResult, RpcError> {
+    if !(8_000..=192_000).contains(&p.sample_rate) {
+        return Err(RpcError::invalid_params("sample_rate must be between 8000 and 192000"));
+    }
+    if !(1..=2).contains(&p.channels) {
+        return Err(RpcError::invalid_params("channels must be 1 or 2"));
+    }
+    let a = snap
+        .timeline
+        .metadata
+        .ve
+        .assets
+        .iter()
+        .find(|a| a.id == p.asset)
+        .ok_or_else(|| RpcError::invalid_params(format!("no asset `{}`; `ve call media.assets` lists them", p.asset)))?;
+    let media = a.media.as_ref().ok_or_else(|| RpcError::invalid_params(format!("{} has no probe data; re-import it", a.id)))?;
+    if media.audio.is_none() {
+        return Err(RpcError::invalid_params(format!("{} has no audio", a.id)));
+    }
+    let src = ve_render::local_path(&a.url)
+        .ok_or_else(|| RpcError::invalid_params(format!("{}: only file:// media can be read ({})", a.id, a.url)))?;
+    let hash = a.hash.as_deref().ok_or_else(|| RpcError::invalid_params(format!("{} has no content hash; re-import it", a.id)))?;
+    let ext = match p.format {
+        AudioFormat::Wav => "wav",
+        AudioFormat::Flac => "flac",
+    };
+    let dir = snap.cache_dir().join("audio");
+    let path = dir.join(format!("{}-{}-{}.{ext}", crate::measure::cache_dir_name(hash), p.sample_rate, p.channels));
+    let duration = ve_model::transcript::Seconds::new(media.duration.seconds());
+    let result = |cached| ExtractAudioResult { path: path.clone(), format: p.format, sample_rate: p.sample_rate, channels: p.channels, duration, cached };
+    if path.is_file() {
+        return Ok(result(true));
+    }
+    std::fs::create_dir_all(&dir).map_err(|e| RpcError::new(ErrorCode::Internal, format!("{}: {e}", dir.display())))?;
+    let tmp = dir.join(format!("{}.{}.part.{ext}", path.file_stem().unwrap_or_default().to_string_lossy(), std::process::id()));
+    let inputs = ve_render::ffmpeg::Inputs::Args(vec!["-i".into(), src.to_string_lossy().into_owned(), "-map".into(), "0:a:0".into(), "-vn".into()]);
+    let codec = match p.format {
+        AudioFormat::Wav => "pcm_s16le",
+        AudioFormat::Flac => "flac",
+    };
+    let out = vec![
+        "-ac".into(),
+        p.channels.to_string(),
+        "-ar".into(),
+        p.sample_rate.to_string(),
+        "-c:a".into(),
+        codec.into(),
+        tmp.to_string_lossy().into_owned(),
+    ];
+    let run = ve_render::ffmpeg::run_inputs(&inputs, &out, &dir, false);
+    if let Err(e) = run {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(crate::render::render_error(e));
+    }
+    std::fs::rename(&tmp, &path).map_err(|e| RpcError::new(ErrorCode::Internal, format!("{}: {e}", path.display())))?;
+    Ok(result(false))
+}

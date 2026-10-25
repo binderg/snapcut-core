@@ -1,0 +1,22 @@
+{
+  "id": "deepgram",
+  "version": "0.1.0",
+  "engine": ">=0.1.0-rc.1, <0.2",
+  "protocol": "1",
+  "name": "Deepgram speech to text",
+  "description": "Transcribes an asset's audio with Deepgram (your own API key): words with times, speakers and confidence.",
+  "contributes": {
+    "commands": [
+      {
+        "method": "deepgram.transcribe",
+        "summary": "Transcribe an asset's audio with Deepgram and store it as the asset's transcript",
+        "params": "schemas/transcribe.json",
+        "job": true,
+        "cli": { "name": "transcribe", "args": ["asset"] }
+      }
+    ]
+  },
+  "run": { "command": "python3", "args": ["main.py"], "windows": { "command": "python" } },
+  "secrets": ["DEEPGRAM_API_KEY"],
+  "skill": "SKILL.md"
+}

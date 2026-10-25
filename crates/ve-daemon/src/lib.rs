@@ -19,9 +19,11 @@ pub mod fx;
 pub mod jobs;
 pub mod measure;
 pub mod media;
+pub mod plugins;
 pub mod project;
 pub mod render;
 pub mod server;
+pub mod transcript;
 #[cfg(feature = "ui-api")]
 pub mod ui;
 
@@ -53,6 +55,8 @@ pub struct Session {
     daemon: OnceLock<DaemonInfo>,
     /// Signalled by `daemon.stop`.
     pub(crate) shutdown: tokio::sync::Notify,
+    /// Plugin processes for the open project.
+    pub plugins: plugins::PluginSlot,
 }
 
 impl Default for Session {
@@ -67,6 +71,7 @@ impl Default for Session {
             events,
             daemon: OnceLock::new(),
             shutdown: tokio::sync::Notify::new(),
+            plugins: plugins::PluginSlot::default(),
         }
     }
 }
@@ -126,6 +131,11 @@ impl Session {
             self.events.publish(&change);
         }
         result
+    }
+
+    /// The open project's folder and cache folder, if one is open.
+    pub fn paths(&self) -> Option<(PathBuf, PathBuf)> {
+        self.lock().as_ref().map(|p| (p.root().to_owned(), p.cache_dir().to_owned()))
     }
 
     /// Revision of the open project, if one is open.
@@ -234,6 +244,16 @@ pub fn registry(session: Arc<Session>) -> Arc<Registry> {
     on_project!("media.import", "Probe, hash and add files to the asset table; same content is never added twice", true, media::import);
     on_project!("media.remove", "Remove assets from the asset table; refused while any clip uses them", true, media::remove);
     on_project!("media.assets", "The project's asset table", false, |p: &mut OpenProject, _: NoParams| Ok(media::assets(p)));
+    {
+        let s = session.clone();
+        r.method("media.extract_audio", "Decode an asset's audio to a WAV or FLAC file in the engine cache (16 kHz mono by default), for plugins", false, move |p: media::ExtractAudioParams| {
+            media::extract_audio(&s.snapshot()?, p)
+        });
+    }
+    on_project!("transcript.set", "Store an asset's transcript (words with media times, speakers); replaces any earlier one", false, transcript::set);
+    on_project!("transcript.get", "An asset's transcript, or the words that play on the timeline in timeline time (words or readable text)", false, transcript::get);
+    on_project!("transcript.list", "Assets that have a transcript", false, |p: &mut OpenProject, _: NoParams| transcript::list(p));
+    on_project!("transcript.remove", "Delete an asset's transcript", false, transcript::remove);
 
     // TEMPORARY: UI-only helpers; they belong in a UI plugin (see ui.rs).
     #[cfg(feature = "ui-api")]
@@ -369,7 +389,15 @@ pub fn registry(session: Arc<Session>) -> Arc<Registry> {
         Ok(Stopping { stopping: true })
     });
 
-    r.seal("Headless Video Engine", ENGINE_VERSION)
+    let plugin_methods = plugins::PluginMethods::new(&session);
+    {
+        let pm = plugin_methods.clone();
+        r.method("plugin.list", "Installed plugins: their commands, CLI names, secrets and load problems (rescans the plugin folders)", false, move |_: NoParams| pm.list());
+    }
+
+    let registry = r.seal("Headless Video Engine", ENGINE_VERSION);
+    plugin_methods.attach(&registry);
+    registry
 }
 
 pub(crate) fn rpc_error(e: ProjectError) -> RpcError {

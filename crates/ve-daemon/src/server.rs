@@ -145,8 +145,9 @@ pub async fn run(opts: Options) -> io::Result<()> {
             tracing::info!("stopped by daemon.stop");
         }
     }
-    // Stop ffmpeg runs nobody will collect.
+    // Stop ffmpeg runs nobody will collect, and the plugin processes.
     session.jobs.cancel_all();
+    session.plugins.shutdown();
     Ok(())
 }
 

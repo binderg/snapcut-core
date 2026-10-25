@@ -168,6 +168,21 @@ fn write_atomic(root: &Path, timeline: &Timeline) -> Result<()> {
     rename_with_retry(&tmp, &path)
 }
 
+/// Write a file inside the project folder so it is either the old or the new
+/// content, never half written (OneDrive may sync it at any moment).
+pub(crate) fn write_file_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir).map_err(io_err(dir))?;
+    }
+    let tmp = path.with_extension("tmp");
+    {
+        let mut f = File::create(&tmp).map_err(io_err(&tmp))?;
+        f.write_all(bytes).map_err(io_err(&tmp))?;
+        f.sync_all().map_err(io_err(&tmp))?;
+    }
+    rename_with_retry(&tmp, path)
+}
+
 /// Create a new project folder (the folder itself may already exist, empty or not).
 pub fn init(root: &Path, name: &str, output: OutputSettings) -> Result<OpenProject> {
     fs::create_dir_all(root).map_err(io_err(root))?;

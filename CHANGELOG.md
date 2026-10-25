@@ -61,13 +61,31 @@ not final (the command is `ve`).
   mpeg4.
 - Content-keyed frame and preview caches with background render-ahead.
 - `ve cache` shows and `ve cache clear` deletes the rebuildable caches
-  (frames, previews, renders, measurements).
+  (frames, previews, renders, measurements, extracted audio).
 
 ### Analysis and measurement
 
 - Silence and scene-cut detection writing markers.
 - Loudness (EBU R128, true peak), levels (RMS, peak, DC, clipping, noise
   floor, balance, correlation), waveform, pitch.
+
+### Plugins and transcripts
+
+- Process plugins: a folder with `plugin.json` adds methods and `ve`
+  commands; its program (any language) speaks JSON-RPC over stdio, can call
+  any engine method back, reports progress, honours cancel, and stops when
+  idle. Found in the project's `plugins/` folder and the user's plugin
+  folder. `plugin.list`, `ve plugin list | install | secret set | secret rm`.
+  API keys live in the OS keychain, never in the project.
+- Plugin methods show up in `system.describe`, run as jobs when marked so,
+  and their edits undo as one step.
+- Transcripts as core data: per source asset, words with exact times,
+  speakers and confidence, stored in the project's `transcripts/` folder.
+  `transcript.set | get | list | remove`; `ve transcript` shows the words
+  that play on the timeline as readable lines with timecodes.
+- `media.extract_audio`: an asset's audio as WAV or FLAC for plugins.
+- First speech-to-text plugin: `plugins/deepgram` (bring your own key;
+  install with `ve plugin install plugins/deepgram`).
 
 ### Protocol and tools
 
@@ -84,6 +102,6 @@ not final (the command is `ve`).
 - Tested mostly on Windows so far.
 - No proxies yet, so long-GOP phone footage seeks slowly.
 - Contact sheets ignore effects and transforms.
-- No titles or text yet (planned next), and no plugin host (no
-  transcription or captions).
+- No titles, text or captions yet (planned next). Plugins run with the
+  user's permissions (no sandbox).
 - Exports with effects take several times longer than plain cuts.

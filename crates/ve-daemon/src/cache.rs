@@ -24,9 +24,11 @@ pub enum CacheKind {
     Renders,
     /// Measurement results for this project's media files.
     Measure,
+    /// Audio extracted for plugins (`media.extract_audio`).
+    Audio,
 }
 
-const ALL: [CacheKind; 4] = [CacheKind::Frames, CacheKind::Previews, CacheKind::Renders, CacheKind::Measure];
+const ALL: [CacheKind; 5] = [CacheKind::Frames, CacheKind::Previews, CacheKind::Renders, CacheKind::Measure, CacheKind::Audio];
 
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -61,6 +63,7 @@ fn folders(p: &OpenProject, kind: CacheKind) -> Vec<PathBuf> {
         CacheKind::Frames => vec![p.cache_dir().join("frames")],
         CacheKind::Previews => vec![p.cache_dir().join("previews")],
         CacheKind::Renders => vec![p.cache_dir().join("renders")],
+        CacheKind::Audio => vec![p.cache_dir().join("audio")],
         CacheKind::Measure => {
             let Ok(base) = cache_base() else { return Vec::new() };
             p.timeline

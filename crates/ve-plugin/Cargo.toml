@@ -1,6 +1,6 @@
 [package]
 name = "ve-plugin"
-description = "Plugin manifests, discovery, process host (JSON-RPC over stdio)."
+description = "Plugin manifests, discovery, process host (JSON-RPC over stdio), secrets."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -13,10 +13,9 @@ semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-tokio.workspace = true
-tokio-util.workspace = true
-futures.workspace = true
 tracing.workspace = true
+etcetera.workspace = true
+keyring.workspace = true
 
 [lints]
 workspace = true

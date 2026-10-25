@@ -172,6 +172,28 @@ What the numbers mean:
 - **DC offset** above about 0.001 points at faulty gear.
 - **Noise floor** above about -50 dB is audible hiss or room noise.
 
+## 5c. Transcripts and plugin commands
+
+Plugins add commands: `ve plugin list` shows the installed ones, with their
+usage, whether their API keys are set, and a SKILL.md to read before using
+one. Speech to text is a plugin (the engine has no models); with one
+installed (`deepgram`: `ve transcribe <asset>`), cutting by words works like this:
+
+```bash
+ve plugin list                       # is a speech-to-text plugin installed and set up?
+ve transcribe asset_94b8             # once per source file; it may cost the user money
+ve transcript                        # readable lines: [00:00:12:04] S0: so um what we did was
+ve --json transcript                 # each word: start/end timecodes, clip, speaker, confidence
+ve --actor agent:claude ripple-delete --range 00:00:12:04..00:00:12:19 --range 00:01:02:00..00:01:03:11
+ve transcript                        # times moved: always re-read before cutting again
+```
+
+A word's `start` is the frame it starts in and its `end` the first frame
+after it, so `start..end` removes exactly that word. Transcripts belong to
+the source file and follow every edit; `ve transcript` lists any asset on
+the timeline that has none yet. Use one `ripple-delete` with several
+`--range`s for all cuts read from one transcript.
+
 ## 6. Check your work
 
 Cheapest first:
@@ -209,7 +231,7 @@ A 1080p export runs at about twice real time on a 4-core machine; run it last.
 - Effects, transitions and transforms render on the GPU, in frames, previews
   and exports; an export with them takes several times longer than plain
   cuts. `ve sheet` still shows plain cuts only: check effects with `ve frame`.
-- Captions and transcription come from plugins, not the core (none ship yet).
+- Transcription (and later captions) comes from plugins, not the core (section 5c).
 - If a render says media is missing, the source file moved; tell the user.
 - Commands go through a background `ve` process for the project. It starts on
   its own, exits after 10 idle minutes, and restarts itself after a rebuild.

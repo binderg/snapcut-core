@@ -133,7 +133,9 @@ One protocol for every client: JSON-RPC 2.0 over a local socket (Unix socket, Wi
 | `analyze.*` | `silence`, `scenes`, `loudness` | built-in analyzers; plugins add more |
 | `history.*` | `undo`, `redo`, `list`, `begin_group`, `end_group` | groups collapse one agent action into one undo step |
 | `jobs.*` | `list`, `get`, `cancel` | long-running work |
-| `system.*` | `describe`, `plugins`, `version` | `describe` returns the OpenRPC document |
+| `system.*` | `describe`, `version` | `describe` returns the OpenRPC document (plugin methods included) |
+| `plugin.*` | `list` | installed plugins, their commands, secrets and load issues |
+| `transcript.*` | `set`, `get`, `list`, `remove` | per-asset transcripts (made by plugins), words on the timeline |
 
 **Self-description.** `system.describe` returns an OpenRPC document generated from the Rust code: every method, its params as JSON Schema, every installed plugin's effects and commands, and every event type. This is the contract agents and frontend builders read. It cannot drift because it is generated.
 
@@ -309,22 +311,32 @@ Every plugin can also ship a `SKILL.md` that teaches agents when and how to use 
 {
   "id": "community.jumpcut",
   "version": "0.3.0",
-  "engine": ">=0.4 <0.6",
+  "engine": ">=0.4, <0.6",
   "protocol": "1",
   "name": "Jump Cut Tools",
   "contributes": {
     "commands": [
-      { "method": "jumpcut.remove_silences", "params": "schemas/remove_silences.json", "mutates": true }
-    ],
-    "effects": ["effects/punch_in.json"]
+      { "method": "jumpcut.remove_silences", "summary": "Cut every pause", "params": "schemas/remove_silences.json",
+        "mutates": true, "job": true, "cli": { "name": "jumpcut", "args": [] } }
+    ]
   },
-  "run": { "command": "python", "args": ["main.py"] },
+  "run": { "command": "python3", "args": ["main.py"], "windows": { "command": "python" } },
+  "secrets": [],
   "requires": { "gpu": false, "downloads": [] },
   "skill": "SKILL.md"
 }
 ```
 
-**Process plugins (v1).** The engine starts the plugin's process and talks JSON-RPC over stdio, the same pattern as LSP. The plugin receives the call, can call back into the engine's normal methods (`project.get`, `edit.*`, `render.frame`) as actor `plugin:<id>`, and returns a result. Any language works. An agent can write a Python plugin in one sitting. All edits a plugin makes inside one call form one undo group.
+(Effect manifests in `contributes` come with effect packs; not built yet.)
+
+**Process plugins (built, `ve-plugin` + `ve-daemon::plugins`).** The engine starts the plugin's process on the first call to one of its methods and talks newline-delimited JSON-RPC over stdio, the same pattern as LSP: an `initialize` handshake, then calls; `$/progress` and `$/log` from the plugin, `$/cancel` and `shutdown` from the engine. The plugin can call back into any engine method (`media.extract_audio`, `transcript.set`, `edit.*`, `render.frame`) on the same pipe; methods that record an actor get `plugin:<id>` whatever the plugin sends. Any language works. Processes stop after 5 idle minutes, and on engine exit (they must also exit when stdin closes). Calls run on plain threads (the daemon's blocking pool or a job thread) and wait for the answer; the plugin's own calls are dispatched through the same `Registry`.
+
+- **Registration.** The method registry is sealed before a project is open, so plugin methods are not registered: the registry has one `Extension` (the plugin host) that it asks for any method it lacks, and whose methods it adds to `system.describe` (`"x-plugin": "<id>"`). Built-in methods always win, and a plugin whose method uses an engine namespace is refused at load.
+- **Jobs.** `job` commands take `background: true` and run on the jobs module; `$/progress` feeds the job's progress, `jobs.cancel` sends `$/cancel` and kills the process after 5 s.
+- **Edits.** For `mutates` commands the host opens an undo group for `plugin:<id>` around the call, so all its edits undo as one step. Plugin edits still go through `base_rev` like anyone's. (A real transaction, one revision for the whole call, is still open; groups cover undo.)
+- **Secrets.** Declared in the manifest, stored in the OS keychain (`keyring`, `ve plugin secret set`), passed as environment variables at spawn; an engine environment variable of the same name wins. Missing secrets fail the call before the process starts, naming the command to fix it.
+- **CLI.** A command's `cli` gives it a `ve <name>` subcommand: unknown subcommands are looked up with `plugin.list` and their arguments mapped onto the params schema (positionals from `cli.args`, the rest as flags).
+- **Errors.** Plugin errors are `plugin_error` (exit 5) unless they pass on an engine error code; a crash fails the call with the tail of the plugin's log (`<project cache>/plugins/<id>.log`), and the next call restarts it.
 
 **Generated clips.** A generator can also make a clip that stays editable on the timeline: an animated lower third or title from HyperFrames, a 3D scene from Blender or three.js, an AI video shot, a caption style drawn in HTML. The clip keeps the recipe. While you edit it plays live; pixels are baked only when something needs them.
 
@@ -336,9 +348,11 @@ Every plugin can also ship a `SKILL.md` that teaches agents when and how to use 
 - **Plugins bring their own renderer** (headless Chrome, Blender, a model). The core never ships one, and anyone can write a different generator for the same job.
 - **Needs from the core:** jobs, a compositor that stacks video tracks with alpha (also needed for text, masks and picture-in-picture), the `baked` asset kind (exists), and a small preview contract: a method that gives a UI the generator's preview page and the clip's params, which the UI then drives with the playhead time.
 
-**Discovery.** Plugins load from three places, highest priority first: the project's `plugins/` folder, the user's plugin folder, and the built-in set. `system.plugins` lists them; `system.describe` merges their methods and schemas into the OpenRPC document.
+**Discovery.** Plugins load from the project's `plugins/` folder, then the user's plugin folder (`VE_PLUGINS_DIR`, else `<OS data dir>/ve/plugins`; `ve plugin install` copies there); a built-in set comes when the analyzers move to `plugins/core`. `plugin.list` lists them (rescanning first, with load problems as `issues`); `system.describe` merges their methods and schemas into the OpenRPC document.
 
-**Versioning.** Plugins declare the engine range and protocol major version they support. The engine refuses to load mismatches with a clear error. Protocol changes follow semver: additive in minors, breaking only in a new major with a deprecation window.
+**Transcripts (core data, plugin-made).** The core owns the transcript shape (`ve-model::transcript`): words with media-time start/end (exact decimal seconds to the millisecond), text, speaker, confidence, plus language, speakers and provenance. A transcript belongs to a source asset and lives in the project folder (`transcripts/<file hash>.json`), so it survives edits and re-imports. `transcript.set` stores one (from any plugin or tool), `transcript.get` returns it in media time or maps it onto the timeline through the audio clips (frame-floored start, frame-ceiled end, so `start..end` cuts exactly the word), `transcript.list|remove`. Vendor formats (Deepgram, WhisperX) are converted in their plugins, never in the core. `media.extract_audio` hands plugins a WAV or FLAC of an asset (16 kHz mono by default) from the cache, so no plugin needs a decoder. The first STT plugin, `plugins/deepgram` (Python standard library, the user's own key), is not compiled in or installed by default.
+
+**Versioning.** Plugins declare the engine range and protocol major version they support. The engine refuses to load mismatches with a clear error. A prerelease engine (`0.1.0-rc.1`) also matches as its release (`0.1.0`), so `*` and `>=0.1` ranges work on release candidates. Protocol changes follow semver: additive in minors, breaking only in a new major with a deprecation window.
 
 **Sandboxing.** Process plugins run with the user's permissions, like VS Code extensions. `wgsl` effects are sandboxed by the GPU validation path and `wasm` effects by `wasmtime`. If a public plugin registry happens, extend `wasmtime` (WASI) to commands and analyzers too, with explicit capabilities (read project, write edits, read media folder) for untrusted plugins. `ofx` plugins are never sandboxed and load only when installed by the user.
 
@@ -416,7 +430,9 @@ ve export --preset youtube-1080p -o final.mp4
 ve undo --group
 ve history --actor agent
 ve daemon start                             # live session for UIs
-ve plugin list | install <path> | new <name>
+ve plugin list | install <path> | secret set <plugin> <NAME>   # (`new` scaffolding: later)
+ve transcribe asset_94b8                    # a plugin's command (cli name from its manifest)
+ve transcript                               # the timeline's words as readable lines
 ```
 
 **Skills shipped with the engine**
@@ -425,7 +441,7 @@ ve plugin list | install <path> | new <name>
 | --- | --- |
 | `video-edit` | the edit loop, time formats, IDs, undo groups, how to check cuts |
 | `video-effects` | the effect and transition contracts, how to define, test and fix shaders |
-| `video-plugin-dev` | scaffolding a process plugin, calling back into the engine, packaging |
+| `video-plugin-dev` | scaffolding a process plugin, calling back into the engine, packaging (today: `skills/ve-core/guides/writing-plugins.md`) |
 | `video-frontend-dev` | building a UI on the protocol: load, subscribe to patches, frame server, `describe` |
 
 Plugins add their own skills next to these. `ve plugin new` scaffolds one.
@@ -498,7 +514,7 @@ The method registry and JSON Schema generation start in Phase 1 even though the 
 
 - [ ] Product name and CLI binary name (`ve` is a placeholder; the metadata namespace follows it).
 - [x] License: MIT OR Apache-2.0 (decided Oct 25, 2026), the Rust ecosystem default, so anyone can build on the engine, including commercial frontends.
-- [x] The project is a folder (`project.otio` + `effects/` + `plugins/`); caches live in the OS cache dir.
+- [x] The project is a folder (`project.otio` + `effects/` + `plugins/` + `transcripts/`); caches live in the OS cache dir.
 - [x] `ve-model` implements the OTIO schema directly with `serde` (no binding), checked against Python `opentimelineio`.
 - [ ] Target platforms for v1: Windows, macOS and Linux. Development so far is on Windows; macOS and Linux need a full test run before the first release.
 

@@ -13,7 +13,8 @@ JSON-RPC 2.0 protocol. Primary use case: an agent editing real footage
 - **AI-neutral core.** No models in core, ever: no bundled whisper, no STT. Core
   owns the data *shapes* (transcript asset with word timings/speakers/confidence,
   caption track, markers, jobs, provenance); every model lives in a plugin
-  (local, BYOK cloud, or SaaS). Transcription is the first plugin, not built yet.
+  (local, BYOK cloud, or SaaS). Transcription is the first plugin
+  (`plugins/deepgram`); vendor formats are converted in plugins, never core.
 - **API docs live in `skills/ve-core/`** (entry `SKILL.md`, one file per
   method family under `methods/`). Update them with any protocol change;
   `ve-daemon/tests/docs.rs` fails if a registered method is undocumented or
@@ -60,7 +61,7 @@ JSON-RPC 2.0 protocol. Primary use case: an agent editing real footage
   adds the wgpu compositor and pipes composited frames into the FFmpeg encoder so
   preview and export share one graph again.
 - **Default short audio crossfades on every cut**; edit ops must express J/L cuts.
-- **Project = folder** (`project.otio` + `effects/` + `plugins/`). Caches and
+- **Project = folder** (`project.otio` + `effects/` + `plugins/` + `transcripts/`). Caches and
   proxies go in the OS cache dir (etcetera), never the project folder.
 - **SaaS seams kept open:** media addressed by URI (`file://` now), protocol
   returns bytes/asset refs (CLI writes files, protocol doesn't), BYOK secrets via
@@ -317,6 +318,32 @@ ffmpeg 86 s (5.5 ms/frame), GPU 396 s (25.4 ms/frame), x264 alone 77 s.
 Contact sheets still warn (ffmpeg only). In-process decoding (`ffmpeg-the-third`) is
 planned for fast random scrubbing (ARCHITECTURE.md, "Decoding for the
 compositor"); it needs LLVM and an LGPL shared FFmpeg build, decide first.
+Plugins (`ve-plugin`, `ve-daemon::plugins`): process plugins (folder with
+`plugin.json`: commands with params schemas, `job`, `mutates`, `cli`;
+`run` with per-OS overrides; `secrets`) found in the project's `plugins/`
+then the user folder (`VE_PLUGINS_DIR`, else `<data dir>/ve/plugins`).
+Started on first call, newline-delimited JSON-RPC over stdio (`initialize`,
+`$/progress`, `$/log`, `$/cancel`, `shutdown`), idle stop after 5 min
+(`VE_PLUGIN_IDLE_SECS`), killed 5 s after an ignored cancel, crash errors
+carry the log tail. Plugin methods are not registered (the registry is
+sealed before a project opens): `Registry::set_extension` hands unknown
+methods to the host and merges its methods into `describe`; built-ins win
+and engine namespaces are refused. Plugin calls back into the engine go
+through `Registry::dispatch` (`futures::executor::block_on` on plain
+threads) with `actor` forced to `plugin:<id>`; `mutates` commands get an
+undo group around the call (not yet one revision). Secrets in the OS
+keychain (`keyring` v1 API; env var of the same name wins). Method
+`plugin.list`; CLI `ve plugin list|install|secret set|rm`, and any unknown
+subcommand is looked up as a plugin command (`ve transcribe <asset>`),
+args mapped onto the params schema. Transcripts (`ve-model::transcript`,
+`ve-daemon::transcript`): per source asset, media-time words (`"1.230s"`,
+ms precision), in `<project>/transcripts/<file hash>.json`;
+`transcript.set|get|list|remove`, `get` without an asset maps words onto
+the timeline (start floored, end ceiled to frames); CLI `ve transcript`.
+`media.extract_audio` (16 kHz mono WAV/FLAC in `<project cache>/audio/`,
+cache kind `audio`). `plugins/deepgram` (Python stdlib, BYOK) is the first
+STT plugin, tested against a fake endpoint only. Tests: `tests/plugins.rs`
+with a Python fixture plugin (skips without Python).
 CI (`.github/workflows/ci.yml`): clippy `-D warnings` and tests on Linux,
 macOS and Windows, plus the Python OTIO check. Releases
 (`release.yml`): a `v*` tag builds five targets and publishes a GitHub
@@ -344,7 +371,8 @@ Not done yet, and what the gate still needs (suggested order, not decided):
   (`signalstats`), black/frozen frames, letterboxing, interlacing, blur.
 - Proxies on import (jobs exist now); faster seeks for long-GOP phone footage.
 - HLS playback stream for web frontends (plan in ARCHITECTURE.md, "Frame server").
-- `ve-plugin` host, then move the analyzers to `plugins/core` (dogfooding).
+- (done) `ve-plugin` host. Next: move the analyzers to `plugins/core`
+  (dogfooding), and the `ui.*` methods to a UI plugin; captions from transcripts.
 - Effect packs (plugins with only effect manifests + WGSL), installed per user
   and scanned at startup, with copy on use into the project's `effects/`.
   Then move the gl-transitions set (today shipped by the editor and added

@@ -1,5 +1,9 @@
 //! `ve`: the CLI. Each subcommand maps to one protocol method.
 //!
+//! Plugins add commands of their own (`ve transcribe ...`): any subcommand
+//! clap does not know is looked up in the project's plugins (`plugin.list`)
+//! and its arguments are mapped onto the method's params schema.
+//!
 //! Commands on a project go to that project's daemon over its local socket
 //! (a named pipe on Windows); if none is running the CLI starts one, which
 //! exits after 10 idle minutes (`VE_DAEMON_IDLE_SECS`). Commands that need no
@@ -332,6 +336,21 @@ enum Command {
         span: Span,
     },
 
+    /// What was said, as readable lines with timecodes: the words that play on
+    /// the timeline (`ve transcript`), or one asset's whole transcript
+    /// (`--asset`). Making a transcript is a plugin's job (`ve plugin list`).
+    Transcript {
+        /// One asset's whole transcript, in its own media time.
+        #[arg(long)]
+        asset: Option<String>,
+        #[command(flatten)]
+        span: Span,
+    },
+
+    /// Plugins: `ve plugin list`, `ve plugin install <folder>`, `ve plugin secret set <plugin> <NAME>`.
+    #[command(subcommand)]
+    Plugin(PluginCmd),
+
     /// Send a raw JSON-RPC method call, e.g. `ve call project.get '{}'`.
     Call { method: String, params: Option<String> },
 
@@ -350,13 +369,37 @@ enum Command {
         #[command(subcommand)]
         cmd: Option<CacheCmd>,
     },
+
+    /// A command a plugin adds (`ve plugin list` shows them).
+    #[command(external_subcommand)]
+    External(Vec<String>),
+}
+
+#[derive(Subcommand)]
+enum PluginCmd {
+    /// Installed plugins, their commands, and whether their secrets are set.
+    List,
+    /// Copy a plugin folder into your plugin folder (replacing an older copy of it).
+    Install { folder: PathBuf },
+    /// API keys plugins need, kept in the OS keychain (never in the project).
+    #[command(subcommand)]
+    Secret(SecretCmd),
+}
+
+#[derive(Subcommand)]
+enum SecretCmd {
+    /// Store a key: `ve plugin secret set deepgram DEEPGRAM_API_KEY`, then paste it.
+    /// Reads one line from stdin, so `echo $KEY | ve plugin secret set ...` works too.
+    Set { plugin: String, name: String },
+    /// Remove a stored key.
+    Rm { plugin: String, name: String },
 }
 
 #[derive(Subcommand)]
 enum CacheCmd {
     /// Delete the project's caches (everything is rebuilt when needed). Undo history is kept.
     Clear {
-        /// Only these: frames, previews, renders, measure. Default: all.
+        /// Only these: frames, previews, renders, measure, audio. Default: all.
         #[arg(value_delimiter = ',')]
         kinds: Vec<String>,
         /// Show what would be freed without deleting anything.
@@ -958,7 +1001,20 @@ fn plan(cmd: &Command, json_output: bool) -> Plan {
         Command::Cache { cmd: Some(CacheCmd::Clear { kinds, dry_run }) } => {
             q("cache.clear", json!({ "kinds": kinds, "dry_run": dry_run }))
         }
-        Command::Call { .. } | Command::Daemon(_) => unreachable!("planned in main"),
+        Command::Transcript { asset, span } => {
+            let mut p = json!({ "format": if json_output { "words" } else { "text" } });
+            if let Some(a) = asset {
+                p["asset"] = json!(a);
+            }
+            if let Some(f) = &span.from {
+                p["from"] = json!(f);
+            }
+            if let Some(t) = &span.to {
+                p["to"] = json!(t);
+            }
+            q("transcript.get", p)
+        }
+        Command::Call { .. } | Command::Daemon(_) | Command::Plugin(_) | Command::External(_) => unreachable!("planned in main"),
     }
 }
 
@@ -1299,6 +1355,12 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
     let Some(actor) = parse_actor(&cli.actor) else {
         usage_error(format!("--actor `{}`: use user, agent:<name> or plugin:<id>", cli.actor), cli.json)
     };
+    if let Command::Plugin(cmd) = &cli.command {
+        return plugin_command(&cli, cmd).await;
+    }
+    if let Command::External(args) = &cli.command {
+        return plugin_cli(&cli, args, actor).await;
+    }
 
     let (method, mut params, mutates) = match &cli.command {
         Command::Call { method, params } => {
@@ -1543,9 +1605,306 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 (None, _) => println!("total {total}"),
             }
         }
+        Command::Transcript { .. } => {
+            print!("{}", result["text"].as_str().unwrap_or_default());
+            for a in result["missing"].as_array().into_iter().flatten() {
+                eprintln!("{} has no transcript yet (a speech-to-text plugin makes one: `ve plugin list`)", a.as_str().unwrap_or("?"));
+            }
+        }
         _ => println!("{}", serde_json::to_string_pretty(&result)?),
     }
     Ok(())
+}
+
+// --- plugins ---
+
+/// `ve plugin list|install|secret`.
+async fn plugin_command(cli: &Cli, cmd: &PluginCmd) -> anyhow::Result<()> {
+    match cmd {
+        PluginCmd::List => {
+            // Inside a project its daemon answers (project plugins too); elsewhere this process does.
+            let mut engine = match project_root(cli) {
+                Some(root) => {
+                    let mut e = Engine::Daemon(connect(&root, cli.json).await);
+                    if let Err(CallError(err)) = e.call("project.open", json!({ "path": root })).await {
+                        fail(&err, cli.json);
+                    }
+                    e
+                }
+                None => Engine::Local(ve_daemon::build_registry()),
+            };
+            let list = match engine.call("plugin.list", json!({})).await {
+                Ok(l) => l,
+                Err(CallError(e)) => fail(&e, cli.json),
+            };
+            if cli.json {
+                println!("{}", serde_json::to_string_pretty(&list)?);
+                return Ok(());
+            }
+            print_plugins(&list);
+        }
+        PluginCmd::Install { folder } => match ve_plugin::install(&absolute(folder)) {
+            Ok((m, dest)) => {
+                if cli.json {
+                    println!("{}", json!({ "id": m.id, "version": m.version.to_string(), "dir": dest }));
+                } else {
+                    println!("installed {} {} in {}", m.id, m.version, dest.display());
+                    for s in &m.secrets {
+                        if ve_plugin::secrets::source(&m.id, s) == ve_plugin::secrets::SecretSource::Missing {
+                            println!("it needs {s}: ve plugin secret set {} {s}", m.id);
+                        }
+                    }
+                }
+            }
+            Err(e) => usage_error(e.to_string(), cli.json),
+        },
+        PluginCmd::Secret(SecretCmd::Set { plugin, name }) => {
+            use std::io::{BufRead, IsTerminal, Write};
+            if std::io::stdin().is_terminal() {
+                eprint!("{name} for {plugin} (shown as you type): ");
+                let _ = std::io::stderr().flush();
+            }
+            let mut value = String::new();
+            std::io::stdin().lock().read_line(&mut value)?;
+            let value = value.trim();
+            if value.is_empty() {
+                usage_error("no value given".into(), cli.json);
+            }
+            if let Err(e) = ve_plugin::secrets::set(plugin, name, value) {
+                internal_error(e, cli.json);
+            }
+            if cli.json {
+                println!("{}", json!({ "plugin": plugin, "name": name, "stored": true }));
+            } else {
+                println!("stored {name} for {plugin} in the OS keychain");
+            }
+        }
+        PluginCmd::Secret(SecretCmd::Rm { plugin, name }) => {
+            let removed = ve_plugin::secrets::delete(plugin, name).unwrap_or_else(|e| internal_error(e, cli.json));
+            if cli.json {
+                println!("{}", json!({ "plugin": plugin, "name": name, "removed": removed }));
+            } else if removed {
+                println!("removed {name} for {plugin}");
+            } else {
+                println!("no {name} stored for {plugin}");
+            }
+        }
+    }
+    Ok(())
+}
+
+fn print_plugins(list: &Value) {
+    let plugins = list["plugins"].as_array().cloned().unwrap_or_default();
+    if plugins.is_empty() {
+        println!("no plugins installed");
+    }
+    for p in &plugins {
+        let running = if p["running"] == true { "  (running)" } else { "" };
+        println!(
+            "{} {}  {}  [{}]{running}",
+            p["id"].as_str().unwrap_or("?"),
+            p["version"].as_str().unwrap_or("?"),
+            p["name"].as_str().unwrap_or(""),
+            p["source"].as_str().unwrap_or("?")
+        );
+        for c in p["commands"].as_array().into_iter().flatten() {
+            let usage = match c["cli"]["name"].as_str() {
+                Some(name) => {
+                    let args: Vec<String> = c["cli"]["args"].as_array().into_iter().flatten().filter_map(|a| a.as_str().map(|a| format!("<{a}>"))).collect();
+                    format!("ve {name} {}", args.join(" "))
+                }
+                None => format!("ve {}", c["method"].as_str().unwrap_or("?")),
+            };
+            println!("  {:36} {}", usage.trim_end(), c["summary"].as_str().unwrap_or(""));
+        }
+        for s in p["secrets"].as_array().into_iter().flatten() {
+            let name = s["name"].as_str().unwrap_or("?");
+            match s["source"].as_str() {
+                Some("missing") => println!("  needs {name}: ve plugin secret set {} {name}", p["id"].as_str().unwrap_or("?")),
+                Some(src) => println!("  {name} set ({src})"),
+                None => {}
+            }
+        }
+        if let Some(skill) = p["skill"].as_str() {
+            println!("  skill: {skill}");
+        }
+    }
+    for i in list["issues"].as_array().into_iter().flatten() {
+        eprintln!("not loaded: {}", i["message"].as_str().unwrap_or("?"));
+    }
+    if let Some(dir) = list["user_dir"].as_str() {
+        println!("user plugins: {dir}");
+    }
+}
+
+/// `ve <plugin command> ...`: find the command among the project's plugins,
+/// map the arguments onto its params, call it (as a job if it is one).
+async fn plugin_cli(cli: &Cli, args: &[String], actor: Value) -> anyhow::Result<()> {
+    let Some((name, rest)) = args.split_first() else { usage_error("no command".into(), cli.json) };
+    // Global flags written after the subcommand land here; honour them.
+    let json_output = cli.json || rest.iter().any(|a| a == "--json");
+    let dry_run = cli.dry_run || rest.iter().any(|a| a == "--dry-run");
+    let rest: Vec<String> = rest.iter().filter(|a| *a != "--json" && *a != "--dry-run").cloned().collect();
+    let Some(root) = project_root(cli) else {
+        usage_error(format!("unknown command `{name}`; `ve --help` lists the built-in ones (plugin commands need a project)"), json_output)
+    };
+    let mut engine = Engine::Daemon(connect(&root, json_output).await);
+    let opened_rev = match engine.call("project.open", json!({ "path": root })).await {
+        Ok(info) => info["revision"].as_u64(),
+        Err(CallError(e)) => fail(&e, json_output),
+    };
+    let list = match engine.call("plugin.list", json!({})).await {
+        Ok(l) => l,
+        Err(CallError(e)) => fail(&e, json_output),
+    };
+    let found = list["plugins"].as_array().into_iter().flatten().find_map(|p| {
+        p["commands"].as_array().into_iter().flatten().find(|c| c["cli"]["name"] == name.as_str() || c["method"] == name.as_str()).cloned()
+    });
+    let Some(cmd) = found else {
+        usage_error(format!("unknown command `{name}`; `ve --help` lists the built-in ones, `ve plugin list` the plugin ones"), json_output)
+    };
+    let method = cmd["method"].as_str().unwrap_or_default().to_owned();
+    if rest.iter().any(|a| a == "--help" || a == "-h") {
+        print_plugin_help(name, &cmd);
+        return Ok(());
+    }
+    let mut params = plugin_params(&cmd, &rest).unwrap_or_else(|e| usage_error(format!("{name}: {e} (see `ve {name} --help`)"), json_output));
+    let props = cmd["params"]["properties"].as_object().cloned().unwrap_or_default();
+    if props.contains_key("base_rev") && params.get("base_rev").is_none() {
+        params["base_rev"] = json!(cli.base_rev.or(opened_rev).unwrap_or(0));
+    }
+    if props.contains_key("dry_run") && dry_run {
+        params["dry_run"] = json!(true);
+    }
+    if props.contains_key("actor") {
+        params["actor"] = actor;
+    }
+    let as_job = cmd["job"] == true;
+    if as_job {
+        params["background"] = json!(true);
+    }
+    let result = match engine.call(&method, params).await {
+        Ok(r) if as_job => wait_for_job(&mut engine, &r["job_id"], &method, json_output).await,
+        Ok(r) => r,
+        Err(CallError(e)) => fail(&e, json_output),
+    };
+    match result["text"].as_str() {
+        Some(text) if !json_output => {
+            print!("{text}");
+            if !text.ends_with('\n') {
+                println!();
+            }
+        }
+        _ => println!("{}", serde_json::to_string_pretty(&result)?),
+    }
+    Ok(())
+}
+
+fn print_plugin_help(name: &str, cmd: &Value) {
+    let positional: Vec<&str> = cmd["cli"]["args"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+    println!("{}", cmd["summary"].as_str().unwrap_or(""));
+    println!();
+    println!("Usage: ve {name} {}", positional.iter().map(|a| format!("<{a}>")).collect::<Vec<_>>().join(" "));
+    println!("Method: {}", cmd["method"].as_str().unwrap_or("?"));
+    let required: Vec<&str> = cmd["params"]["required"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+    if let Some(props) = cmd["params"]["properties"].as_object() {
+        println!();
+        for (k, v) in props {
+            if ["base_rev", "dry_run", "actor", "background"].contains(&k.as_str()) {
+                continue;
+            }
+            let flag = if positional.contains(&k.as_str()) { format!("<{k}>") } else { format!("--{}", k.replace('_', "-")) };
+            let ty = schema_type(v).unwrap_or("string");
+            let req = if required.contains(&k.as_str()) { " (required)" } else { "" };
+            println!("  {flag:24} {ty}{req}  {}", v["description"].as_str().unwrap_or(""));
+        }
+    }
+}
+
+/// The JSON Schema `type` of a property (the first non-null one of a list).
+fn schema_type(prop: &Value) -> Option<&str> {
+    match &prop["type"] {
+        Value::String(s) => Some(s.as_str()),
+        Value::Array(a) => a.iter().filter_map(Value::as_str).find(|t| *t != "null"),
+        _ => None,
+    }
+}
+
+/// Map `ve <cmd>` arguments onto a command's params: positionals in the
+/// order the manifest's `cli.args` gives, everything else `--flag value`
+/// (or `--flag=value`; a boolean flag alone means true; an array flag can repeat).
+fn plugin_params(cmd: &Value, args: &[String]) -> Result<Value, String> {
+    let props = cmd["params"]["properties"].as_object().cloned().unwrap_or_default();
+    let positional: Vec<String> = cmd["cli"]["args"].as_array().into_iter().flatten().filter_map(|a| a.as_str().map(String::from)).collect();
+    let mut out = serde_json::Map::new();
+    let mut next_pos = 0;
+    let mut i = 0;
+    while i < args.len() {
+        let a = &args[i];
+        i += 1;
+        if let Some(flag) = a.strip_prefix("--") {
+            let (key, inline) = match flag.split_once('=') {
+                Some((k, v)) => (k.replace('-', "_"), Some(v.to_owned())),
+                None => (flag.replace('-', "_"), None),
+            };
+            let Some(prop) = props.get(&key) else {
+                let known: Vec<String> = props
+                    .keys()
+                    .filter(|k| !["base_rev", "dry_run", "actor", "background"].contains(&k.as_str()))
+                    .map(|k| format!("--{}", k.replace('_', "-")))
+                    .collect();
+                return Err(format!("unknown flag --{flag}; it takes {}", if known.is_empty() { "none".into() } else { known.join(", ") }));
+            };
+            let ty = schema_type(prop).unwrap_or("string");
+            let raw = match inline {
+                Some(v) => v,
+                None if ty == "boolean" => "true".into(),
+                None => {
+                    let v = args.get(i).cloned().ok_or_else(|| format!("--{flag} needs a value"))?;
+                    i += 1;
+                    v
+                }
+            };
+            if ty == "array" {
+                let item_ty = schema_type(&prop["items"]).unwrap_or("string");
+                let v = convert(item_ty, &raw).map_err(|e| format!("--{flag}: {e}"))?;
+                let entry = out.entry(key).or_insert_with(|| json!([]));
+                if let Some(arr) = entry.as_array_mut() {
+                    arr.push(v);
+                }
+            } else {
+                out.insert(key, convert(ty, &raw).map_err(|e| format!("--{flag}: {e}"))?);
+            }
+        } else {
+            let Some(key) = positional.get(next_pos) else {
+                return Err(format!("unexpected argument `{a}`"));
+            };
+            next_pos += 1;
+            let ty = props.get(key).and_then(schema_type).unwrap_or("string");
+            out.insert(key.clone(), convert(ty, a).map_err(|e| format!("<{key}>: {e}"))?);
+        }
+    }
+    for r in cmd["params"]["required"].as_array().into_iter().flatten().filter_map(Value::as_str) {
+        if !out.contains_key(r) && !["base_rev", "actor"].contains(&r) {
+            let shown = if positional.iter().any(|p| p == r) { format!("<{r}>") } else { format!("--{}", r.replace('_', "-")) };
+            return Err(format!("missing {shown}"));
+        }
+    }
+    Ok(Value::Object(out))
+}
+
+fn convert(ty: &str, raw: &str) -> Result<Value, String> {
+    match ty {
+        "integer" => raw.parse::<i64>().map(Value::from).map_err(|_| format!("`{raw}` is not a whole number")),
+        "number" => raw.parse::<f64>().ok().filter(|f| f.is_finite()).map(Value::from).ok_or_else(|| format!("`{raw}` is not a number")),
+        "boolean" => match raw {
+            "true" | "yes" | "1" => Ok(Value::Bool(true)),
+            "false" | "no" | "0" => Ok(Value::Bool(false)),
+            _ => Err(format!("`{raw}`: use true or false")),
+        },
+        "object" | "array" => serde_json::from_str(raw).map_err(|e| format!("not valid JSON: {e}")),
+        _ => Ok(Value::String(raw.to_owned())),
+    }
 }
 
 /// `1.4 GB`, `320 MB`, `12 KB`.
@@ -1558,4 +1917,38 @@ fn size_text(bytes: u64) -> String {
         u += 1;
     }
     if u == 0 || v >= 100.0 { format!("{v:.0} {}", UNITS[u]) } else { format!("{v:.1} {}", UNITS[u]) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn plugin_args_map_onto_params() {
+        let cmd = json!({
+            "method": "acme.transcribe",
+            "cli": { "name": "transcribe", "args": ["asset"] },
+            "params": {
+                "type": "object",
+                "properties": {
+                    "asset": { "type": "string" },
+                    "language": { "type": ["string", "null"] },
+                    "max_speakers": { "type": "integer" },
+                    "diarize": { "type": "boolean" },
+                    "keywords": { "type": "array", "items": { "type": "string" } }
+                },
+                "required": ["asset"]
+            }
+        });
+        let args: Vec<String> = ["asset_1", "--language", "he", "--max-speakers=3", "--diarize", "--keywords", "a", "--keywords", "b"]
+            .iter()
+            .map(|s| (*s).to_owned())
+            .collect();
+        let p = plugin_params(&cmd, &args).unwrap();
+        assert_eq!(p, json!({ "asset": "asset_1", "language": "he", "max_speakers": 3, "diarize": true, "keywords": ["a", "b"] }));
+        assert!(plugin_params(&cmd, &[]).unwrap_err().contains("missing <asset>"));
+        assert!(plugin_params(&cmd, &["a".into(), "b".into()]).unwrap_err().contains("unexpected"));
+        assert!(plugin_params(&cmd, &["a".into(), "--nope".into()]).unwrap_err().contains("unknown flag"));
+        assert!(plugin_params(&cmd, &["a".into(), "--max-speakers".into(), "x".into()]).unwrap_err().contains("whole number"));
+    }
 }

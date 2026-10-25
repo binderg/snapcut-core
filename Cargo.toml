@@ -82,7 +82,7 @@ anyhow = "1.0.104"
 # Windows only, ve-cli only: one SetHandleInformation call (see ve-cli/src/stdio.rs).
 # Already in the tree through clap and tokio.
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation"] }
-keyring = "4.2.0"               # (Phase 3) BYOK secrets for plugins
+keyring = "4.2.0"               # BYOK secrets for plugins (OS keychain)
 extism = "1.41.0"               # (later) WASM plugin tier
 opendal = "0.59.5"              # (later) s3:// and other media backends
 

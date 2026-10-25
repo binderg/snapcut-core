@@ -11,6 +11,7 @@ publish.workspace = true
 ve-protocol.workspace = true
 ve-model.workspace = true
 ve-daemon.workspace = true
+ve-plugin.workspace = true
 clap.workspace = true
 anyhow.workspace = true
 serde_json.workspace = true

@@ -2,7 +2,7 @@
 
 The engine keeps work it can redo in the OS cache folder, never in the
 project folder: rendered frames, playback chunks, exports not collected yet,
-and measurement results. Frames and previews are capped (2 GB and 1 GB per
+measurement results and audio extracted for plugins. Frames and previews are capped (2 GB and 1 GB per
 project, oldest dropped first), but a few projects add up. These methods show
 and free that space. Everything listed here is rebuilt the next time it is
 needed, so clearing never changes the project. Undo history, the project lock
@@ -16,6 +16,7 @@ Kinds:
 | `previews` | Playback chunks from `render.range_preview` | `<project cache>/previews/` |
 | `renders` | Exports waiting to be collected, and leftovers from failed or cancelled ones | `<project cache>/renders/` |
 | `measure` | `measure.*` results for this project's media files (shared with other projects that use the same files) | `<cache>/measure/<file hash>/` |
+| `audio` | Audio files made by `media.extract_audio` for plugins | `<project cache>/audio/` |
 
 ## `cache.status`
 

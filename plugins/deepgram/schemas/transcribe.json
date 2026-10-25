@@ -1,0 +1,28 @@
+{
+  "type": "object",
+  "properties": {
+    "asset": {
+      "type": "string",
+      "description": "The asset to transcribe (its whole file)"
+    },
+    "language": {
+      "type": "string",
+      "description": "Language code (en, es, he, ...). Default: detect it"
+    },
+    "model": {
+      "type": "string",
+      "description": "Deepgram model. Default: nova-3"
+    },
+    "diarize": {
+      "type": "boolean",
+      "description": "Tell speakers apart (S0, S1, ...). Default: true"
+    },
+    "keywords": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Names and terms to listen for (nova-3 keyterm prompting)"
+    }
+  },
+  "required": ["asset"],
+  "additionalProperties": false
+}

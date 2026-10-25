@@ -18,7 +18,9 @@ changes.
 | **Video measurements** (brightness, saturation, black or frozen frames, blur) | Not available; only audio measurements |
 | **Per-clip measurements** (`clip` param, a report of every clip) | Measure an asset (whole file) or a timeline range |
 | **Proxies** for heavy footage | Frames come from originals, so long-GOP phone footage seeks slowly |
-| **Plugins** (and anything AI: transcription, captions, keying) | No plugin host yet; the core will never bundle models |
+| **Captions** (a caption track from a transcript) | Transcripts exist ([../methods/transcript.md](../methods/transcript.md)); captions wait for the text renderer |
+| **Generator plugins, effect packs, sandboxed plugins** | Process plugins exist (commands, analyzers): [writing-plugins.md](writing-plugins.md). They run with the user's permissions, like editor extensions. The built-in analyzers are not plugins yet |
+| **Project plugins in `ve describe`** | `ve describe` runs without the daemon, so it lists built-ins and user-folder plugins only; `system.describe` on the daemon, and `ve plugin list` inside the project, include the project's `plugins/` too |
 | **More than one project per daemon** | One daemon per project folder; connect to each separately |
 | **Remote access** | Loopback only, by design for now |
 
@@ -38,3 +40,6 @@ changes.
 - **Windows**: daemons run from a copy of `ve.exe` (in `<OS cache>/ve/bin/`)
   so rebuilding or upgrading `ve` is never blocked by a running daemon.
 - **One undo stack** per project for all actors.
+- **Plugins** run as separate processes with the user's permissions. Only
+  install plugins you trust. A project's `plugins/` folder runs code when a
+  plugin method is called on that project.
