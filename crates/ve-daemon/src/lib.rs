@@ -17,6 +17,7 @@ pub mod events;
 pub mod frames;
 pub mod fx;
 pub mod jobs;
+pub mod layers;
 pub mod measure;
 pub mod media;
 pub mod plugins;
@@ -334,6 +335,13 @@ pub fn registry(session: Arc<Session>) -> Arc<Registry> {
     long!("render.export", "Render the timeline (or a range) with a preset to an MP4 in the engine cache", false, render::ExportParams,
         |_: &Session, snap: &Snapshot, p| render::export(snap, p));
     r.method("render.presets", "Export presets", false, |_: NoParams| Ok(render::presets()));
+    let s = session.clone();
+    r.method(
+        "render.layers",
+        "What is on screen: the video layers at a frame (placement, effects, transitions, what shows), or which tracks show over a range",
+        false,
+        move |p: layers::LayersParams| layers::layers(&s.snapshot()?, p),
+    );
 
     long!("analyze.silence", "Find quiet stretches in the timeline audio; writes `silence` markers", true, analyze::SilenceParams, analyze::silence);
     long!("measure.loudness", "EBU R128 loudness (LUFS, range, true peak) of an asset's file or the timeline mix", false, measure::MeasureParams,

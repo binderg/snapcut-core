@@ -139,6 +139,48 @@ pub struct VideoInfo {
     /// How the pixels encode color, as far as the file says.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<ColorInfo>,
+    /// Transparency. Absent on assets probed before it was recorded (read
+    /// the pixel format then).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alpha: Option<Alpha>,
+    /// Stills with `alpha: transparent`: the share of pixels that are not
+    /// fully opaque, in percent, rounded up (so any at all is at least 1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub see_through_percent: Option<u8>,
+}
+
+/// Whether a picture can show what is under it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Alpha {
+    /// No alpha channel: every pixel covers what is under it.
+    None,
+    /// An alpha channel, but every pixel was measured fully opaque.
+    Opaque,
+    /// Some pixels were measured partly or fully see-through.
+    Transparent,
+    /// An alpha channel that was not measured (video with alpha, e.g.
+    /// ProRes 4444 or VP9 with alpha): assume it may be see-through.
+    Unmeasured,
+}
+
+impl Alpha {
+    /// What a pixel format alone says: `Unmeasured` for formats that can
+    /// carry transparency (an alpha plane like `rgba`, `yuva420p`, `ya8`,
+    /// `gbrap`, or a palette, which may mark entries clear), else `None`.
+    pub fn from_pixel_format(pix: &str) -> Self {
+        let alpha = pix == "pal8"
+            || pix.starts_with("yuva")
+            || pix.starts_with("gbrap")
+            || pix.starts_with("ya")
+            || ["rgba", "bgra", "argb", "abgr"].iter().any(|a| pix.contains(a));
+        if alpha { Self::Unmeasured } else { Self::None }
+    }
+
+    /// True when the picture always hides what is under it.
+    pub fn is_solid(self) -> bool {
+        matches!(self, Self::None | Self::Opaque)
+    }
 }
 
 /// A video stream's color description (ffprobe's names). Fields the file

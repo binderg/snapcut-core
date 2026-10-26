@@ -45,6 +45,13 @@ an image has no length of its own, its clip decides how long it shows (see
 video track shows the tracks below through its clear parts. Animated GIFs
 are video.
 
+Import measures each still's transparency from its pixels, not just its
+format: `media.video.alpha` is `transparent` (with `see_through_percent`)
+for a cut-out logo and `opaque` for an RGBA screenshot with no clear
+pixel, so you can tell whether an image will cover what is under it.
+`render.layers` ([render.md](render.md#renderlayers)) uses this to say what
+shows.
+
 ## `media.remove` (edits)
 
 | Param | Type | |

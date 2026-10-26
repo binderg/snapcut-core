@@ -33,14 +33,14 @@ pub const OUTPUT_MATRIX: &str = "bt709";
 
 /// What the compositor needs to know about a source file.
 #[derive(Debug, Clone, Copy)]
-struct Source {
+pub(crate) struct Source {
     /// Displayed size, after rotation.
     width: u32,
     height: u32,
 }
 
 /// Every source file the project knows.
-fn sources(tl: &Timeline) -> HashMap<PathBuf, Source> {
+pub(crate) fn sources(tl: &Timeline) -> HashMap<PathBuf, Source> {
     tl.metadata
         .ve
         .assets
@@ -111,13 +111,13 @@ fn passes(seg: &Segment, t: Q, fx: &Registry) -> Result<Vec<Pass>> {
         .collect()
 }
 
-fn seconds(q: Q) -> f32 {
+pub(crate) fn seconds(q: Q) -> f32 {
     (*q.numer() as f64 / *q.denom() as f64) as f32
 }
 
 /// A segment's transform at timeline time `t`, keyframes evaluated, or
 /// `None` for the default placement.
-fn transform_at(seg: &Segment, t: Q) -> Option<Transform> {
+pub(crate) fn transform_at(seg: &Segment, t: Q) -> Option<Transform> {
     let tr = seg.transform.as_ref()?;
     let mut v = tr.clone();
     let local = t - seg.clip_start;
@@ -134,7 +134,7 @@ fn transform_at(seg: &Segment, t: Q) -> Option<Transform> {
 /// matches the ffmpeg path); a transform scales the fitted rectangle around
 /// its center, moves it by canvas fractions, and crops, turns and fades it
 /// on the GPU.
-fn layout(seg: &Segment, t: Q, src: Source, canvas: &Canvas) -> (Rect, Xf, (u32, u32)) {
+pub(crate) fn layout(seg: &Segment, t: Q, src: Source, canvas: &Canvas) -> (Rect, Xf, (u32, u32)) {
     let base = place(canvas.fit, src.width, src.height, canvas.width, canvas.height);
     let Some(tf) = transform_at(seg, t) else {
         return (base, Xf::default(), (base.w as u32, base.h as u32));

@@ -202,12 +202,23 @@ Cheapest first:
 ve summary                                         # structure, durations
 ve sheet --from 00:01:00:00 --to 00:01:30:00 --count 12 -o sheet.jpg
 ve frame --at 00:01:12:12 --width 640 -o cut.jpg   # exact frame at a cut
+ve layers --at 00:01:12:12                         # what is on screen there, as text
+ve layers --from 00:01:00:00 --to 00:01:30:00      # which tracks show, span by span
 ve preview --from 00:01:05:00 --to 00:01:20:00 -o check.mp4   # if you can watch video
 ```
 
 Open the images and look. At a cut, check the frame just before and just
 after (`--at` the cut, and one frame earlier). `ve sheet` prints the
 timecode of every cell so you can map what you see back to the timeline.
+
+With overlays (b-roll, logos, picture in picture), `ve layers` is the
+quick check before you look: each track at that frame, where it sits,
+its effect values, any transition, and whether it shows, is partly
+covered, or is hidden (and by which track). Over a range it lists the
+stretches where the same tracks show, so you can confirm a logo is on
+screen for the whole intro without opening a single frame. It errs toward
+"shows": a see-through or faded layer never counts as hiding what is
+under it.
 
 ## 7. Export
 

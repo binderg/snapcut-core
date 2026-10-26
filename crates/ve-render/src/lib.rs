@@ -22,6 +22,7 @@ pub mod compose;
 pub mod decoder;
 pub mod gpu;
 pub mod graph;
+pub mod layers;
 pub mod plan;
 pub mod source;
 

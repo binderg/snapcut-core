@@ -119,7 +119,8 @@ straight to `edit.ripple_delete` by name.
  "hash": "ecc48741...",
  "media": {"duration": {"value": 100.0, "rate": 25.0}, "size_bytes": 836789,
    "video": {"codec": "h264", "width": 160, "height": 120, "rate": [25, 1],
-     "color": {"pixel_format": "yuv420p", "bit_depth": 8, "chroma": "4:2:0", "range": "limited", "dynamic_range": "sdr"}},
+     "color": {"pixel_format": "yuv420p", "bit_depth": 8, "chroma": "4:2:0", "range": "limited", "dynamic_range": "sdr"},
+     "alpha": "none"},
    "audio": {"codec": "pcm_s16le", "sample_rate": 48000, "channels": 2}}}
 ```
 
@@ -133,6 +134,8 @@ straight to `edit.ripple_delete` by name.
 | `media.video.vfr` | Variable frame rate (common on phones); renders conform it |
 | `media.video.still` | A still image: one picture, `duration` zero, `rate` meaningless; absent for video |
 | `media.video.color` | Pixel format, bit depth, chroma, range, primaries, transfer, matrix, `sdr`/`hdr10`/`hlg`. Fields the file does not state are absent |
+| `media.video.alpha` | Transparency: `none` (no alpha channel), `opaque` (an alpha channel, every pixel measured opaque, e.g. a screenshot saved as RGBA), `transparent` (some pixels measured see-through, e.g. a cut-out logo), `unmeasured` (video with an alpha channel; assume it may be see-through). Stills are measured at import; absent on assets imported before this was recorded (read `color.pixel_format` then) |
+| `media.video.see_through_percent` | Stills with `alpha: transparent`: share of pixels not fully opaque, in percent, rounded up |
 | `media.audio` | First audio stream only |
 
 ### Project block

@@ -14,7 +14,7 @@ use std::process::Command;
 
 use serde::Deserialize;
 use serde_json::Value;
-use ve_model::meta::{AudioInfo, ColorInfo, MediaInfo, VideoInfo};
+use ve_model::meta::{Alpha, AudioInfo, ColorInfo, MediaInfo, VideoInfo};
 use ve_model::time::Q;
 use ve_model::{Rate, RationalTime};
 
@@ -95,8 +95,39 @@ pub fn probe(path: &Path) -> Result<Probe> {
     }
     let ffprobe: Value = serde_json::from_slice(&out.stdout)
         .map_err(|e| MediaError::NotMedia { path: path.to_owned(), message: format!("unreadable ffprobe output: {e}") })?;
-    let media = summarize(&ffprobe).ok_or_else(|| MediaError::NoStreams(path.to_owned()))?;
+    let mut media = summarize(&ffprobe).ok_or_else(|| MediaError::NoStreams(path.to_owned()))?;
+    if let Some(v) = media.video.as_mut().filter(|v| v.still && v.alpha == Some(Alpha::Unmeasured)) {
+        // One picture: cheap to measure, and it tells a cut-out logo from an
+        // opaque screenshot that happens to be saved as RGBA.
+        (v.alpha, v.see_through_percent) = match measure_alpha(path) {
+            Ok(0) => (Some(Alpha::Opaque), None),
+            Ok(pct) => (Some(Alpha::Transparent), Some(pct)),
+            Err(e) => {
+                tracing::warn!("measuring transparency of {}: {e}", path.display());
+                (Some(Alpha::Unmeasured), None)
+            }
+        };
+    }
     Ok(Probe { media, ffprobe })
+}
+
+/// Percent of a still's pixels that are not fully opaque, rounded up.
+fn measure_alpha(path: &Path) -> io::Result<u8> {
+    let out = Command::new(ffmpeg_sidecar::paths::ffmpeg_path())
+        .args(["-v", "error", "-i"])
+        .arg(path)
+        .args(["-frames:v", "1", "-vf", "format=rgba,alphaextract", "-f", "rawvideo", "-pix_fmt", "gray", "-"])
+        .output()?;
+    if !out.status.success() || out.stdout.is_empty() {
+        let why = String::from_utf8_lossy(&out.stderr);
+        return Err(io::Error::other(format!("ffmpeg could not read its alpha: {}", why.trim())));
+    }
+    Ok(see_through_percent(&out.stdout))
+}
+
+fn see_through_percent(alpha: &[u8]) -> u8 {
+    let clear = alpha.iter().filter(|&&a| a < 255).count();
+    u8::try_from((clear * 100).div_ceil(alpha.len().max(1))).unwrap_or(100)
 }
 
 #[derive(Deserialize)]
@@ -179,6 +210,8 @@ pub fn summarize(ffprobe: &Value) -> Option<MediaInfo> {
             vfr: !still && matches!((r, avg), (Some(r), Some(avg)) if r != avg),
             still,
             color: color(s),
+            alpha: s.pix_fmt.as_deref().filter(|p| !p.is_empty()).map(Alpha::from_pixel_format),
+            see_through_percent: None,
         })
     });
     let audio = a.and_then(|s| {
@@ -429,6 +462,60 @@ mod tests {
             "format": {"format_name": "gif"}});
         assert!(summarize(&gif("1")).unwrap().video.unwrap().still);
         assert!(!summarize(&gif("25")).unwrap().video.unwrap().still);
+    }
+
+    #[test]
+    fn alpha_from_pixel_format() {
+        let alpha = |pix: &str| {
+            let mut s = video_stream("25/1", "25/1");
+            s["pix_fmt"] = json!(pix);
+            summarize(&json!({"streams": [s], "format": {}})).unwrap().video.unwrap().alpha
+        };
+        for pix in ["yuv420p", "yuvj420p", "rgb24", "gray", "yuv422p10le"] {
+            assert_eq!(alpha(pix), Some(Alpha::None), "{pix}");
+        }
+        for pix in ["rgba", "bgra", "argb", "yuva420p", "yuva444p12le", "ya8", "gbrap", "rgba64be", "pal8"] {
+            assert_eq!(alpha(pix), Some(Alpha::Unmeasured), "{pix}");
+        }
+        assert_eq!(see_through_percent(&[255; 100]), 0);
+        assert_eq!(see_through_percent(&[[254].as_slice(), &[255; 999]].concat()), 1, "any see-through pixel rounds up to 1%");
+        assert_eq!(see_through_percent(&[[0; 50], [255; 50]].concat()), 50);
+    }
+
+    /// Real files: an opaque PNG saved as RGBA, a half-clear one, a palette
+    /// PNG with a transparent entry, and a JPEG.
+    #[test]
+    fn probe_measures_still_alpha() {
+        if !ffmpeg_available() {
+            eprintln!("skipped: no ffmpeg");
+            return;
+        }
+        let dir = std::env::temp_dir().join("ve-media-alpha");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let make = |name: &str, args: &[&str]| {
+            let out = dir.join(name);
+            let st = Command::new(ffmpeg_sidecar::paths::ffmpeg_path())
+                .args(["-v", "error", "-y"])
+                .args(args)
+                .args(["-frames:v", "1"])
+                .arg(&out)
+                .status()
+                .unwrap();
+            assert!(st.success(), "making {name}");
+            probe(&out).unwrap().media.video.unwrap()
+        };
+        let opaque = make("opaque.png", &["-f", "lavfi", "-i", "color=red:s=16x16,format=rgba"]);
+        assert_eq!((opaque.alpha, opaque.see_through_percent), (Some(Alpha::Opaque), None));
+        // Inputs one frame long: palettegen only answers once its input ends.
+        let half = ["-f", "lavfi", "-i", "color=red:s=8x16:d=0.04,format=rgba", "-f", "lavfi", "-i", "color=black@0:s=8x16:d=0.04,format=rgba", "-filter_complex"];
+        let cut = make("half.png", &[&half[..], &["[0][1]hstack,format=rgba"]].concat());
+        assert_eq!((cut.alpha, cut.see_through_percent), (Some(Alpha::Transparent), Some(50)));
+        let pal = make("pal.png", &[&half[..], &["[0][1]hstack,format=rgba,split[a][b];[a]palettegen=reserve_transparent=1[p];[b][p]paletteuse=alpha_threshold=128"]].concat());
+        assert_eq!(pal.color.as_ref().unwrap().pixel_format, "pal8");
+        assert_eq!((pal.alpha, pal.see_through_percent), (Some(Alpha::Transparent), Some(50)));
+        let jpeg = make("photo.jpg", &["-f", "lavfi", "-i", "color=red:s=16x16"]);
+        assert_eq!(jpeg.alpha, Some(Alpha::None));
     }
 
     #[test]

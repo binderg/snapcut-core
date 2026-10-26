@@ -283,6 +283,15 @@ enum Command {
         #[arg(short, long)]
         output: PathBuf,
     },
+    /// What is on screen at a frame: `ve layers --at 00:00:42:00` (each layer, its
+    /// placement, effects, transition, how much shows). Without `--at`, which tracks
+    /// show over a range: `ve layers --from 00:01:00:00 --to 00:02:00:00`.
+    Layers {
+        #[arg(long, conflicts_with_all = ["from", "to"])]
+        at: Option<String>,
+        #[command(flatten)]
+        span: Span,
+    },
     /// Grid of evenly spaced frames: `ve sheet --from 00:01:00:00 --to 00:01:30:00 --count 12 -o sheet.jpg`.
     Sheet {
         #[command(flatten)]
@@ -941,6 +950,8 @@ fn plan(cmd: &Command, json_output: bool) -> Plan {
             let format = if ext(output) == "png" { "png" } else { "jpeg" };
             q("render.frame", json!({ "at": at, "width": width, "format": format }))
         }
+        Command::Layers { at: Some(at), .. } => q("render.layers", json!({ "at": at })),
+        Command::Layers { span, .. } => q("render.layers", span_params(span)),
         Command::Sheet { span, count, columns, width, output } => {
             let mut p = span_params(span);
             p["count"] = json!(count);
@@ -1200,6 +1211,56 @@ fn print_commit(r: &Value) {
 /// `-14.2` or `-` for a missing value.
 fn num(v: &Value, unit: &str) -> String {
     v.as_f64().map_or_else(|| "-".to_owned(), |x| format!("{x:.1}{unit}"))
+}
+
+/// `render.layers`: a frame's layers top to bottom (as the eye reads a
+/// stack), or a range's spans.
+fn print_layers(r: &Value) {
+    let s = |v: &Value| v.as_str().unwrap_or("?").to_owned();
+    let list = |v: &Value| v.as_array().into_iter().flatten().filter_map(Value::as_str).collect::<Vec<_>>().join(", ");
+    let Some(layers) = r["layers"].as_array() else {
+        for sp in r["spans"].as_array().into_iter().flatten() {
+            let hidden = if sp["hidden"].is_array() { format!("  (hidden: {})", list(&sp["hidden"])) } else { String::new() };
+            println!("{}-{}  {}{hidden}", s(&sp["from"]), s(&sp["to"]), list(&sp["visible"]));
+        }
+        return;
+    };
+    let disabled = if r["disabled"].is_array() { format!("  (off: {})", list(&r["disabled"])) } else { String::new() };
+    println!("at {}  visible: {}{disabled}", s(&r["at"]), list(&r["visible"]));
+    for l in layers.iter().rev() {
+        let mut what = s(&l["visibility"]);
+        if what == "partial" {
+            what = format!("partial {}%", l["visible_percent"]);
+        }
+        if l["covered_by"].is_array() {
+            what += &format!(", covered by {}", list(&l["covered_by"]));
+        }
+        if l["overlapped_by"].is_array() {
+            what += &format!(", under {}", list(&l["overlapped_by"]));
+        }
+        if let Some(n) = l["note"].as_str() {
+            what += &format!(" ({n})");
+        }
+        let src = l["source_time"].as_str().map_or("still".to_owned(), |t| format!("at {t}"));
+        println!("{:4} {}  {} {}  {what}", s(&l["track"]), s(&l["clip"]), l["asset"].as_str().unwrap_or("-"), src);
+        let rect = &l["rect"];
+        let mut place = format!("{}x{} at {},{}", rect["w"], rect["h"], rect["x"], rect["y"]);
+        if let Some(d) = l["rotation"].as_f64() {
+            place += &format!(", turned {d}");
+        }
+        if l["opacity"].as_f64().is_some_and(|o| o < 1.0) {
+            place += &format!(", opacity {}", l["opacity"]);
+        }
+        println!("       {place}, alpha {}{}", s(&l["alpha"]), if l["solid"].as_bool() == Some(true) { ", solid" } else { "" });
+        if let Some(t) = l["transition"].as_object() {
+            println!("       transition {} {} ({} with {}, {:.0}%)", s(&t["id"]), s(&t["transition"]), s(&t["role"]), s(&t["with"]), t["progress"].as_f64().unwrap_or(0.0) * 100.0);
+        }
+        for e in l["effects"].as_array().into_iter().flatten() {
+            let params: Vec<String> = e["params"].as_object().into_iter().flatten().map(|(k, v)| format!("{k}={v}")).collect();
+            let missing = if e["missing"].as_bool() == Some(true) { " (not installed)" } else { "" };
+            println!("       effect {} {}{missing}  {}", s(&e["id"]), s(&e["effect"]), params.join(" "));
+        }
+    }
 }
 
 fn print_measure(cmd: &MeasureCmd, r: &Value) {
@@ -1487,6 +1548,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             result["edits"]
         ),
         Command::Frame { output, .. } => println!("{}  {}x{}  at {}", output.display(), result["width"], result["height"], result["at"].as_str().unwrap_or("?")),
+        Command::Layers { .. } => print_layers(&result),
         Command::Sheet { output, .. } => {
             let times: Vec<&str> = result["times"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
             println!("{}  {}x{} grid, row by row:", output.display(), result["columns"], result["rows"]);

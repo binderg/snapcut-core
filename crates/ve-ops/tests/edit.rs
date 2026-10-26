@@ -37,7 +37,7 @@ fn project() -> Timeline {
         provenance: None,
         media: Some(MediaInfo {
             duration: RationalTime::from_frames(300 * FPS, Rate::integer(FPS)),
-            video: Some(VideoInfo { codec: "h264".into(), width: 1920, height: 1080, rate: Rate::integer(FPS), rotation: 0, vfr: false, still: false, color: None }),
+            video: Some(VideoInfo { codec: "h264".into(), width: 1920, height: 1080, rate: Rate::integer(FPS), rotation: 0, vfr: false, still: false, color: None, alpha: None, see_through_percent: None }),
             audio: Some(AudioInfo { codec: "aac".into(), sample_rate: 48_000, channels: 2 }),
             size_bytes: 0,
         }),
@@ -802,7 +802,7 @@ fn still_images_get_a_default_length_and_no_media_limit() {
         provenance: None,
         media: Some(MediaInfo {
             duration: RationalTime::from_frames(0, Rate::integer(25)),
-            video: Some(VideoInfo { codec: "png".into(), width: 400, height: 300, rate: Rate::integer(25), rotation: 0, vfr: false, still: true, color: None }),
+            video: Some(VideoInfo { codec: "png".into(), width: 400, height: 300, rate: Rate::integer(25), rotation: 0, vfr: false, still: true, color: None, alpha: None, see_through_percent: None }),
             audio: None,
             size_bytes: 0,
         }),

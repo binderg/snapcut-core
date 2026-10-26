@@ -33,6 +33,81 @@ after unrelated edits and after a ripple that only moved it in time. A miss
 renders it: about 100 to 250 ms on small media, more for 4K or long-GOP phone
 footage far from a keyframe.
 
+## `render.layers`
+
+What is on screen, as data instead of pixels. Geometry only (nothing is
+decoded), so it answers in milliseconds even over a whole timeline.
+
+| Param | Default | |
+| --- | --- | --- |
+| `at` | | One frame (snapped down to its frame): every layer in detail |
+| `from`, `to` | whole timeline | Instead of `at`: which tracks show, as spans |
+
+**One frame** (`{"at": "00:00:42:00"}`). `visible` is the short answer;
+`layers` is the detail, bottom to top:
+
+```json
+{"at": "00:00:42:00", "canvas": {"width": 1920, "height": 1080},
+ "visible": ["V2", "V3"],
+ "layers": [
+  {"track": "V1", "track_index": 0, "clip": "clip_7f3a", "asset": "asset_834f84",
+   "source_time": "118.400s", "rect": {"x": 0.0, "y": 0.0, "w": 1920.0, "h": 1080.0}, "opacity": 1.0,
+   "alpha": "none", "solid": true, "visibility": "hidden", "visible_percent": 0, "covered_by": ["V2"]},
+  {"track": "V2", "track_index": 1, "clip": "clip_91c0", "asset": "asset_aa01",
+   "source_time": "3.200s", "rect": {"x": 0.0, "y": 0.0, "w": 1920.0, "h": 1080.0}, "opacity": 1.0,
+   "alpha": "none", "solid": true, "visibility": "full", "visible_percent": 100, "overlapped_by": ["V3"]},
+  {"track": "V3", "track_index": 2, "clip": "clip_logo", "asset": "asset_5c2e", "still": true,
+   "rect": {"x": 1520.0, "y": 0.0, "w": 400.0, "h": 225.0}, "opacity": 1.0,
+   "transform": {"x": 0.4, "y": -0.4, "scale": 0.2},
+   "effects": [{"id": "fx_12", "effect": "core.color/exposure@1", "name": "Exposure", "params": {"stops": 0.3}}],
+   "alpha": "transparent", "solid": false, "visibility": "full", "visible_percent": 100}]}
+```
+
+Full-screen b-roll on V2 hides the talking head on V1. The logo on V3 is a
+cut-out, so it is drawn over V2 without hiding it.
+
+| Field | |
+| --- | --- |
+| `rect` | The drawn picture in project canvas pixels, after crop, before `rotation` (degrees clockwise, absent when 0) |
+| `source_time` | Media time shown; absent for a still |
+| `transform` | The clip's transform at this frame, keyframes evaluated ([edit.md](edit.md#editset_transform)); absent when it has none |
+| `effects` | Each effect with every param's value at this frame: keyframes evaluated, defaults filled in. `missing: true` when the effect is not installed (then only what the clip stores) |
+| `transition` | Mid-transition: `{id, transition, name, params, progress (0-1), role: "outgoing"/"incoming", with: <other clip>}`. The track then has two layers |
+| `alpha` | The asset's transparency ([../model/project.md](../model/project.md#asset)) |
+| `solid` | Hides what is under it wherever it is drawn |
+| `visibility` | `full`, `partial` or `hidden`; `visible_percent` is the share of its on-canvas area that shows |
+| `covered_by` | Tracks above whose solid layers hide some of it |
+| `overlapped_by` | Tracks above drawn over it that may let it show through |
+| `note` | Why it is hidden when nothing covers it: `off the canvas`, `opacity 0` |
+| `disabled` (top level) | Video tracks turned off with `track.set`; never drawn |
+
+**What counts as covering.** The answer errs toward "shows", never toward
+"hidden". A layer is `solid` only when its picture has no see-through
+pixels (`alpha` `none` or `opaque`), opacity is 1, it has no effects (an
+effect can make parts clear), it is not mid-transition, and it is turned by
+a multiple of 90 degrees. A see-through or faded layer is listed in
+`overlapped_by`, never `covered_by`. For an exact look, `render.frame`.
+
+**A range** (`{"from": "00:01:00:00", "to": "00:02:00:00"}`, or `{}` for
+the whole timeline): stretches where the same tracks show, checked frame by
+frame so keyframed moves and fades count. Stretches with no clip on any
+video track are left out.
+
+```json
+{"from": "00:01:00:00", "to": "00:02:00:00", "spans": [
+  {"from": "00:01:00:00", "to": "00:01:12:00", "visible": ["V1"]},
+  {"from": "00:01:12:00", "to": "00:01:15:00", "visible": ["V1", "V3"]},
+  {"from": "00:01:15:00", "to": "00:02:00:00", "visible": ["V2"], "hidden": ["V1"]}]}
+```
+
+`hidden` lists tracks with a clip there that is entirely covered. Use it to
+check that an overlay is on screen when it should be, or that a track is
+ever seen at all.
+
+CLI: `ve layers --at 00:00:42:00`, or `ve layers --from ... --to ...`.
+
+Not yet: audio (which clips are heard at a time, and how loud).
+
 ## `render.contact_sheet`
 
 | Param | Default | |
