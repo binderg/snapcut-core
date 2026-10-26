@@ -76,7 +76,7 @@ The project file is an OpenTimelineIO (OTIO) JSON document. Anything OTIO cannot
 | Where | Key | Holds |
 | --- | --- | --- |
 | Timeline | `metadata.ve.project` | schema version, revision, output settings (resolution, fps, sample rate, color space) |
-| Timeline | `metadata.ve.assets` | asset table: id, path, hash, kind (source, proxy, analysis, baked), provenance |
+| Timeline | `metadata.ve.assets` | asset table: id, url, `rel` (path from the project folder, so a moved project finds its media), hash, kind (source, proxy, analysis, baked), provenance |
 | Clip | `metadata.ve.clip` | stable id, speed, volume, transform, effect stack |
 | Clip effect | `metadata.ve.effects[]` | id, plugin effect id, params, keyframes |
 | Transition | `metadata.ve.transition` | plugin transition id, params |

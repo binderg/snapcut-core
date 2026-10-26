@@ -17,6 +17,10 @@ not final (the command is `ve`).
 - A project is a folder holding `project.otio` (OpenTimelineIO JSON, read
   and written field for field like Python `opentimelineio` 0.18) plus
   `effects/`. Caches live in the OS cache folder, never in the project.
+- Moved media: assets also store their path relative to the project
+  folder, so a project folder moved with its media relinks itself on open.
+  `media.relink` (`ve relink`) points an asset at a new file or searches a
+  folder for every missing asset by content; `media.assets` lists `missing`.
 - Project format versions: an engine upgrades older project files on open
   (`upgraded_from` in the `project.open` result) and refuses newer ones.
 - Exclusive project lock, atomic saves, stable IDs (`clip_7f3a`) for every

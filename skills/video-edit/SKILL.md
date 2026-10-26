@@ -85,6 +85,7 @@ Exit codes: 0 ok, 2 bad arguments (the message says what), 3 stale revision,
 | Loudness to a target (one gain on every audio clip) | `ve normalize --target -14` (-16 podcasts, -23 broadcast) |
 | Insert part of a source | `ve insert asset_94b8 --in 00:03:10:00 --out 00:03:25:00 --at 00:01:00:00` |
 | Insert over existing material | `… --overwrite` |
+| Media moved or renamed ("missing" in renders) | `ve relink` lists missing files; `ve relink --folder D:/footage` finds them by content; `ve relink asset_… D:/new/take3.mp4` points one |
 | Image (logo, title card, photo) | `ve import logo.png`, then `ve insert asset_… --duration 3s` (default 5 s); PNG transparency is kept |
 | Logo in a corner for a stretch | `ve track add video`, `ve insert asset_logo --track V2 --at 00:00:05:00 --duration 20s --overwrite`, `ve transform clip_… --scale 0.2 --x 0.4 --y -0.4` |
 | Add a track (any number of each kind) | `ve track add video` (makes `V2`, drawn on top of `V1`), `ve track add audio --name Music` |

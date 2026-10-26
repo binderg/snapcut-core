@@ -92,6 +92,19 @@ enum Command {
         #[arg(required = true)]
         paths: Vec<PathBuf>,
     },
+    /// Fix media that moved: `ve relink --folder D:/footage` finds every missing
+    /// asset there (by content); `ve relink asset_3f2a D:/new/take3.mp4` points one asset.
+    /// With no arguments, lists missing assets.
+    Relink {
+        asset: Option<String>,
+        path: Option<PathBuf>,
+        /// Search this folder and its subfolders for every missing asset.
+        #[arg(long)]
+        folder: Option<PathBuf>,
+        /// Use the file even if its content differs from the asset's.
+        #[arg(long)]
+        force: bool,
+    },
 
     /// Put an asset on the timeline: `ve insert asset_3f2a --at 00:00:10:00`.
     Insert {
@@ -833,6 +846,10 @@ fn plan(cmd: &Command, json_output: bool) -> Plan {
             let paths: Vec<PathBuf> = paths.iter().map(|p| absolute(p)).collect();
             m("media.import", json!({ "paths": paths }))
         }
+        Command::Relink { asset: None, path: None, folder: None, .. } => q("media.assets", json!({})),
+        Command::Relink { asset, path, folder, force } => {
+            m("media.relink", json!({ "asset": asset, "path": path.as_deref().map(absolute), "folder": folder.as_deref().map(absolute), "force": force }))
+        }
         Command::Insert { asset, track, audio_track, at, source_in, source_out, duration, overwrite, no_video, no_audio } => m(
             "edit.insert",
             json!({
@@ -1560,6 +1577,31 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Probe { .. } => {
             println!("{}", result["url"].as_str().unwrap_or("?"));
             println!("{}", media_text(&result["media"]));
+        }
+        Command::Relink { .. } => {
+            let file = |u: &Value| u.as_str().unwrap_or("?").to_owned();
+            for r in result["relinked"].as_array().into_iter().flatten() {
+                let note = if r["changed_content"].as_bool() == Some(true) { "  (different content, probed again)" } else { "" };
+                println!("{}  {} -> {}{note}", r["asset"].as_str().unwrap_or("?"), file(&r["from"]), file(&r["url"]));
+            }
+            let missing: Vec<&str> = result["missing"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+            if missing.is_empty() {
+                println!("no missing media");
+            } else {
+                let urls: std::collections::HashMap<&str, &str> = result["assets"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|a| Some((a["id"].as_str()?, a["url"].as_str()?)))
+                    .collect();
+                for id in &missing {
+                    println!("missing  {id}  {}", urls.get(id).copied().unwrap_or(""));
+                }
+                println!("fix with: ve relink --folder <where the files are now>");
+            }
+            if result.get("patch").is_some() {
+                print_commit(&result);
+            }
         }
         Command::Import { .. } => {
             for a in result["assets"].as_array().into_iter().flatten() {

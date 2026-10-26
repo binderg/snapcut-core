@@ -27,7 +27,8 @@ schemas: `system.describe`.
 | `media.probe` | | What a media file contains (no project) | [media.md](media.md) |
 | `media.import` | yes | Add files to the asset table | [media.md](media.md) |
 | `media.remove` | yes | Remove unused assets from the table | [media.md](media.md) |
-| `media.assets` | | The asset table | [media.md](media.md) |
+| `media.assets` | | The asset table, and which assets' files are missing | [media.md](media.md) |
+| `media.relink` | yes | Point assets at files that moved | [media.md](media.md) |
 | `media.extract_audio` | | An asset's audio as a WAV or FLAC file in the engine cache, for plugins | [media.md](media.md) |
 | `transcript.set` | | Store an asset's transcript (words, speakers, provenance) | [transcript.md](transcript.md) |
 | `transcript.get` | | An asset's transcript, or the words on the timeline (words or text) | [transcript.md](transcript.md) |

@@ -244,6 +244,7 @@ pub fn registry(session: Arc<Session>) -> Arc<Registry> {
 
     on_project!("media.import", "Probe, hash and add files to the asset table; same content is never added twice", true, media::import);
     on_project!("media.remove", "Remove assets from the asset table; refused while any clip uses them", true, media::remove);
+    on_project!("media.relink", "Point assets at files that moved: one asset to a path, or search a folder for every missing asset", true, media::relink);
     on_project!("media.assets", "The project's asset table", false, |p: &mut OpenProject, _: NoParams| Ok(media::assets(p)));
     {
         let s = session.clone();
@@ -460,6 +461,10 @@ pub struct ProjectInfo {
     /// (the next save writes the current one, which older engines refuse).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub upgraded_from: Option<String>,
+    /// Missing media found at its place relative to the project folder (the
+    /// folder moved with its media) and relinked on open.
+    #[serde(default)]
+    pub relinked: usize,
 }
 
 impl ProjectInfo {
@@ -470,6 +475,7 @@ impl ProjectInfo {
             revision: p.revision(),
             ids_added: p.ids_added,
             upgraded_from: p.upgraded_from.as_ref().map(ToString::to_string),
+            relinked: p.relinked,
         }
     }
 }

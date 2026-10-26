@@ -1588,6 +1588,7 @@
       "params": {},
       "result": [
         "assets",
+        "missing",
         "revision"
       ]
     },
@@ -1679,6 +1680,62 @@
         "ffprobe",
         "media",
         "url"
+      ]
+    },
+    "media.relink": {
+      "deprecated": false,
+      "params": {
+        "actor": {
+          "required": false,
+          "types": [
+            "object"
+          ]
+        },
+        "asset": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "base_rev": {
+          "required": true,
+          "types": [
+            "integer"
+          ]
+        },
+        "dry_run": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "folder": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "force": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "path": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        }
+      },
+      "result": [
+        "changed",
+        "dry_run",
+        "group",
+        "missing",
+        "patch",
+        "relinked",
+        "revision"
       ]
     },
     "media.remove": {
@@ -1785,6 +1842,7 @@
         "ids_added",
         "name",
         "path",
+        "relinked",
         "revision",
         "upgraded_from"
       ]
@@ -1803,6 +1861,7 @@
         "ids_added",
         "name",
         "path",
+        "relinked",
         "revision",
         "upgraded_from"
       ]
@@ -1814,6 +1873,7 @@
         "ids_added",
         "name",
         "path",
+        "relinked",
         "revision",
         "upgraded_from"
       ]

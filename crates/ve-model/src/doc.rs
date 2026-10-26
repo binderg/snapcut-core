@@ -94,6 +94,24 @@ impl Timeline {
         added
     }
 
+    /// Point every clip media reference at `from` to `to`. Returns how many changed.
+    pub fn retarget(&mut self, from: &str, to: &str) -> usize {
+        let mut n = 0;
+        visit_stack_mut(&mut self.tracks, &mut |item| {
+            if let ItemMut::Clip(c) = item {
+                for m in c.media_references.values_mut() {
+                    if let crate::otio::MediaReference::External(e) = m
+                        && e.target_url == from
+                    {
+                        e.target_url = to.to_owned();
+                        n += 1;
+                    }
+                }
+            }
+        });
+        n
+    }
+
     /// IDs of the clips with any media reference pointing at `url`.
     pub fn clips_using(&self, url: &str) -> Vec<Id> {
         let mut out = Vec::new();

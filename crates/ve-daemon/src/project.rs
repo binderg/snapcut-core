@@ -60,6 +60,9 @@ pub struct OpenProject {
     /// The schema version the file had when it was upgraded on open; the
     /// next save writes the current one.
     pub upgraded_from: Option<semver::Version>,
+    /// Assets found at their place relative to the project folder on open
+    /// (the folder moved with its media) and pointed there.
+    pub relinked: usize,
     /// Per-project folder in the OS cache dir (renders, history).
     cache: PathBuf,
     /// Changes committed during the current call, waiting to go out as
@@ -147,13 +150,15 @@ impl OpenProject {
         if now.is_none() || now == self.disk {
             return Ok(false);
         }
-        let (timeline, ids_added, upgraded_from) = load(&self.root)?;
+        let (mut timeline, ids_added, upgraded_from) = load(&self.root)?;
+        let (relinked, hints) = crate::media::follow_moves(&mut timeline, &self.root);
         self.timeline = timeline;
         self.ids_added = ids_added;
         self.upgraded_from = upgraded_from;
+        self.relinked = relinked;
         self.disk = now;
         self.load_history();
-        if ids_added > 0 {
+        if ids_added > 0 || relinked > 0 || hints > 0 {
             self.save()?;
         }
         Ok(true)
@@ -207,6 +212,7 @@ pub fn init(root: &Path, name: &str, output: OutputSettings) -> Result<OpenProje
         history: History::new(0),
         ids_added: 0,
         upgraded_from: None,
+        relinked: 0,
         cache,
         changes: Vec::new(),
         disk: None,
@@ -228,20 +234,22 @@ pub fn open(root: &Path) -> Result<OpenProject> {
     }
     let (lock, cache) = lock(&root)?;
     let disk = stamp(&root);
-    let (timeline, ids_added, upgraded_from) = load(&root)?;
+    let (mut timeline, ids_added, upgraded_from) = load(&root)?;
+    let (relinked, hints) = crate::media::follow_moves(&mut timeline, &root);
     let mut project = OpenProject {
         root,
         timeline,
         history: History::default(),
         ids_added,
         upgraded_from,
+        relinked,
         cache,
         changes: Vec::new(),
         disk,
         _lock: lock,
     };
     project.load_history();
-    if ids_added > 0 {
+    if ids_added > 0 || relinked > 0 || hints > 0 {
         project.save()?;
     }
     Ok(project)

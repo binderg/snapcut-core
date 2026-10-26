@@ -50,6 +50,7 @@ fn project(src: &Path) -> Timeline {
         kind: AssetKind::Source,
         hash: None,
         provenance: None,
+        rel: None,
         media: Some(probe.media),
     });
     let ins = Insert {

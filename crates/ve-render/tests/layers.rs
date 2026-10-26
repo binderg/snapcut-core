@@ -42,6 +42,7 @@ fn add_asset(tl: &mut Timeline, id: &str, path: &Path) {
         kind: AssetKind::Source,
         hash: None,
         provenance: None,
+        rel: None,
         media: Some(probe.media),
     });
 }

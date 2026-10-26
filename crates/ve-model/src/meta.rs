@@ -97,6 +97,12 @@ pub struct Asset {
     pub hash: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provenance: Option<Value>,
+    /// Where the file is relative to the project folder (`media/a.mp4`,
+    /// `../footage/a.mp4`; `/` separators), when both are on one drive. If
+    /// `url` is missing on open, the engine looks here, so a project folder
+    /// moved together with its media keeps working.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rel: Option<String>,
     /// Compact probe result, so edits and summaries need no ffprobe run and
     /// work while media is offline. The full ffprobe JSON is not stored.
     #[serde(default, skip_serializing_if = "Option::is_none")]

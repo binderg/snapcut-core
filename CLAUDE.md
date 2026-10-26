@@ -139,7 +139,12 @@ Media (`ve-media`, `ve-daemon::media`): `media.probe` (no project needed),
 bumps rev and saves), `media.assets`; CLI `ve probe`, `ve import`. Asset rows
 carry a compact `media` block (exact duration, size, nominal rate, rotation,
 vfr flag, first audio stream); full ffprobe JSON is not stored. Media URLs are
-absolute `file://`. VFR footage keeps `r_frame_rate` as its rate. No proxies
+absolute `file://`, with `rel` (path from the project folder, same drive
+only) beside it: `media::follow_moves` on open relinks missing files found
+at `rel` with the same size and refreshes stale `rel`s (saved like
+`ids_added`); `media.relink` (`ve relink`) takes `asset`+`path` (hash must
+match unless `force`) or a `folder` searched by name+size, then size, then
+blake3; `media.assets` lists `missing`. VFR footage keeps `r_frame_rate` as its rate. No proxies
 yet (needs jobs).
 Edit ops (`ve-ops`): insert, split, trim (ripple or roll), move (overwrite, or `reorder`: swap places by rotating the span, refused if it would split a link; the drag-to-push variant is `ui.move_push`, UI-only),
 ripple_delete (ranges, marker names or clips), delete (lift), set_speed,
