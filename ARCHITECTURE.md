@@ -82,6 +82,8 @@ The project file is an OpenTimelineIO (OTIO) JSON document. Anything OTIO cannot
 | Transition | `metadata.ve.transition` | plugin transition id, params |
 | Marker | `metadata.ve.marker` | stable id, source (user, agent, analyzer), payload |
 
+**Format versions and upgrades.** `metadata.ve.project.schema_version` is the format of everything under `metadata.ve` (`ve_model::SCHEMA_VERSION`). On open, an older file is upgraded in memory by `ve_model::migrate` steps (raw JSON to raw JSON, one version at a time, so old steps keep working after the model types change) and saved in the new format on the next save; a newer file is refused. Bump the version whenever an older engine would misread a file or silently drop data from it on save: before 1.0 that is the minor version, and a new optional field counts (an older engine drops it when it saves). A step is needed only when old files must be rewritten (a renamed or reshaped field). New accepted values for an existing field (a blend mode, an ease) are a patch bump.
+
 **Example clip**
 
 ```json

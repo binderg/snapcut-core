@@ -36,6 +36,8 @@ pub enum ProjectError {
     #[error("{} was saved by a newer engine (schema {found}; this engine reads up to {supported})", .path.display())]
     TooNew { path: PathBuf, found: semver::Version, supported: semver::Version },
     #[error("{}: {source}", .path.display())]
+    Upgrade { path: PathBuf, source: Box<ve_model::migrate::MigrateError> },
+    #[error("{}: {source}", .path.display())]
     Io { path: PathBuf, source: io::Error },
 }
 
@@ -55,6 +57,9 @@ pub struct OpenProject {
     pub history: History,
     /// IDs added on open to items that had none (files from other tools).
     pub ids_added: usize,
+    /// The schema version the file had when it was upgraded on open; the
+    /// next save writes the current one.
+    pub upgraded_from: Option<semver::Version>,
     /// Per-project folder in the OS cache dir (renders, history).
     cache: PathBuf,
     /// Changes committed during the current call, waiting to go out as
@@ -142,9 +147,10 @@ impl OpenProject {
         if now.is_none() || now == self.disk {
             return Ok(false);
         }
-        let (timeline, ids_added) = load(&self.root)?;
+        let (timeline, ids_added, upgraded_from) = load(&self.root)?;
         self.timeline = timeline;
         self.ids_added = ids_added;
+        self.upgraded_from = upgraded_from;
         self.disk = now;
         self.load_history();
         if ids_added > 0 {
@@ -200,6 +206,7 @@ pub fn init(root: &Path, name: &str, output: OutputSettings) -> Result<OpenProje
         root,
         history: History::new(0),
         ids_added: 0,
+        upgraded_from: None,
         cache,
         changes: Vec::new(),
         disk: None,
@@ -221,9 +228,18 @@ pub fn open(root: &Path) -> Result<OpenProject> {
     }
     let (lock, cache) = lock(&root)?;
     let disk = stamp(&root);
-    let (timeline, ids_added) = load(&root)?;
-    let mut project =
-        OpenProject { root, timeline, history: History::default(), ids_added, cache, changes: Vec::new(), disk, _lock: lock };
+    let (timeline, ids_added, upgraded_from) = load(&root)?;
+    let mut project = OpenProject {
+        root,
+        timeline,
+        history: History::default(),
+        ids_added,
+        upgraded_from,
+        cache,
+        changes: Vec::new(),
+        disk,
+        _lock: lock,
+    };
     project.load_history();
     if ids_added > 0 {
         project.save()?;
@@ -231,31 +247,25 @@ pub fn open(root: &Path) -> Result<OpenProject> {
     Ok(project)
 }
 
-/// Read and check `project.otio`, giving IDs to items that have none.
-fn load(root: &Path) -> Result<(Timeline, usize)> {
+/// Read and check `project.otio`, upgrading an older format
+/// (`ve_model::migrate`) and giving IDs to items that have none.
+fn load(root: &Path) -> Result<(Timeline, usize, Option<semver::Version>)> {
+    use ve_model::migrate::MigrateError;
     let path = root.join(PROJECT_FILE);
     let text = fs::read_to_string(&path).map_err(io_err(&path))?;
-    let mut timeline: Timeline = serde_json::from_str(&text)
-        .map_err(|e| ProjectError::Invalid { path: path.clone(), message: e.to_string() })?;
-    let Some(meta) = timeline.project() else {
-        return Err(ProjectError::Invalid {
-            path,
-            message: "no metadata.ve.project block (plain OTIO files need importing, not opening)".into(),
-        });
+    let invalid = |message: String| ProjectError::Invalid { path: path.clone(), message };
+    let mut doc: serde_json::Value = serde_json::from_str(&text).map_err(|e| invalid(e.to_string()))?;
+    let upgraded = match ve_model::migrate::migrate(&mut doc) {
+        Ok(v) => v,
+        Err(MigrateError::NoVersion) => {
+            return Err(invalid("no metadata.ve.project block (plain OTIO files need importing, not opening)".into()));
+        }
+        Err(MigrateError::TooNew { found, supported }) => return Err(ProjectError::TooNew { path, found, supported }),
+        Err(source) => return Err(ProjectError::Upgrade { path, source: Box::new(source) }),
     };
-    let supported = ve_model::SCHEMA_VERSION;
-    let found = &meta.schema_version;
-    // 0.x: a newer minor may be breaking. 1.x+: a newer major is.
-    let too_new = if supported.major == 0 {
-        found.major > 0 || found.minor > supported.minor
-    } else {
-        found.major > supported.major
-    };
-    if too_new {
-        return Err(ProjectError::TooNew { path, found: found.clone(), supported });
-    }
+    let mut timeline: Timeline = serde_json::from_value(doc).map_err(|e| invalid(e.to_string()))?;
     let ids_added = timeline.ensure_ids();
-    Ok((timeline, ids_added))
+    Ok((timeline, ids_added, upgraded))
 }
 
 /// Walk up from `start` to the nearest folder holding a `project.otio`.

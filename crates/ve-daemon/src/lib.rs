@@ -456,6 +456,10 @@ pub struct ProjectInfo {
     pub revision: u64,
     /// Stable IDs given on open to items that had none (files from other tools).
     pub ids_added: usize,
+    /// Schema version the file had when this engine upgraded it on open
+    /// (the next save writes the current one, which older engines refuse).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub upgraded_from: Option<String>,
 }
 
 impl ProjectInfo {
@@ -465,6 +469,7 @@ impl ProjectInfo {
             name: p.timeline.name.clone(),
             revision: p.revision(),
             ids_added: p.ids_added,
+            upgraded_from: p.upgraded_from.as_ref().map(ToString::to_string),
         }
     }
 }

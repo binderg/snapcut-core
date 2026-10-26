@@ -13,6 +13,11 @@ All of `init` / `open` / `save` return:
 `ids_added`: stable IDs given on open to items that had none (a file from
 another tool). They are saved immediately.
 
+`upgraded_from` (only when it happened): the project was saved in an older
+format and was upgraded in memory on open. The file on disk keeps the old
+format until the next save; after that, engines older than this one refuse
+it. A file saved by a newer engine is refused with `invalid_params`.
+
 ## `project.init` (no project needed)
 
 | Param | Type | Default | |

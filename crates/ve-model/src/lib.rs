@@ -13,6 +13,7 @@ pub mod curve;
 pub mod doc;
 pub mod id;
 pub mod meta;
+pub mod migrate;
 pub mod otio;
 pub mod summary;
 pub mod time;

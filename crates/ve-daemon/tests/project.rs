@@ -111,6 +111,13 @@ fn rejects_missing_foreign_and_newer_projects() {
     newer["metadata"]["ve"]["project"]["schema_version"] = json!("0.2.0");
     fs::write(dir.join(PROJECT_FILE), newer.to_string()).unwrap();
     assert!(matches!(project::open(&dir), Err(ProjectError::TooNew { .. })));
+
+    // Older than any upgrade this engine knows: refused with a reason, file untouched.
+    newer["metadata"]["ve"]["project"]["schema_version"] = json!("0.0.1");
+    fs::write(dir.join(PROJECT_FILE), newer.to_string()).unwrap();
+    let e = project::open(&dir).unwrap_err();
+    assert!(matches!(e, ProjectError::Upgrade { .. }) && e.to_string().contains("no upgrade"), "{e}");
+    assert!(fs::read_to_string(dir.join(PROJECT_FILE)).unwrap().contains("0.0.1"));
 }
 
 async fn call(r: &ve_protocol::Registry, method: &str, params: Value) -> Value {

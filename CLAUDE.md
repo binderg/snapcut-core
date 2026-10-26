@@ -121,6 +121,11 @@ formats SMPTE (matches OTIO's timecode output; we don't wrap at 24h).
 Project folders (`ve-daemon::project`): `init`/`open`/`save` with an exclusive
 lock file in the OS cache dir (`ve/locks/<hash>.lock`, not the project folder,
 because of OneDrive), atomic saves, missing IDs assigned and saved on open.
+Format upgrades (`ve-model::migrate`): `schema_version` older than
+`SCHEMA_VERSION` runs raw-JSON steps on open (`upgraded_from` in the open
+result; saved on the next save), newer is refused. Bump the minor (pre-1.0)
+for any field an older engine would drop; add a step only to rewrite old
+files. No steps yet (nothing released).
 Methods `project.init|open|save|get|summary`; CLI `ve init`, `ve summary`,
 global `--project` (else nearest parent with `project.otio`). Error code
 `project_locked` (-31003, exit 6).

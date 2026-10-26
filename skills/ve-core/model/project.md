@@ -156,3 +156,10 @@ produce by default (`master` preset).
 `grp_` (undo groups), `fx_`, `kf_`. IDs are stable across edits and saves.
 A split keeps the ID on the left half and gives the right half a new one.
 Files from other tools get IDs on open (`ids_added` in the result).
+
+## Versions
+
+`schema_version` is the format of `metadata.ve`. An engine reads its own
+version, upgrades older ones on open (`upgraded_from` in the `project.open`
+result) and refuses newer ones. Before 1.0 a different minor version
+(0.2 vs 0.1) is a different format; from 1.0, a different major.

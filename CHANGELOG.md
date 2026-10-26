@@ -17,6 +17,8 @@ not final (the command is `ve`).
 - A project is a folder holding `project.otio` (OpenTimelineIO JSON, read
   and written field for field like Python `opentimelineio` 0.18) plus
   `effects/`. Caches live in the OS cache folder, never in the project.
+- Project format versions: an engine upgrades older project files on open
+  (`upgraded_from` in the `project.open` result) and refuses newer ones.
 - Exclusive project lock, atomic saves, stable IDs (`clip_7f3a`) for every
   clip, track, marker, asset and effect.
 - `ve probe`, `ve import` (deduplicated by content hash), `media.remove`.
