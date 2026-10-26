@@ -398,6 +398,11 @@ Next, in order:
    (`skills/video-edit/SKILL.md`, every command in it run as written).
 
 Not done yet, and what the gate still needs (suggested order, not decided):
+- Ready to ship (ARCHITECTURE.md, TODO, "Ready to ship"): text layer in
+  core (needs a decision: `cosmic-text`), speed ramps, masks and track
+  mattes, audio keyframes/pan/fades/ducking, LUTs and the 601/709 choice,
+  compound clips and freeze frames, crash recovery and a soak test, GPU
+  export speed, testing across GPU vendors.
 - Run the gate for real: an agent with only the skill cutting real footage
   (so far only a synthetic 10-min talking head has been cut end to end).
 - (done) Daemon socket + connect-or-spawn + WebSocket + `project.changed`.

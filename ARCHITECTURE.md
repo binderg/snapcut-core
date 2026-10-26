@@ -568,6 +568,38 @@ chunk. Removing that wait for good needs two things:
   order); profile export separately (RGBA pipes, synchronous readback, CPU
   RGBA to YUV).
 
+**Ready to ship (robustness and the features editors expect).** What a
+CapCut-class editor still needs from the core, beyond the sections above.
+Not ordered or decided yet.
+
+- [ ] **Text and titles in core.** No text rendering exists yet. Captions
+  are the main use case for talking heads and podcasts, and baking text
+  through a headless browser is too slow for live editing, so core likely
+  needs a basic text layer (for example `cosmic-text`, MIT/Apache).
+  Decide before building: it is a new dependency.
+- [ ] **Speed ramps:** keyframed time remap on a clip, using the keyframe
+  curves (`ve-model::curve`). Today `set_speed` is constant per clip. The
+  hard part is audio (pitch-preserving stretch along a ramp).
+- [ ] **Masks and track mattes:** shape masks with feather on a clip, and a
+  clip using the track above as its alpha or luma matte. Goes with blend
+  modes.
+- [ ] **Audio:** keyframed volume and pan, fades as first-class items (not
+  only the 20 ms cut crossfades), and ducking music under voice. EQ,
+  compression and denoise can be plugins.
+- [ ] **Color:** `.cube` LUTs on a clip, and the open BT.601 vs BT.709 choice
+  for untagged HD footage (read as 601 everywhere today, while players show
+  it as 709).
+- [ ] **Compound clips** (nested timelines) and **freeze frames**.
+- [ ] **Crash recovery:** autosave snapshots that survive a crash between
+  saves, and a daemon soak test: memory over hours, several clients at once.
+- [ ] **GPU export speed:** about 4.6x slower than the ffmpeg path today
+  (25 ms vs 5.5 ms per 1080p frame). Profile the RGBA pipes, the synchronous
+  readback and the CPU RGBA to YUV step (see "Real-time playback" above for
+  the decoder side).
+- [ ] **Testing across GPU vendors:** NVIDIA, AMD, Intel, Apple and the WARP /
+  llvmpipe fallback in CI, with golden-frame tolerances instead of exact
+  matches where drivers round differently.
+
 Smaller gaps from the transform and preview work:
 
 - [ ] Anti-aliased edges on rotated clips.
