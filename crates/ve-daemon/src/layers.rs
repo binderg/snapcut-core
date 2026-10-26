@@ -1,7 +1,8 @@
-//! `render.layers`: what is on screen, as data. At one frame, every video
-//! layer bottom to top with its placement, effect and transition values and
-//! how much of it shows; over a range, the stretches where the same tracks
-//! show. Geometry only (`ve_render::layers`), so it answers at once.
+//! `render.layers`: what is on screen and heard, as data. At one frame,
+//! every video layer bottom to top with its placement, effect and transition
+//! values and how much of it shows, and every audio clip playing with its
+//! gain; over a range, the stretches where the same tracks show and are
+//! heard. Nothing is decoded (`ve_render::layers`), so it answers at once.
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -56,6 +57,35 @@ pub struct FrameLayers {
     pub disabled: Vec<String>,
     /// Bottom to top. A track mid-transition has two layers.
     pub layers: Vec<LayerInfo>,
+    /// Audio tracks with a clip that is heard.
+    pub audible: Vec<String>,
+    /// Audio tracks turned off (never mixed).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub muted: Vec<String>,
+    /// Audio clips playing, first audio track first.
+    pub audio: Vec<AudioInfo>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct AudioInfo {
+    pub track: String,
+    /// Position among audio tracks, 0 first.
+    pub track_index: usize,
+    pub clip: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub asset: Option<String>,
+    /// Link group: the clip's video partner (a layer with the same `link`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub link: Option<String>,
+    /// Media time heard (`118.400s`, ms precision).
+    pub source_time: String,
+    /// The clip's gain in dB (`edit.set_volume`, plus what `edit.normalize` added). 0 is unity.
+    pub gain_db: f64,
+    /// Playback speed, when not 1.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub speed: Option<f64>,
+    /// False when the gain is at the -100 dB floor (silenced).
+    pub audible: bool,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
@@ -74,6 +104,9 @@ pub struct LayerInfo {
     pub clip: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub asset: Option<String>,
+    /// Link group: the clip's audio partner (an `audio` entry with the same `link`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub link: Option<String>,
     /// Media time shown (`118.400s`, ms precision); absent for a still.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_time: Option<String>,
@@ -151,8 +184,8 @@ pub struct TransitionAt {
 pub struct RangeLayers {
     pub from: String,
     pub to: String,
-    /// Stretches where the same tracks show, in order. Stretches with no
-    /// clip on any video track are left out.
+    /// Stretches where the same tracks show and are heard, in order.
+    /// Stretches with no clip on any track are left out.
     pub spans: Vec<VisibleSpan>,
 }
 
@@ -165,6 +198,8 @@ pub struct VisibleSpan {
     /// Tracks with a clip there that is entirely hidden.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub hidden: Vec<String>,
+    /// Audio tracks heard.
+    pub audible: Vec<String>,
 }
 
 pub fn layers(p: &Snapshot, a: LayersParams) -> Result<LayersResult, RpcError> {
@@ -179,7 +214,7 @@ pub fn layers(p: &Snapshot, a: LayersParams) -> Result<LayersResult, RpcError> {
             to: tc(sp.end, rate),
             spans: spans
                 .into_iter()
-                .map(|s| VisibleSpan { from: tc(s.start, rate), to: tc(s.end, rate), visible: s.visible, hidden: s.hidden })
+                .map(|s| VisibleSpan { from: tc(s.start, rate), to: tc(s.end, rate), visible: s.visible, hidden: s.hidden, audible: s.audible })
                 .collect(),
         }));
     };
@@ -196,6 +231,7 @@ pub fn layers(p: &Snapshot, a: LayersParams) -> Result<LayersResult, RpcError> {
             track_index: l.track_index,
             clip: l.clip,
             asset: l.asset,
+            link: l.link,
             source_time: l.source_time.map(ve_ops::lane::seconds_text),
             still: l.still,
             rect: PixelRect { x: px(l.rect.x), y: px(l.rect.y), w: px(l.rect.w), h: px(l.rect.h) },
@@ -240,5 +276,22 @@ pub fn layers(p: &Snapshot, a: LayersParams) -> Result<LayersResult, RpcError> {
         visible: f.visible,
         disabled: f.disabled,
         layers,
+        audible: f.audible,
+        muted: f.muted,
+        audio: f
+            .audio
+            .into_iter()
+            .map(|a| AudioInfo {
+                track: a.track,
+                track_index: a.track_index,
+                clip: a.clip,
+                asset: a.asset,
+                link: a.link,
+                source_time: ve_ops::lane::seconds_text(a.source_time),
+                gain_db: a.gain_db,
+                speed: (a.speed != ve_model::time::Q::from_integer(1)).then(|| *a.speed.numer() as f64 / *a.speed.denom() as f64),
+                audible: a.audible,
+            })
+            .collect(),
     }))
 }

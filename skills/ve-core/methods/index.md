@@ -67,7 +67,7 @@ schemas: `system.describe`.
 | `history.begin_group` | | Start an undo group for an actor | [history.md](history.md) |
 | `history.end_group` | | End it | [history.md](history.md) |
 | `render.frame` | | One frame as JPEG/PNG (base64) | [render.md](render.md) |
-| `render.layers` | | What is on screen: layers at a frame, or which tracks show over a range | [render.md](render.md) |
+| `render.layers` | | What is on screen and heard: layers and audio at a frame, or which tracks show and are heard over a range | [render.md](render.md) |
 | `render.contact_sheet` | | A grid of frames from a range (job) | [render.md](render.md) |
 | `render.range_preview` | | Low-res MP4 of a range, in the engine cache (job) | [render.md](render.md) |
 | `render.export` | | Final MP4 with a preset, in the engine cache (job) | [render.md](render.md) |

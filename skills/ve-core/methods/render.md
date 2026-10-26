@@ -35,22 +35,23 @@ footage far from a keyframe.
 
 ## `render.layers`
 
-What is on screen, as data instead of pixels. Geometry only (nothing is
-decoded), so it answers in milliseconds even over a whole timeline.
+What is on screen and what is heard, as data instead of pixels and
+samples. Nothing is decoded, so it answers in milliseconds even over a
+whole timeline.
 
 | Param | Default | |
 | --- | --- | --- |
-| `at` | | One frame (snapped down to its frame): every layer in detail |
-| `from`, `to` | whole timeline | Instead of `at`: which tracks show, as spans |
+| `at` | | One frame (snapped down to its frame): every layer and audio clip in detail |
+| `from`, `to` | whole timeline | Instead of `at`: which tracks show and are heard, as spans |
 
-**One frame** (`{"at": "00:00:42:00"}`). `visible` is the short answer;
-`layers` is the detail, bottom to top:
+**One frame** (`{"at": "00:00:42:00"}`). `visible` and `audible` are the
+short answers; `layers` (bottom to top) and `audio` are the detail:
 
 ```json
 {"at": "00:00:42:00", "canvas": {"width": 1920, "height": 1080},
  "visible": ["V2", "V3"],
  "layers": [
-  {"track": "V1", "track_index": 0, "clip": "clip_7f3a", "asset": "asset_834f84",
+  {"track": "V1", "track_index": 0, "clip": "clip_7f3a", "asset": "asset_834f84", "link": "link_2c1d",
    "source_time": "118.400s", "rect": {"x": 0.0, "y": 0.0, "w": 1920.0, "h": 1080.0}, "opacity": 1.0,
    "alpha": "none", "solid": true, "visibility": "hidden", "visible_percent": 0, "covered_by": ["V2"]},
   {"track": "V2", "track_index": 1, "clip": "clip_91c0", "asset": "asset_aa01",
@@ -60,11 +61,19 @@ decoded), so it answers in milliseconds even over a whole timeline.
    "rect": {"x": 1520.0, "y": 0.0, "w": 400.0, "h": 225.0}, "opacity": 1.0,
    "transform": {"x": 0.4, "y": -0.4, "scale": 0.2},
    "effects": [{"id": "fx_12", "effect": "core.color/exposure@1", "name": "Exposure", "params": {"stops": 0.3}}],
-   "alpha": "transparent", "solid": false, "visibility": "full", "visible_percent": 100}]}
+   "alpha": "transparent", "solid": false, "visibility": "full", "visible_percent": 100}],
+ "audible": ["A1", "A2"],
+ "audio": [
+  {"track": "A1", "track_index": 0, "clip": "clip_7f3b", "asset": "asset_834f84", "link": "link_2c1d",
+   "source_time": "118.400s", "gain_db": 2.5, "audible": true},
+  {"track": "A2", "track_index": 1, "clip": "clip_c0de", "asset": "asset_9a7b",
+   "source_time": "41.000s", "gain_db": -18.0, "audible": true}]}
 ```
 
-Full-screen b-roll on V2 hides the talking head on V1. The logo on V3 is a
-cut-out, so it is drawn over V2 without hiding it.
+Full-screen b-roll on V2 hides the talking head on V1, but the talking
+head is still heard: its audio on A1 shares V1's `link`. The logo on V3 is
+a cut-out, so it is drawn over V2 without hiding it. A2 is a music bed 18
+dB down.
 
 | Field | |
 | --- | --- |
@@ -79,7 +88,19 @@ cut-out, so it is drawn over V2 without hiding it.
 | `covered_by` | Tracks above whose solid layers hide some of it |
 | `overlapped_by` | Tracks above drawn over it that may let it show through |
 | `note` | Why it is hidden when nothing covers it: `off the canvas`, `opacity 0` |
+| `link` | The clip's link group; a video layer and an audio clip with the same `link` came in together (picture and its sound). Different `source_time`s on a pair mean a J or L cut |
 | `disabled` (top level) | Video tracks turned off with `track.set`; never drawn |
+| `audio[].gain_db` | The clip's gain: `edit.set_volume`, plus what `edit.normalize` added. 0 is unity |
+| `audio[].speed` | Playback speed, when not 1 |
+| `audio[].audible` | False when the gain is at the -100 dB floor (silenced); the clip is still listed |
+| `muted` (top level) | Audio tracks turned off with `track.set`; never mixed |
+
+**How loud.** `gain_db` is the setting, not a measurement: a clip at 0 dB
+can still be quiet if its recording is. To hear how loud the mix actually
+is at a point, measure a short range around it with `measure.levels` or
+`measure.loudness` ([measure.md](measure.md)). The 20 ms crossfade at audio
+cuts and the short fades at gap edges are not listed; at a frame on a cut,
+only the clip that starts there is.
 
 **What counts as covering.** The answer errs toward "shows", never toward
 "hidden". A layer is `solid` only when its picture has no see-through
@@ -89,24 +110,24 @@ a multiple of 90 degrees. A see-through or faded layer is listed in
 `overlapped_by`, never `covered_by`. For an exact look, `render.frame`.
 
 **A range** (`{"from": "00:01:00:00", "to": "00:02:00:00"}`, or `{}` for
-the whole timeline): stretches where the same tracks show, checked frame by
-frame so keyframed moves and fades count. Stretches with no clip on any
-video track are left out.
+the whole timeline): stretches where the same tracks show and are heard,
+checked frame by frame so keyframed moves and fades count. Stretches with
+no clip on any track are left out.
 
 ```json
 {"from": "00:01:00:00", "to": "00:02:00:00", "spans": [
-  {"from": "00:01:00:00", "to": "00:01:12:00", "visible": ["V1"]},
-  {"from": "00:01:12:00", "to": "00:01:15:00", "visible": ["V1", "V3"]},
-  {"from": "00:01:15:00", "to": "00:02:00:00", "visible": ["V2"], "hidden": ["V1"]}]}
+  {"from": "00:01:00:00", "to": "00:01:12:00", "visible": ["V1"], "audible": ["A1"]},
+  {"from": "00:01:12:00", "to": "00:01:15:00", "visible": ["V1", "V3"], "audible": ["A1"]},
+  {"from": "00:01:15:00", "to": "00:01:40:00", "visible": ["V2"], "hidden": ["V1"], "audible": ["A1", "A2"]},
+  {"from": "00:01:40:00", "to": "00:02:00:00", "visible": ["V2"], "hidden": ["V1"], "audible": []}]}
 ```
 
-`hidden` lists tracks with a clip there that is entirely covered. Use it to
-check that an overlay is on screen when it should be, or that a track is
-ever seen at all.
+`hidden` lists tracks with a clip there that is entirely covered. Use the
+spans to check that an overlay is on screen when it should be, that a track
+is ever seen at all, or to find stretches of silence (`audible` empty) or
+of picture with no sound.
 
 CLI: `ve layers --at 00:00:42:00`, or `ve layers --from ... --to ...`.
-
-Not yet: audio (which clips are heard at a time, and how loud).
 
 ## `render.contact_sheet`
 

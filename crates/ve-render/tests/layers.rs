@@ -262,6 +262,7 @@ fn spans_over_a_range() {
         end: fr(b),
         visible: visible.iter().map(|t| (*t).to_owned()).collect(),
         hidden: hidden.iter().map(|t| (*t).to_owned()).collect(),
+        audible: Vec::new(),
     };
     let all = ve_render::Span::new(Q::from_integer(0), ve_render::timeline_end(&tl));
     assert_eq!(
@@ -276,4 +277,68 @@ fn spans_over_a_range() {
     );
     // A part of it starts and ends where asked.
     assert_eq!(layers::spans(&tl, ve_render::Span::new(fr(12), fr(17)), &fx()).unwrap(), [s(12, 15, &["V2"], &["V1"]), s(15, 17, &["V2", "V3"], &["V1"])]);
+}
+
+/// V1+A1: a clip with picture and sound (linked), frames 0-49. A2: a music
+/// bed, frames 20-74, so the end has sound and no picture.
+#[test]
+fn what_is_heard() {
+    use ve_ops::edit::SetVolume;
+    let work = dir("layers-audio");
+    let talk = work.join("talk.mkv");
+    ffmpeg(&[
+        "-f", "lavfi", "-i", &format!("color=gray:s={SIDE}x{SIDE}:r={FPS}"),
+        "-f", "lavfi", "-i", "sine=f=440:r=48000",
+        "-t", "2", "-c:v", "ffv1", "-pix_fmt", "yuv420p", "-c:a", "pcm_s16le", talk.to_str().unwrap(),
+    ]);
+    let music = work.join("music.wav");
+    ffmpeg(&["-f", "lavfi", "-i", "sine=f=220:r=48000", "-t", "3", music.to_str().unwrap()]);
+    let output = OutputSettings { width: SIDE, height: SIDE, rate: Rate::integer(FPS), sample_rate: 48_000, color_space: "bt709".into() };
+    let mut tl = ve_model::doc::new_project("audio", output);
+    add_asset(&mut tl, "asset_talk", &talk);
+    add_asset(&mut tl, "asset_music", &music);
+    let mut a = insert("asset_talk", None, None, None);
+    a.audio = true;
+    tl = edit::insert(&tl, &a).unwrap().0;
+    tl = ve_ops::tracks::add(&tl, TrackKind::Audio, None, None).unwrap().0;
+    let mut m = insert("asset_music", None, Some(fr(20)), Some(fr(55)));
+    (m.video, m.audio, m.audio_track) = (false, true, Some("A2".into()));
+    tl = edit::insert(&tl, &m).unwrap().0;
+    let bed = clip_on(&tl, "A2");
+    tl = edit::set_volume(&tl, &SetVolume { clip: bed.clone(), db: -18.0, linked: true }).unwrap().0;
+
+    let f = at(&tl, 30);
+    assert_eq!(f.audible, ["A1", "A2"]);
+    let (a1, a2) = (&f.audio[0], &f.audio[1]);
+    assert_eq!((a1.track.as_str(), a1.asset.as_deref(), a1.source_time, a1.gain_db), ("A1", Some("asset_talk"), fr(30), 0.0));
+    assert!(a1.link.is_some(), "inserted with its picture");
+    assert_eq!(a1.link, on(&f, "V1").link, "audio and picture share the link");
+    assert_eq!((a2.clip.as_str(), a2.gain_db, a2.source_time, a2.link.as_deref()), (bed.as_str(), -18.0, fr(10), None));
+
+    // Silenced at the floor: listed, not heard.
+    let quiet = edit::set_volume(&tl, &SetVolume { clip: bed.clone(), db: -100.0, linked: true }).unwrap().0;
+    let f = at(&quiet, 30);
+    assert_eq!((f.audible.as_slice(), f.audio.len()), (["A1".to_owned()].as_slice(), 2));
+    assert!(!f.audio[1].audible);
+
+    // A muted track is listed and not mixed.
+    let mut off = tl.clone();
+    for c in &mut off.tracks.children {
+        if let Composable::Track(t) = c
+            && t.name == "A2"
+        {
+            t.enabled = false;
+        }
+    }
+    let f = at(&off, 30);
+    assert_eq!((f.audible.as_slice(), f.muted.as_slice()), (["A1".to_owned()].as_slice(), ["A2".to_owned()].as_slice()));
+
+    // Over the timeline: the bed comes in at 20 and plays on past the picture.
+    let names = |v: &[&str]| v.iter().map(|t| (*t).to_owned()).collect::<Vec<_>>();
+    let s = |a: i64, b: i64, visible: &[&str], audible: &[&str]| VisibleSpan { start: fr(a), end: fr(b), visible: names(visible), hidden: Vec::new(), audible: names(audible) };
+    let all = ve_render::Span::new(Q::from_integer(0), ve_render::timeline_end(&tl));
+    assert_eq!(
+        layers::spans(&tl, all, &fx()).unwrap(),
+        [s(0, 20, &["V1"], &["A1"]), s(20, 50, &["V1"], &["A1", "A2"]), s(50, 75, &[], &["A2"])]
+    );
 }

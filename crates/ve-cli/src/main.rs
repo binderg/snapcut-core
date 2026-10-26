@@ -283,9 +283,10 @@ enum Command {
         #[arg(short, long)]
         output: PathBuf,
     },
-    /// What is on screen at a frame: `ve layers --at 00:00:42:00` (each layer, its
-    /// placement, effects, transition, how much shows). Without `--at`, which tracks
-    /// show over a range: `ve layers --from 00:01:00:00 --to 00:02:00:00`.
+    /// What is on screen and heard at a frame: `ve layers --at 00:00:42:00` (each
+    /// layer, its placement, effects, transition, how much shows; each audio clip
+    /// and its gain). Without `--at`, which tracks show and are heard over a range:
+    /// `ve layers --from 00:01:00:00 --to 00:02:00:00`.
     Layers {
         #[arg(long, conflicts_with_all = ["from", "to"])]
         at: Option<String>,
@@ -1221,7 +1222,9 @@ fn print_layers(r: &Value) {
     let Some(layers) = r["layers"].as_array() else {
         for sp in r["spans"].as_array().into_iter().flatten() {
             let hidden = if sp["hidden"].is_array() { format!("  (hidden: {})", list(&sp["hidden"])) } else { String::new() };
-            println!("{}-{}  {}{hidden}", s(&sp["from"]), s(&sp["to"]), list(&sp["visible"]));
+            let pic = if sp["visible"].as_array().is_some_and(|v| !v.is_empty()) { list(&sp["visible"]) } else { "no picture".into() };
+            let snd = if sp["audible"].as_array().is_some_and(|v| !v.is_empty()) { list(&sp["audible"]) } else { "silent".into() };
+            println!("{}-{}  {pic}{hidden}  |  {snd}", s(&sp["from"]), s(&sp["to"]));
         }
         return;
     };
@@ -1260,6 +1263,23 @@ fn print_layers(r: &Value) {
             let missing = if e["missing"].as_bool() == Some(true) { " (not installed)" } else { "" };
             println!("       effect {} {}{missing}  {}", s(&e["id"]), s(&e["effect"]), params.join(" "));
         }
+    }
+    let muted = if r["muted"].is_array() { format!("  (off: {})", list(&r["muted"])) } else { String::new() };
+    let heard = if r["audible"].as_array().is_some_and(|v| !v.is_empty()) { list(&r["audible"]) } else { "nothing".into() };
+    println!("heard: {heard}{muted}");
+    for a in r["audio"].as_array().into_iter().flatten() {
+        let gain = a["gain_db"].as_f64().unwrap_or(0.0);
+        let mut what = if a["audible"].as_bool() == Some(true) { format!("{gain:+.1} dB") } else { "silenced (-100 dB)".into() };
+        if let Some(sp) = a["speed"].as_f64() {
+            what += &format!(", speed {sp}");
+        }
+        if let Some(link) = a["link"].as_str() {
+            let with: Vec<String> = layers.iter().filter(|l| l["link"].as_str() == Some(link)).map(|l| s(&l["track"])).collect();
+            if !with.is_empty() {
+                what += &format!(", with picture on {}", with.join(", "));
+            }
+        }
+        println!("{:4} {}  {} at {}  {what}", s(&a["track"]), s(&a["clip"]), a["asset"].as_str().unwrap_or("-"), s(&a["source_time"]));
     }
 }
 

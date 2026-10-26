@@ -1,6 +1,7 @@
-//! What is on screen: the video layers at a frame, bottom to top, with
-//! where each one lands, its effect and transition values at that frame,
-//! and how much of it shows through the layers above.
+//! What is on screen and what is heard: the video layers at a frame,
+//! bottom to top, with where each one lands, its effect and transition
+//! values at that frame, and how much of it shows through the layers above;
+//! and the audio clips playing then, with their gain.
 //!
 //! Geometry only, no decoding, so a frame costs microseconds and a whole
 //! timeline can be scanned ([`spans`]). Coverage is worked out from
@@ -23,6 +24,7 @@ use crate::fx::{Kind, Registry, interpolate};
 use crate::gpu::{Rect, Xf};
 use crate::plan::{Plan, Segment, TrackPlan, plan, timeline_end};
 use crate::{Canvas, RenderError, Span, local_path, project_canvas};
+use ve_ops::lane::clip_id;
 
 type Result<T> = std::result::Result<T, RenderError>;
 
@@ -38,6 +40,31 @@ pub struct Frame {
     pub visible: Vec<String>,
     /// Video tracks turned off (`track.set {enabled: false}`): never drawn.
     pub disabled: Vec<String>,
+    /// Audio clips playing, by track (first audio track first).
+    pub audio: Vec<AudioLayer>,
+    /// Audio tracks with a clip that is heard (gain above the -100 dB floor).
+    pub audible: Vec<String>,
+    /// Audio tracks turned off: never mixed.
+    pub muted: Vec<String>,
+}
+
+/// An audio clip playing at a frame.
+#[derive(Debug, Clone)]
+pub struct AudioLayer {
+    pub track: String,
+    /// Position among audio tracks, 0 first.
+    pub track_index: usize,
+    pub clip: String,
+    pub asset: Option<String>,
+    /// The clip's link group: its video partner shares it.
+    pub link: Option<String>,
+    /// Media seconds heard.
+    pub source_time: Q,
+    /// The clip's gain (`edit.set_volume`, plus what `edit.normalize` added).
+    pub gain_db: f64,
+    pub speed: Q,
+    /// False when the gain is at the -100 dB floor (silenced).
+    pub audible: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,6 +81,8 @@ pub struct Layer {
     pub track_index: usize,
     pub clip: String,
     pub asset: Option<String>,
+    /// The clip's link group: its audio partner shares it.
+    pub link: Option<String>,
     /// Media seconds shown; `None` for a still.
     pub source_time: Option<Q>,
     pub still: bool,
@@ -116,6 +145,8 @@ struct Ctx<'a> {
     canvas: Canvas,
     sources: HashMap<PathBuf, Source>,
     assets: HashMap<PathBuf, (String, Alpha)>,
+    /// Clip ID -> link group ID.
+    links: HashMap<String, String>,
     fx: &'a Registry,
 }
 
@@ -135,7 +166,18 @@ impl<'a> Ctx<'a> {
                 Some((local_path(&a.url)?, (a.id.to_string(), alpha)))
             })
             .collect();
-        Self { canvas: project_canvas(tl), sources: compose::sources(tl), assets, fx }
+        let mut links = HashMap::new();
+        for c in &tl.tracks.children {
+            let Composable::Track(t) = c else { continue };
+            for item in &t.children {
+                if let Composable::Clip(c) = item
+                    && let (Some(id), Some(link)) = (clip_id(c), c.metadata.ve.clip.as_ref().and_then(|m| m.link.as_ref()))
+                {
+                    links.insert(id.to_string(), link.to_string());
+                }
+            }
+        }
+        Self { canvas: project_canvas(tl), sources: compose::sources(tl), assets, links, fx }
     }
 }
 
@@ -150,24 +192,28 @@ pub fn at(tl: &Timeline, at: Q, fx: &Registry) -> Result<Frame> {
     let p = plan(tl, Span::new(at, at + Q::from_integer(1) / r))?;
     let ctx = Ctx::new(tl, fx);
     let mut f = frame(&ctx, &p, at, true)?;
-    f.disabled = disabled_tracks(tl);
+    f.disabled = off_tracks(tl, TrackKind::Video);
+    f.muted = off_tracks(tl, TrackKind::Audio);
     Ok(f)
 }
 
-/// A stretch of the timeline where the same tracks show.
+/// A stretch of the timeline where the same tracks show and are heard.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VisibleSpan {
     pub start: Q,
     pub end: Q,
-    /// Tracks that show, bottom to top.
+    /// Video tracks that show, bottom to top.
     pub visible: Vec<String>,
-    /// Tracks with a clip there that is entirely hidden.
+    /// Video tracks with a clip there that is entirely hidden.
     pub hidden: Vec<String>,
+    /// Audio tracks heard.
+    pub audible: Vec<String>,
 }
 
-/// Which tracks show over `span`, as stretches where that does not change.
-/// Every frame is checked (keyframed position or opacity can change it at
-/// any frame); stretches with nothing on any track are left out.
+/// Which tracks show and are heard over `span`, as stretches where that
+/// does not change. Every frame is checked (keyframed position or opacity
+/// can change it at any frame); stretches with nothing on any track are
+/// left out.
 pub fn spans(tl: &Timeline, span: Span, fx: &Registry) -> Result<Vec<VisibleSpan>> {
     let r = tl.output_rate().as_ratio();
     let p = plan(tl, span)?;
@@ -185,20 +231,21 @@ pub fn spans(tl: &Timeline, span: Span, fx: &Registry) -> Result<Vec<VisibleSpan
         }
         let next = at + Q::from_integer(1) / r;
         match out.last_mut() {
-            Some(s) if s.end == at && s.visible == f.visible && s.hidden == hidden => s.end = next,
-            _ if f.layers.is_empty() => {}
-            _ => out.push(VisibleSpan { start: at, end: next, visible: f.visible, hidden }),
+            Some(s) if s.end == at && s.visible == f.visible && s.hidden == hidden && s.audible == f.audible => s.end = next,
+            _ if f.layers.is_empty() && f.audio.is_empty() => {}
+            _ => out.push(VisibleSpan { start: at, end: next, visible: f.visible, hidden, audible: f.audible }),
         }
     }
     Ok(out)
 }
 
-fn disabled_tracks(tl: &Timeline) -> Vec<String> {
+/// Tracks of `kind` turned off (`track.set {enabled: false}`).
+fn off_tracks(tl: &Timeline, kind: TrackKind) -> Vec<String> {
     tl.tracks
         .children
         .iter()
         .filter_map(|c| match c {
-            Composable::Track(t) if t.kind == TrackKind::Video && !t.enabled => Some(t.name.clone()),
+            Composable::Track(t) if t.kind == kind && !t.enabled => Some(t.name.clone()),
             _ => None,
         })
         .collect()
@@ -245,8 +292,33 @@ fn frame(ctx: &Ctx<'_>, p: &Plan, at: Q, detail: bool) -> Result<Frame> {
             visible.push(l.track.clone());
         }
     }
-    Ok(Frame { at, canvas, layers, visible, disabled: Vec::new() })
+    let mut audio = Vec::new();
+    for (k, track) in p.audio.iter().enumerate() {
+        if let Some(seg) = playing(track, at) {
+            audio.push(AudioLayer {
+                track: track.name.clone(),
+                track_index: k,
+                clip: seg.clip.clone(),
+                asset: ctx.assets.get(&seg.path).map(|(id, _)| id.clone()),
+                link: ctx.links.get(&seg.clip).cloned(),
+                source_time: seg.media_start + (at - seg.start) * seg.speed,
+                gain_db: seg.volume_db,
+                speed: seg.speed,
+                audible: seg.volume_db > SILENT_DB,
+            });
+        }
+    }
+    let mut audible: Vec<String> = Vec::new();
+    for a in audio.iter().filter(|a| a.audible) {
+        if !audible.contains(&a.track) {
+            audible.push(a.track.clone());
+        }
+    }
+    Ok(Frame { at, canvas, layers, visible, disabled: Vec::new(), audio, audible, muted: Vec::new() })
 }
+
+/// `edit.set_volume`'s floor: a clip at it is silenced.
+const SILENT_DB: f64 = -100.0;
 
 fn layer(ctx: &Ctx<'_>, track: &str, track_index: usize, seg: &Segment, at: Q, detail: bool) -> Result<Layer> {
     let src = *ctx
@@ -281,6 +353,7 @@ fn layer(ctx: &Ctx<'_>, track: &str, track_index: usize, seg: &Segment, at: Q, d
         track_index,
         clip: seg.clip.clone(),
         asset,
+        link: ctx.links.get(&seg.clip).cloned(),
         source_time: (!seg.still).then(|| seg.media_start + (at - seg.start) * seg.speed),
         still: seg.still,
         rect: drawn(rect, xf),

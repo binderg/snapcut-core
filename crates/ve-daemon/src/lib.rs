@@ -338,7 +338,7 @@ pub fn registry(session: Arc<Session>) -> Arc<Registry> {
     let s = session.clone();
     r.method(
         "render.layers",
-        "What is on screen: the video layers at a frame (placement, effects, transitions, what shows), or which tracks show over a range",
+        "What is on screen and heard: video layers at a frame (placement, effects, transitions, what shows) and audio clips with their gain, or which tracks show and are heard over a range",
         false,
         move |p: layers::LayersParams| layers::layers(&s.snapshot()?, p),
     );
