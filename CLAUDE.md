@@ -182,7 +182,12 @@ out of placing audio by its own position. Matroska/WebM audio is decoded from
 the start (ms timestamps make seeks off by up to 0.5 ms). Methods
 `render.frame`, `render.contact_sheet` (base64 images), `render.range_preview`,
 `render.export` (MP4 in `<cache>/projects/<hash>/renders/`, CLI moves it to
-`-o`), `render.presets` (`ve-export`: master, youtube-1080p/720p,
+`-o`; `format`: `ve_render::Format` mp4/hevc/prores/prores-4444/webm and
+audio-only wav/m4a/mp3/flac, encoder per format via `ffmpeg::first_encoder`;
+prores-4444 always takes the GPU path, drawn on a transparent background
+(`Gpu::render_on`, CPU unpremultiply) and the blend shader handles a
+backdrop with alpha; audio-only skips the picture), captions as
+`transcript.get` `format: srt|vtt`, `render.presets` (`ve-export`: master, youtube-1080p/720p,
 vertical-1080x1920 (crop-fill), draft-540p). Encoder: libx264 if the local
 ffmpeg has it, else hardware, openh264, mpeg4.
 `VE_KEEP_GRAPH=1` keeps the generated graph for debugging. Tests check exact

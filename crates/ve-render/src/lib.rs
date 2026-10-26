@@ -186,11 +186,147 @@ pub fn contact_sheet(tl: &Timeline, span: Span, count: u32, columns: Option<u32>
     Ok(Sheet { image: Image { bytes: o.stdout, width, height, warnings }, columns: cols, rows, times })
 }
 
+/// What an export writes: container, codecs and whether there is a picture.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
+pub enum Format {
+    /// MP4, H.264 + AAC.
+    #[default]
+    Mp4,
+    /// MP4, H.265 + AAC (tagged `hvc1` so Apple players open it).
+    Hevc,
+    /// QuickTime, ProRes 422 HQ (10-bit) + 24-bit PCM, for editing elsewhere.
+    ProRes,
+    /// QuickTime, ProRes 4444 with alpha + 24-bit PCM: transparent where no clip draws.
+    ProRes4444,
+    /// WebM, VP9 + Opus.
+    Webm,
+    /// Audio only: 24-bit PCM WAV.
+    Wav,
+    /// Audio only: AAC in M4A.
+    M4a,
+    /// Audio only: MP3.
+    Mp3,
+    /// Audio only: FLAC (lossless).
+    Flac,
+}
+
+impl Format {
+    /// Every format with its name (as `render.export` takes it) and a description.
+    pub const ALL: [(Format, &'static str, &'static str); 9] = [
+        (Format::Mp4, "mp4", "MP4, H.264 + AAC (default; plays everywhere)"),
+        (Format::Hevc, "hevc", "MP4, H.265/HEVC + AAC (smaller; needs an HEVC encoder in ffmpeg)"),
+        (Format::ProRes, "prores", "QuickTime, ProRes 422 HQ + PCM, for finishing in another editor"),
+        (Format::ProRes4444, "prores-4444", "QuickTime, ProRes 4444 with alpha + PCM: transparent where no clip draws (overlays, titles)"),
+        (Format::Webm, "webm", "WebM, VP9 + Opus, for the web"),
+        (Format::Wav, "wav", "audio only, 24-bit WAV"),
+        (Format::M4a, "m4a", "audio only, AAC"),
+        (Format::Mp3, "mp3", "audio only, MP3"),
+        (Format::Flac, "flac", "audio only, FLAC (lossless)"),
+    ];
+
+    pub fn parse(name: &str) -> Option<Format> {
+        Self::ALL.iter().find(|(_, n, _)| *n == name).map(|(f, _, _)| *f)
+    }
+
+    pub fn name(self) -> &'static str {
+        Self::ALL.iter().find(|(f, _, _)| *f == self).map_or("mp4", |(_, n, _)| n)
+    }
+
+    pub fn extension(self) -> &'static str {
+        match self {
+            Format::Mp4 | Format::Hevc => "mp4",
+            Format::ProRes | Format::ProRes4444 => "mov",
+            Format::Webm => "webm",
+            Format::Wav => "wav",
+            Format::M4a => "m4a",
+            Format::Mp3 => "mp3",
+            Format::Flac => "flac",
+        }
+    }
+
+    pub fn mime(self) -> &'static str {
+        match self {
+            Format::Mp4 | Format::Hevc => "video/mp4",
+            Format::ProRes | Format::ProRes4444 => "video/quicktime",
+            Format::Webm => "video/webm",
+            Format::Wav => "audio/wav",
+            Format::M4a => "audio/mp4",
+            Format::Mp3 => "audio/mpeg",
+            Format::Flac => "audio/flac",
+        }
+    }
+
+    pub fn has_video(self) -> bool {
+        !matches!(self, Format::Wav | Format::M4a | Format::Mp3 | Format::Flac)
+    }
+
+    /// The picture keeps transparency (only the GPU compositor can draw it).
+    pub fn alpha(self) -> bool {
+        self == Format::ProRes4444
+    }
+
+    /// Pixel format the video is encoded in.
+    pub fn pix_fmt(self) -> &'static str {
+        match self {
+            Format::ProRes => "yuv422p10le",
+            Format::ProRes4444 => "yuva444p10le",
+            _ => "yuv420p",
+        }
+    }
+
+    /// The best video encoder the local ffmpeg has for this format.
+    pub fn video_encoder(self) -> Result<String> {
+        match self {
+            Format::Mp4 => Ok(ffmpeg::h264_encoder()?.to_owned()),
+            Format::Hevc => ffmpeg::first_encoder(&["libx265", "hevc_videotoolbox", "hevc_nvenc", "hevc_qsv", "hevc_amf", "hevc_mf"]),
+            Format::ProRes | Format::ProRes4444 => ffmpeg::first_encoder(&["prores_ks"]),
+            Format::Webm => ffmpeg::first_encoder(&["libvpx-vp9"]),
+            _ => Err(RenderError::Invalid(format!("{} has no picture", self.name()))),
+        }
+    }
+
+    /// The ffmpeg audio encoder.
+    pub fn audio_codec(self) -> &'static str {
+        match self {
+            Format::Mp4 | Format::Hevc | Format::M4a => "aac",
+            Format::ProRes | Format::ProRes4444 | Format::Wav => "pcm_s24le",
+            Format::Webm => "libopus",
+            Format::Mp3 => "libmp3lame",
+            Format::Flac => "flac",
+        }
+    }
+
+    /// The audio codec and its options.
+    fn audio_args(self, kbps: u32) -> Vec<String> {
+        let mut out = strings(&["-c:a", self.audio_codec()]);
+        match self {
+            Format::Mp4 | Format::Hevc | Format::M4a | Format::Webm => out.extend(strings(&["-b:a", &format!("{kbps}k")])),
+            Format::Mp3 => out.extend(strings(&["-b:a", &format!("{}k", kbps.clamp(64, 320))])),
+            _ => {}
+        }
+        out
+    }
+
+    /// The container's muxer and its options.
+    fn mux_args(self) -> Vec<String> {
+        match self {
+            Format::Mp4 | Format::Hevc | Format::M4a => strings(&["-movflags", "+faststart", "-f", "mp4"]),
+            Format::ProRes | Format::ProRes4444 => strings(&["-f", "mov"]),
+            Format::Webm => strings(&["-f", "webm"]),
+            Format::Wav => strings(&["-f", "wav"]),
+            Format::Mp3 => strings(&["-f", "mp3"]),
+            Format::Flac => strings(&["-f", "flac"]),
+        }
+    }
+}
+
 /// Video encoding choices for [`encode`].
 #[derive(Debug, Clone)]
 pub struct EncodeSettings {
     pub canvas: Canvas,
-    /// `None` picks the best H.264 encoder this ffmpeg has.
+    /// Container and codecs.
+    pub format: Format,
+    /// `None` picks the best video encoder this ffmpeg has for `format`.
     pub encoder: Option<String>,
     /// Quality for libx264 (lower is better).
     pub crf: u8,
@@ -210,21 +346,32 @@ pub struct Encoded {
     pub warnings: Vec<String>,
 }
 
-/// Render `span` to an MP4 at `out`.
+/// Render `span` to a file at `out` in `s.format` through the ffmpeg graph.
+/// Audio-only formats skip the picture. Formats with alpha need
+/// [`compose::encode`].
 pub fn encode(tl: &Timeline, span: Span, s: &EncodeSettings, out: &Path, work: &Path) -> Result<Encoded> {
     let p = plan(tl, span)?;
     let c = &s.canvas;
+    let f = s.format;
+    if f.alpha() {
+        return Err(RenderError::Invalid(format!("{} needs the GPU compositor", f.name())));
+    }
     let mut g = Graph::new();
-    let v = g.video(&p, c);
+    let v = f.has_video().then(|| g.video(&p, c));
     let a = g.audio(&p, c, s.crossfade);
-    let encoder = match &s.encoder {
-        Some(e) => e.clone(),
-        None => ffmpeg::h264_encoder()?.to_owned(),
+    let encoder = match (&s.encoder, f.has_video()) {
+        (Some(e), true) => e.clone(),
+        (None, true) => f.video_encoder()?,
+        (_, false) => f.audio_codec().to_owned(),
     };
-    let args = encode_args(s, &encoder, &format!("[{v}]"), &format!("[{a}]"), out);
+    let v = v.map(|v| format!("[{v}]")).unwrap_or_default();
+    let args = encode_args(s, &encoder, &v, &format!("[{a}]"), out);
     ffmpeg::run(&g, &args, work, false)?;
     let frames = ((span.end - span.start) * c.rate.as_ratio()).round().to_integer();
-    Ok(Encoded { frames, encoder, width: c.width, height: c.height, warnings: p.warnings })
+    let (width, height) = if f.has_video() { (c.width, c.height) } else { (0, 0) };
+    // Audio files have no picture, so warnings about drawing do not apply.
+    let warnings = if f.has_video() { p.warnings } else { p.warnings.into_iter().filter(|w| !w.contains(plan::GPU_ONLY)).collect() };
+    Ok(Encoded { frames, encoder, width, height, warnings })
 }
 
 /// Render `span` to an MP4 at `out` from finished JPEG frames: `frame(t)`
@@ -316,36 +463,42 @@ pub fn preview_key_from(tl: &Timeline, span: Span, s: &EncodeSettings, frame_key
     Ok(h.finalize().to_hex().to_string())
 }
 
-/// ffmpeg output arguments for an MP4 from the video stream `v` and audio
-/// stream `a` (stream specifiers, e.g. `[v1]`), shared by both backends.
+/// ffmpeg output arguments for `s.format` from the video stream `v` and
+/// audio stream `a` (stream specifiers, e.g. `[v1]`; `v` is unused for
+/// audio-only formats), shared by both backends.
 pub(crate) fn encode_args(s: &EncodeSettings, encoder: &str, v: &str, a: &str, out: &Path) -> Vec<String> {
     let c = &s.canvas;
-    let fps = c.rate.to_f64();
-    let bitrate = (f64::from(c.width) * f64::from(c.height) * fps * s.bits_per_pixel) as u64;
-    let mut args = strings(&["-map", v, "-map", a, "-c:v", encoder]);
-    match encoder {
-        "libx264" => args.extend(strings(&["-preset", &s.x264_preset, "-crf", &s.crf.to_string()])),
-        "mpeg4" => args.extend(strings(&["-q:v", "3"])),
-        _ => args.extend(strings(&["-b:v", &bitrate.to_string()])),
+    let f = s.format;
+    let mut args = Vec::new();
+    if f.has_video() {
+        let fps = c.rate.to_f64();
+        let bitrate = (f64::from(c.width) * f64::from(c.height) * fps * s.bits_per_pixel) as u64;
+        args.extend(strings(&["-map", v, "-c:v", encoder]));
+        match encoder {
+            "libx264" => args.extend(strings(&["-preset", &s.x264_preset, "-crf", &s.crf.to_string()])),
+            // x265's CRF runs about 5 higher than x264's for the same look.
+            "libx265" => args.extend(strings(&["-preset", &s.x264_preset, "-crf", &(s.crf + 5).to_string(), "-x265-params", "log-level=error"])),
+            "mpeg4" => args.extend(strings(&["-q:v", "3"])),
+            // Profile 3 is 422 HQ, 4 is 4444 (with alpha).
+            "prores_ks" => {
+                args.extend(strings(&["-profile:v", if f.alpha() { "4" } else { "3" }, "-vendor", "apl0"]));
+                if f.alpha() {
+                    args.extend(strings(&["-alpha_bits", "16"]));
+                }
+            }
+            // VP9 CRF runs about 13 higher than x264's; `-b:v 0` makes it pure quality mode.
+            "libvpx-vp9" => args.extend(strings(&["-crf", &(s.crf + 13).to_string(), "-b:v", "0", "-row-mt", "1", "-deadline", "good", "-cpu-used", "4"])),
+            _ => args.extend(strings(&["-b:v", &bitrate.to_string()])),
+        }
+        if f == Format::Hevc {
+            args.extend(strings(&["-tag:v", "hvc1"]));
+        }
+        args.extend(strings(&["-pix_fmt", f.pix_fmt(), "-r", &c.rate.to_string()]));
     }
-    args.extend(strings(&[
-        "-pix_fmt",
-        "yuv420p",
-        "-r",
-        &c.rate.to_string(),
-        "-c:a",
-        "aac",
-        "-b:a",
-        &format!("{}k", s.audio_kbps),
-        "-ar",
-        &c.sample_rate.to_string(),
-        "-ac",
-        "2",
-        "-movflags",
-        "+faststart",
-        "-f",
-        "mp4",
-    ]));
+    args.extend(strings(&["-map", a]));
+    args.extend(f.audio_args(s.audio_kbps));
+    args.extend(strings(&["-ar", &c.sample_rate.to_string(), "-ac", "2"]));
+    args.extend(f.mux_args());
     args.push(out.to_string_lossy().into_owned());
     args
 }

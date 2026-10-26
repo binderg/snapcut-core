@@ -134,9 +134,10 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
 /// A picture mixed with the backdrop (what is drawn below it) by blend mode
 /// `place.o.y` (the index in `BLEND_MODES`). The quad is the rect shader's.
 /// Formulas are the W3C Compositing spec's, applied to sRGB-encoded values;
-/// the result is laid over the backdrop by the picture's alpha:
-/// `(1 - a) * backdrop + a * blend(backdrop, picture)` (the backdrop is
-/// always opaque: the frame starts black).
+/// the result is laid over the backdrop by the picture's alpha as the spec's
+/// source-over with blending. On the usual opaque backdrop that is
+/// `(1 - a) * backdrop + a * blend(backdrop, picture)`; on a transparent one
+/// (exports with alpha) the picture shows as itself where nothing is below.
 const BLEND_SHADER: &str = r"
 struct Place { a: vec4<f32>, b: vec4<f32>, uv: vec4<f32>, o: vec4<f32> };
 @group(0) @binding(0) var tex: texture_2d<f32>;
@@ -230,12 +231,15 @@ fn blend(b: vec3<f32>, s: vec3<f32>, mode: u32) -> vec3<f32> {
 @fragment
 fn fs(in: VsOut) -> @location(0) vec4<f32> {
     let src = textureSampleLevel(tex, samp, in.uv, 0.0) * place.o.x;
-    let back = textureLoad(backdrop, vec2<i32>(floor(in.pos.xy)), 0).rgb;
-    let a = clamp(src.a, 0.0, 1.0);
-    let b = encode(back);
-    let s = encode(src.rgb / max(src.a, 1e-6));
-    let mixed = mix(b, clamp(blend(b, s, u32(place.o.y + 0.5)), vec3(0.0), vec3(1.0)), a);
-    return vec4(decode(mixed), 1.0);
+    let back = textureLoad(backdrop, vec2<i32>(floor(in.pos.xy)), 0);
+    let sa = clamp(src.a, 0.0, 1.0);
+    let ba = clamp(back.a, 0.0, 1.0);
+    let b = encode(back.rgb / max(ba, 1e-6));
+    let s = encode(src.rgb / max(sa, 1e-6));
+    let mixed = clamp(blend(b, s, u32(place.o.y + 0.5)), vec3(0.0), vec3(1.0));
+    let oa = sa + ba * (1.0 - sa);
+    let oc = (sa * (1.0 - ba) * s + sa * ba * mixed + (1.0 - sa) * ba * b) / max(oa, 1e-6);
+    return vec4(decode(oc) * oa, oa);
 }
 ";
 
@@ -697,6 +701,13 @@ impl Gpu {
     /// Render a frame: `items` bottom to top onto opaque black, `width x height`.
     /// Returns RGBA8, sRGB-encoded, opaque.
     pub fn render(&self, width: u32, height: u32, items: &[Item<'_>]) -> Result<Vec<u8>> {
+        self.render_on(width, height, items, false)
+    }
+
+    /// [`Gpu::render`], or with `transparent` onto a clear background,
+    /// returning straight (not premultiplied) alpha where nothing covers it.
+    pub fn render_on(&self, width: u32, height: u32, items: &[Item<'_>], transparent: bool) -> Result<Vec<u8>> {
+        let background = if transparent { wgpu::Color::TRANSPARENT } else { wgpu::Color::BLACK };
         if width == 0 || height == 0 {
             return Err(RenderError::Invalid("output size must be at least 1x1".into()));
         }
@@ -738,22 +749,33 @@ impl Gpu {
         if draws.iter().all(|d| d.2.blend == 0) {
             // One pass, all premultiplied "over" (what plain frames always did).
             let groups: Vec<wgpu::BindGroup> = draws.iter().map(|(t, r, xf)| self.rect_group(&t.create_view(&Default::default()), *r, *xf, width, height)).collect();
-            let mut rp = begin(&mut enc, &view, wgpu::Color::BLACK);
+            let mut rp = begin(&mut enc, &view, background);
             rp.set_pipeline(&self.rect_out);
             for g in &groups {
                 rp.set_bind_group(0, g, &[]);
                 rp.draw(0..6, 0..1);
             }
         } else {
-            self.draw_blended(&mut enc, &target, &view, &draws, width, height);
+            self.draw_blended(&mut enc, &target, &view, &draws, (width, height), background);
         }
-        let bytes = self.read(enc, &target, width, height, 4, None)?;
+        let mut bytes = self.read(enc, &target, width, height, 4, None)?;
+        if transparent {
+            unpremultiply(&mut bytes);
+        }
         Ok(bytes)
     }
 
     /// Draw runs of normal pictures in one pass each; before a picture with
     /// another blend mode, copy the output so far as its backdrop.
-    fn draw_blended(&self, enc: &mut wgpu::CommandEncoder, target: &wgpu::Texture, view: &wgpu::TextureView, draws: &[(wgpu::Texture, Rect, Xf)], width: u32, height: u32) {
+    fn draw_blended(
+        &self,
+        enc: &mut wgpu::CommandEncoder,
+        target: &wgpu::Texture,
+        view: &wgpu::TextureView,
+        draws: &[(wgpu::Texture, Rect, Xf)],
+        (width, height): (u32, u32),
+        background: wgpu::Color,
+    ) {
         let size = wgpu::Extent3d { width, height, depth_or_array_layers: 1 };
         let backdrop = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("backdrop"),
@@ -766,7 +788,7 @@ impl Gpu {
             view_formats: &[],
         });
         let back_view = backdrop.create_view(&Default::default());
-        let mut load = wgpu::LoadOp::Clear(wgpu::Color::BLACK);
+        let mut load = wgpu::LoadOp::Clear(background);
         let mut i = 0;
         while i <= draws.len() {
             // A run of normal pictures (maybe empty), then one blended picture.
@@ -894,6 +916,35 @@ impl Gpu {
             }
         }
         Ok(())
+    }
+}
+
+/// sRGB-encoded premultiplied RGBA (what the output target holds) to
+/// sRGB-encoded straight alpha, as video encoders expect it.
+fn unpremultiply(px: &mut [u8]) {
+    static DECODE: OnceLock<[f32; 256]> = OnceLock::new();
+    let decode = DECODE.get_or_init(|| {
+        std::array::from_fn(|i| {
+            let c = i as f32 / 255.0;
+            if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
+        })
+    });
+    let encode = |l: f32| {
+        let l = l.clamp(0.0, 1.0);
+        let c = if l <= 0.003_130_8 { l * 12.92 } else { 1.055 * l.powf(1.0 / 2.4) - 0.055 };
+        (c * 255.0).round() as u8
+    };
+    for p in px.chunks_exact_mut(4) {
+        match p[3] {
+            255 => {}
+            0 => p[..3].fill(0),
+            a => {
+                let a = f32::from(a) / 255.0;
+                for c in &mut p[..3] {
+                    *c = encode(decode[usize::from(*c)] / a);
+                }
+            }
+        }
     }
 }
 

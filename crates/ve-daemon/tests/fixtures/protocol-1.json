@@ -1956,6 +1956,12 @@
             "boolean"
           ]
         },
+        "format": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
         "from": {
           "required": false,
           "types": [
@@ -2065,6 +2071,7 @@
       "deprecated": false,
       "params": {},
       "result": [
+        "formats",
         "presets"
       ]
     },

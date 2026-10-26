@@ -157,8 +157,27 @@ when it has them all, which is much faster than rendering.
 
 ## `render.export`
 
-`{from, to, preset}`. The final render with a preset from `render.presets`
-(default `master`: the project's own size).
+`{from, to, preset, format}`. The final render with a preset from
+`render.presets` (size, fit and quality; default `master`: the project's
+own size) in a `format` (container and codecs; default `mp4`):
+
+| `format` | File | Video | Audio | |
+| --- | --- | --- | --- | --- |
+| `mp4` | .mp4 | H.264 | AAC | Default; plays everywhere |
+| `hevc` | .mp4 | H.265 (`hvc1`) | AAC | Smaller files; needs an HEVC encoder in ffmpeg (libx265 or hardware) |
+| `prores` | .mov | ProRes 422 HQ, 10-bit | 24-bit PCM | For finishing in another editor |
+| `prores-4444` | .mov | ProRes 4444 with alpha | 24-bit PCM | Transparent wherever no clip draws (titles, overlays); always rendered on the GPU |
+| `webm` | .webm | VP9 | Opus | For the web |
+| `wav` | .wav | | 24-bit PCM | Audio only |
+| `m4a` | .m4a | | AAC | Audio only |
+| `mp3` | .mp3 | | MP3 | Audio only |
+| `flac` | .flac | | FLAC | Audio only, lossless |
+
+`mime` in the result matches the format. Audio-only results have `width`
+and `height` 0. A format whose encoder the local ffmpeg lacks fails with a
+message naming the encoders it looked for. Captions (SRT, WebVTT) come
+from the transcript: `transcript.get` with `format: srt` or `vtt`
+([transcript.md](transcript.md)).
 
 Both return a **file in the engine's cache**, not bytes:
 
@@ -172,7 +191,8 @@ Both return a **file in the engine's cache**, not bytes:
 Move or copy it where the user wants it; files left in the cache are deleted
 after a day. (The CLI does this for you with `-o`.) A browser page cannot
 open `file://` paths; a desktop shell (Tauri, Electron) can. Encoder: libx264
-when the local ffmpeg has it, else a hardware encoder, openh264 or mpeg4.
+when the local ffmpeg has it, else a hardware encoder, openh264 or mpeg4
+(for `mp4`; the other formats name theirs above).
 
 By default the call returns when the file is done (a 10 minute 1080p export
 took about 4.5 minutes on 4 cores). Other calls keep working meanwhile: the
@@ -188,5 +208,10 @@ once, with progress and cancel: see [jobs.md](jobs.md).
   {"name": "youtube-1080p", "description": "1920x1080 H.264 + AAC for upload", "size": [1920, 1080]},
   {"name": "youtube-720p", "description": "1280x720 H.264 + AAC", "size": [1280, 720]},
   {"name": "vertical-1080x1920", "description": "1080x1920 for Shorts/Reels/TikTok; landscape sources are center-cropped", "size": [1080, 1920]},
-  {"name": "draft-540p", "description": "960x540, fast and small, for review", "size": [960, 540]}]}
+  {"name": "draft-540p", "description": "960x540, fast and small, for review", "size": [960, 540]}],
+ "formats": [
+  {"name": "mp4", "description": "MP4, H.264 + AAC (default; plays everywhere)", "extension": "mp4", "video": true},
+  {"name": "wav", "description": "audio only, 24-bit WAV", "extension": "wav", "video": false}]}
 ```
+
+(`formats` shortened here; it lists all nine.)

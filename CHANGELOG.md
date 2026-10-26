@@ -73,6 +73,11 @@ not final (the command is `ve`).
   presets: master, youtube-1080p, youtube-720p, vertical-1080x1920,
   draft-540p. Encoder: libx264 when available, else hardware, openh264 or
   mpeg4.
+- Export formats (`format` on `render.export`, `ve export --format`, or
+  from the `-o` extension): MP4 H.264, MP4 HEVC, ProRes 422 HQ, ProRes 4444
+  with alpha, WebM VP9/Opus, and audio only as WAV, M4A, MP3 or FLAC.
+- Captions: `transcript.get` with `format: srt` or `vtt` (`ve transcript
+  --format srt`), timed to the edited timeline.
 - Content-keyed frame and preview caches with background render-ahead.
 - `ve cache` shows and `ve cache clear` deletes the rebuildable caches
   (frames, previews, renders, measurements, extracted audio).

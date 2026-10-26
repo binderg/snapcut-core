@@ -340,6 +340,10 @@ enum Command {
         /// `ve export --list-presets` shows them. Default: `master` (project settings).
         #[arg(long)]
         preset: Option<String>,
+        /// mp4 (H.264), hevc, prores, prores-4444 (alpha), webm, or audio only: wav, m4a, mp3, flac.
+        /// Default: from the `-o` extension (.mov is prores), else mp4.
+        #[arg(long)]
+        format: Option<String>,
         #[arg(long)]
         list_presets: bool,
         #[command(flatten)]
@@ -372,6 +376,9 @@ enum Command {
         /// One asset's whole transcript, in its own media time.
         #[arg(long)]
         asset: Option<String>,
+        /// `text` (default), or captions: `srt` or `vtt` (`ve transcript --format srt > captions.srt`).
+        #[arg(long)]
+        format: Option<String>,
         #[command(flatten)]
         span: Span,
     },
@@ -1008,9 +1015,16 @@ fn plan(cmd: &Command, json_output: bool) -> Plan {
             q("render.range_preview", p)
         }
         Command::Export { list_presets: true, .. } => q("render.presets", json!({})),
-        Command::Export { preset, span, .. } => {
+        Command::Export { preset, format, span, output, .. } => {
             let mut p = span_params(span);
             p["preset"] = json!(preset);
+            let ext = output.as_deref().and_then(|o| o.extension()).map(|e| e.to_string_lossy().to_lowercase());
+            let from_ext = match ext.as_deref() {
+                Some("mov") => Some("prores"),
+                Some(e @ ("mp4" | "webm" | "wav" | "m4a" | "mp3" | "flac")) => Some(e),
+                _ => None,
+            };
+            p["format"] = json!(format.as_deref().or(from_ext));
             q("render.export", p)
         }
         Command::Analyze(AnalyzeCmd::Silence { span, threshold, min, pad, no_markers }) => {
@@ -1054,8 +1068,9 @@ fn plan(cmd: &Command, json_output: bool) -> Plan {
         Command::Cache { cmd: Some(CacheCmd::Clear { kinds, dry_run }) } => {
             q("cache.clear", json!({ "kinds": kinds, "dry_run": dry_run }))
         }
-        Command::Transcript { asset, span } => {
-            let mut p = json!({ "format": if json_output { "words" } else { "text" } });
+        Command::Transcript { asset, format, span } => {
+            let default = if json_output { "words" } else { "text" };
+            let mut p = json!({ "format": format.as_deref().unwrap_or(default) });
             if let Some(a) = asset {
                 p["asset"] = json!(a);
             }

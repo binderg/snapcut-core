@@ -351,6 +351,7 @@ fn effects_and_transitions_on_the_timeline() {
 fn settings(tl: &Timeline) -> ve_render::EncodeSettings {
     ve_render::EncodeSettings {
         canvas: ve_render::project_canvas(tl),
+        format: ve_render::Format::Mp4,
         encoder: None,
         crf: 10,
         x264_preset: "veryfast".into(),

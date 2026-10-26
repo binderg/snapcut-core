@@ -176,6 +176,8 @@ struct Ctx<'a> {
     pool: &'a mut DecoderPool,
     canvas: &'a Canvas,
     fx: &'a Registry,
+    /// Draw on a transparent background and return straight alpha (exports with alpha).
+    transparent: bool,
 }
 
 fn decoded(ctx: &mut Ctx<'_>, seg: &Segment, t: Q, slot: usize) -> Result<Decoded> {
@@ -233,7 +235,7 @@ fn render_rgba(ctx: &mut Ctx<'_>, p: &Plan, at: Q) -> Result<Vec<u8>> {
             Shown::Transition(a, b, pass) => Item::Transition { outgoing: a.picture(), incoming: b.picture(), pass: pass.clone() },
         })
         .collect();
-    Gpu::shared()?.render(ctx.canvas.width, ctx.canvas.height, &items)
+    Gpu::shared()?.render_on(ctx.canvas.width, ctx.canvas.height, &items, ctx.transparent)
 }
 
 /// [`crate::frame`] through the GPU compositor: one frame at `at` (snapped
@@ -257,7 +259,7 @@ pub fn frame_in(tl: &Timeline, at: Q, width: u32, format: ImageFormat, fx: &Regi
     }
     let p = plan(tl, Span::new(at, at + Q::from_integer(1) / r))?;
     let sources = sources(tl);
-    let rgba = render_rgba(&mut Ctx { sources: &sources, pool, canvas: &canvas, fx }, &p, at)?;
+    let rgba = render_rgba(&mut Ctx { sources: &sources, pool, canvas: &canvas, fx, transparent: false }, &p, at)?;
     let rgb = image::RgbImage::from_fn(canvas.width, canvas.height, |x, y| {
         let i = ((y * canvas.width + x) * 4) as usize;
         image::Rgb([rgba[i], rgba[i + 1], rgba[i + 2]])
@@ -384,9 +386,13 @@ pub fn encode(tl: &Timeline, span: Span, s: &EncodeSettings, out: &Path, work: &
     let c = &s.canvas;
     let r = c.rate.as_ratio();
     let total = ((span.end - span.start) * r).round().to_integer();
+    let f = s.format;
+    if !f.has_video() {
+        return crate::encode(tl, span, s, out, work);
+    }
     let encoder = match &s.encoder {
         Some(e) => e.clone(),
-        None => ffmpeg::h264_encoder()?.to_owned(),
+        None => f.video_encoder()?,
     };
     // No GPU: fail before an encoder is started.
     Gpu::shared()?;
@@ -399,7 +405,7 @@ pub fn encode(tl: &Timeline, span: Span, s: &EncodeSettings, out: &Path, work: &
     let mut g = Graph::new();
     let a = g.audio(&p, c, s.crossfade);
     let pipe_index = g.input_count();
-    g.chain(format!("[{pipe_index}:v]scale=out_color_matrix={OUTPUT_MATRIX}:out_range=tv,format=yuv420p,setsar=1[gv]"));
+    g.chain(format!("[{pipe_index}:v]scale=out_color_matrix={OUTPUT_MATRIX}:out_range=tv,format={},setsar=1[gv]", f.pix_fmt()));
     let pipe = ["-f", "rawvideo", "-pix_fmt", "rgba", "-s", &format!("{}x{}", c.width, c.height), "-framerate", &c.rate.to_string(), "-i", "-"]
         .iter()
         .map(|a| (*a).to_owned())
@@ -411,7 +417,7 @@ pub fn encode(tl: &Timeline, span: Span, s: &EncodeSettings, out: &Path, work: &
     args.splice(last..last, tags.iter().map(|t| (*t).to_owned()));
 
     let ctrl = crate::control::current();
-    let mut ctx = Ctx { sources: &sources, pool: &mut pool, canvas: c, fx };
+    let mut ctx = Ctx { sources: &sources, pool: &mut pool, canvas: c, fx, transparent: f.alpha() };
     let mut produce = |send: &mut ffmpeg::Send| -> Result<()> {
         for k in 0..total {
             let at = span.start + Q::from_integer(k) / r;

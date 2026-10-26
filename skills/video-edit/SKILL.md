@@ -232,6 +232,10 @@ ve export -o final.mp4                          # project size, high quality
 ve export --preset youtube-1080p -o final.mp4
 ve export --preset vertical-1080x1920 -o short.mp4   # landscape sources are center-cropped
 ve export --from 00:01:00:00 --to 00:02:00:00 -o clip.mp4
+ve export -o master.mov                         # ProRes 422 HQ (format from the extension)
+ve export --format prores-4444 -o titles.mov    # transparent where no clip draws
+ve export --format hevc -o small.mp4            # also: webm, wav, m4a, mp3, flac
+ve transcript --format srt > captions.srt       # captions in timeline time (also vtt)
 ```
 
 A 1080p export runs at about twice real time on a 4-core machine; run it last.

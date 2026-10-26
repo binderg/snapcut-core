@@ -253,9 +253,13 @@ pub struct PreviewParams {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ExportParams {
-    /// Preset name (`render.presets` lists them). Default `master`.
+    /// Preset name (`render.presets` lists them): size, fit and quality. Default `master`.
     #[serde(default)]
     pub preset: Option<String>,
+    /// Container and codecs: `mp4` (H.264, default), `hevc`, `prores`, `prores-4444` (with
+    /// alpha), `webm`, or audio only: `wav`, `m4a`, `mp3`, `flac`. `render.presets` lists them.
+    #[serde(default)]
+    pub format: Option<String>,
     #[serde(default)]
     pub from: Option<String>,
     #[serde(default)]
@@ -318,19 +322,30 @@ pub struct VideoResult {
     pub cached: bool,
 }
 
-fn out_file(work: &Path, kind: &str, rev: u64) -> PathBuf {
+fn out_file(work: &Path, kind: &str, rev: u64, ext: &str) -> PathBuf {
     let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_nanos());
-    work.join(format!("{kind}-rev{rev}-{nanos}.mp4"))
+    work.join(format!("{kind}-rev{rev}-{nanos}.{ext}"))
 }
 
 fn encode(p: &Snapshot, sp: Span, settings: ve_render::EncodeSettings, kind: &str) -> Result<VideoResult, RpcError> {
     let work = work_dir(p);
-    let path = out_file(&work, kind, p.revision);
+    let f = settings.format;
+    let path = out_file(&work, kind, p.revision, f.extension());
     let tl = &p.timeline;
     let rate = tl.output_rate();
-    let gpu = match renderer_override() {
-        Some(forced) => forced,
-        None => ve_render::needs_gpu(tl, sp).map_err(render_error)?,
+    // Audio has no picture to draw; alpha only exists in the GPU compositor.
+    let gpu = if !f.has_video() {
+        false
+    } else if f.alpha() {
+        if renderer_override() == Some(false) {
+            return Err(RpcError::invalid_params(format!("{} needs the GPU compositor, but VE_RENDERER=ffmpeg", f.name())));
+        }
+        true
+    } else {
+        match renderer_override() {
+            Some(forced) => forced,
+            None => ve_render::needs_gpu(tl, sp).map_err(render_error)?,
+        }
     };
     let e = if gpu {
         let fx = ve_render::fx::Registry::for_project(Some(p.root()));
@@ -344,7 +359,7 @@ fn encode(p: &Snapshot, sp: Span, settings: ve_render::EncodeSettings, kind: &st
     Ok(VideoResult {
         path,
         url,
-        mime: "video/mp4".into(),
+        mime: f.mime().into(),
         size_bytes,
         from: tc(sp.start, rate),
         to: tc(sp.end, rate),
@@ -544,8 +559,16 @@ pub fn export(p: &Snapshot, a: ExportParams) -> Result<VideoResult, RpcError> {
         let names: Vec<&str> = ve_export::PRESETS.iter().map(|p| p.name).collect();
         RpcError::invalid_params(format!("no preset `{name}`; presets are {}", names.join(", ")))
     })?;
+    let format = match a.format.as_deref() {
+        None => ve_render::Format::Mp4,
+        Some(f) => ve_render::Format::parse(f).ok_or_else(|| {
+            let names: Vec<&str> = ve_render::Format::ALL.iter().map(|(_, n, _)| *n).collect();
+            RpcError::invalid_params(format!("no format `{f}`; formats are {}", names.join(", ")))
+        })?,
+    };
     let sp = span(&p.timeline, a.from.as_ref(), a.to.as_ref())?;
-    let settings = ve_export::settings(&p.timeline, preset);
+    let mut settings = ve_export::settings(&p.timeline, preset);
+    settings.format = format;
     encode(p, sp, settings, name)
 }
 
@@ -561,6 +584,18 @@ pub struct PresetInfo {
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct PresetList {
     pub presets: Vec<PresetInfo>,
+    /// Formats `render.export` takes (`format`), with what each writes.
+    pub formats: Vec<FormatInfo>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct FormatInfo {
+    pub name: String,
+    pub description: String,
+    /// File extension of the output.
+    pub extension: String,
+    /// False for audio-only formats.
+    pub video: bool,
 }
 
 pub fn presets() -> PresetList {
@@ -568,6 +603,15 @@ pub fn presets() -> PresetList {
         presets: ve_export::PRESETS
             .iter()
             .map(|p| PresetInfo { name: p.name.into(), description: p.description.into(), size: p.size })
+            .collect(),
+        formats: ve_render::Format::ALL
+            .iter()
+            .map(|(f, name, description)| FormatInfo {
+                name: (*name).into(),
+                description: (*description).into(),
+                extension: f.extension().into(),
+                video: f.has_video(),
+            })
             .collect(),
     }
 }

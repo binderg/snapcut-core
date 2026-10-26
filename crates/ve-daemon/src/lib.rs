@@ -333,9 +333,9 @@ pub fn registry(session: Arc<Session>) -> Arc<Registry> {
         |_: &Session, snap: &Snapshot, p| render::contact_sheet(snap, p));
     long!("render.range_preview", "A low-res MP4 of a range, written to the engine cache", false, render::PreviewParams,
         |s: &Session, snap: &Snapshot, p| render::range_preview(s, snap, p));
-    long!("render.export", "Render the timeline (or a range) with a preset to an MP4 in the engine cache", false, render::ExportParams,
+    long!("render.export", "Render the timeline (or a range) with a preset and format (MP4, HEVC, ProRes, WebM, audio) to the engine cache", false, render::ExportParams,
         |_: &Session, snap: &Snapshot, p| render::export(snap, p));
-    r.method("render.presets", "Export presets", false, |_: NoParams| Ok(render::presets()));
+    r.method("render.presets", "Export presets and formats", false, |_: NoParams| Ok(render::presets()));
     let s = session.clone();
     r.method(
         "render.layers",

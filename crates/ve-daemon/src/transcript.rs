@@ -71,7 +71,8 @@ pub struct GetParams {
     /// Timeline end, exclusive. Default: the timeline end.
     #[serde(default)]
     pub to: Option<String>,
-    /// `words` (default) or `text`: readable lines with times instead of a word list.
+    /// `words` (default), `text` (readable lines with times), or captions:
+    /// `srt` or `vtt` (WebVTT), returned in `text` as the file's contents.
     #[serde(default)]
     pub format: Format,
 }
@@ -82,6 +83,23 @@ pub enum Format {
     #[default]
     Words,
     Text,
+    Srt,
+    Vtt,
+}
+
+impl Format {
+    /// The result is text (readable lines or a caption file), not a word list.
+    fn is_text(self) -> bool {
+        self != Format::Words
+    }
+
+    fn render(self, lines: &[Line]) -> String {
+        match self {
+            Format::Srt => render_cues(lines, false),
+            Format::Vtt => render_cues(lines, true),
+            _ => render_lines(lines),
+        }
+    }
 }
 
 /// `transcript.get` with an asset.
@@ -97,7 +115,7 @@ pub struct AssetTranscript {
     /// With `format: words`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub words: Option<Vec<Word>>,
-    /// With `format: text`.
+    /// With `format: text`, `srt` or `vtt`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
 }
@@ -129,7 +147,7 @@ pub struct TimelineTranscript {
     /// With `format: words`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub words: Option<Vec<TimelineWord>>,
-    /// With `format: text`.
+    /// With `format: text`, `srt` or `vtt`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
     /// Assets on audio tracks in the range that have no transcript yet.
@@ -241,9 +259,9 @@ pub fn get(project: &mut OpenProject, p: GetParams) -> Result<GetResult, RpcErro
         let t = load(project, &a)?.ok_or_else(|| {
             RpcError::invalid_params(format!("{id} has no transcript yet; a speech-to-text plugin makes one (`ve plugin list`)"))
         })?;
-        let text = (p.format == Format::Text).then(|| {
+        let text = p.format.is_text().then(|| {
             let lines: Vec<Line> = t.words.iter().map(|w| Line::word(w.start.to_string(), w.start.0, w.end.0, &w.text, w.speaker.as_deref())).collect();
-            render_lines(&lines)
+            p.format.render(&lines)
         });
         let words = (p.format == Format::Words).then(|| t.words.clone());
         return Ok(GetResult::Asset(AssetTranscript { asset: t.asset, language: t.language, speakers: t.speakers, provenance: t.provenance, words, text }));
@@ -301,6 +319,98 @@ fn render_lines(words: &[Line]) -> String {
         out.push('\n');
     }
     out
+}
+
+/// Longest caption line, in characters (the usual broadcast and web limit).
+const CUE_LINE_CHARS: usize = 42;
+/// Lines per caption.
+const CUE_LINES: usize = 2;
+/// Longest a caption stays up, in seconds.
+const CUE_SECONDS: i64 = 6;
+
+/// SRT or WebVTT captions from timed words: a new caption on a speaker
+/// change, a pause of 0.7 s or more, after a sentence once it has some text,
+/// or when it would pass two 42-character lines or six seconds.
+fn render_cues(words: &[Line], vtt: bool) -> String {
+    let mut cues: Vec<(Q, Q, Option<String>, Vec<String>)> = Vec::new();
+    let mut prev: Option<&Line> = None;
+    for w in words {
+        let fits = |c: &(Q, Q, Option<String>, Vec<String>)| {
+            let text = format!("{} {}", c.3.join(" "), w.text);
+            wrap(&text).len() <= CUE_LINES && w.end - c.0 <= Q::from_integer(CUE_SECONDS)
+        };
+        let new_cue = match (prev, cues.last()) {
+            (Some(p), Some(c)) => {
+                p.speaker != w.speaker
+                    || w.start - p.end >= Q::new(7, 10)
+                    || !fits(c)
+                    || (p.text.ends_with(['.', '?', '!']) && c.3.iter().map(|t| t.chars().count()).sum::<usize>() >= 20)
+            }
+            _ => true,
+        };
+        if new_cue {
+            cues.push((w.start, w.end, w.speaker.clone(), vec![w.text.clone()]));
+        } else if let Some(c) = cues.last_mut() {
+            c.1 = w.end;
+            c.3.push(w.text.clone());
+        }
+        prev = Some(w);
+    }
+    let stamp = |t: Q| {
+        let ms = (t * Q::from_integer(1000)).round().to_integer().max(0);
+        let sep = if vtt { '.' } else { ',' };
+        format!("{:02}:{:02}:{:02}{sep}{:03}", ms / 3_600_000, ms / 60_000 % 60, ms / 1000 % 60, ms % 1000)
+    };
+    let mut out = String::new();
+    if vtt {
+        out.push_str("WEBVTT\n\n");
+    }
+    for (i, (start, end, speaker, text)) in cues.iter().enumerate() {
+        // A caption never runs into the next one.
+        let end = cues.get(i + 1).map_or(*end, |n| (*end).min(n.0));
+        if !vtt {
+            out.push_str(&format!("{}\n", i + 1));
+        }
+        out.push_str(&format!("{} --> {}\n", stamp(*start), stamp(end)));
+        let lines = wrap(&text.join(" "));
+        let body = lines.join("\n");
+        match speaker.as_deref().filter(|_| vtt) {
+            Some(s) => out.push_str(&format!("<v {s}>{body}\n\n")),
+            None => out.push_str(&format!("{body}\n\n")),
+        }
+    }
+    out
+}
+
+/// Break caption text into lines of at most [`CUE_LINE_CHARS`] at spaces,
+/// balanced when it takes two.
+fn wrap(text: &str) -> Vec<String> {
+    if text.chars().count() <= CUE_LINE_CHARS {
+        return vec![text.to_owned()];
+    }
+    // The space nearest the middle that leaves both halves short enough.
+    let mid = text.chars().count() / 2;
+    let split = text
+        .char_indices()
+        .filter(|(_, c)| *c == ' ')
+        .map(|(i, _)| i)
+        .filter(|&i| text[..i].chars().count() <= CUE_LINE_CHARS && text[i + 1..].chars().count() <= CUE_LINE_CHARS)
+        .min_by_key(|&i| text[..i].chars().count().abs_diff(mid));
+    if let Some(i) = split {
+        return vec![text[..i].to_owned(), text[i + 1..].to_owned()];
+    }
+    // Too long for two: fill lines greedily (a word longer than a line stays whole).
+    let mut lines: Vec<String> = Vec::new();
+    for word in text.split(' ') {
+        match lines.last_mut() {
+            Some(l) if l.chars().count() + 1 + word.chars().count() <= CUE_LINE_CHARS => {
+                l.push(' ');
+                l.push_str(word);
+            }
+            _ => lines.push(word.to_owned()),
+        }
+    }
+    lines
 }
 
 fn timeline(project: &OpenProject, p: &GetParams) -> Result<TimelineTranscript, RpcError> {
@@ -368,9 +478,9 @@ fn timeline(project: &OpenProject, p: &GetParams) -> Result<TimelineTranscript, 
         }
     }
     words.sort_by_key(|w| w.0);
-    let text = (p.format == Format::Text).then(|| {
+    let text = p.format.is_text().then(|| {
         let lines: Vec<Line> = words.iter().map(|(t0, w, t1)| Line::word(w.start.clone(), *t0, *t1, &w.text, w.speaker.as_deref())).collect();
-        render_lines(&lines)
+        p.format.render(&lines)
     });
     let words = (p.format == Format::Words).then(|| words.into_iter().map(|(_, w, _)| w).collect());
     Ok(TimelineTranscript { revision: project.revision(), words, text, missing })
@@ -417,6 +527,29 @@ mod tests {
         let w = |s: i64, t: &str, sp: &str| Line::word(format!("{s}s"), Q::from_integer(s), Q::from_integer(s) + Q::new(1, 2), t, Some(sp));
         let text = render_lines(&[w(0, "hi", "S0"), w(1, "there.", "S0"), w(2, "yes", "S1"), w(5, "later", "S1")]);
         assert_eq!(text, "[0s] S0: hi there.\n[2s] S1: yes\n[5s] S1: later\n");
+    }
+
+    #[test]
+    fn captions_group_words_into_timed_cues() {
+        let w = |ms: i64, t: &str, sp: &str| Line::word(String::new(), Q::new(ms, 1000), Q::new(ms + 400, 1000), t, Some(sp));
+        let words = [w(0, "Hello", "S0"), w(450, "there.", "S0"), w(1000, "Welcome", "S1"), w(4500, "back", "S1")];
+        let srt = render_cues(&words, false);
+        assert_eq!(
+            srt,
+            "1\n00:00:00,000 --> 00:00:00,850\nHello there.\n\n\
+             2\n00:00:01,000 --> 00:00:01,400\nWelcome\n\n\
+             3\n00:00:04,500 --> 00:00:04,900\nback\n\n"
+        );
+        let vtt = render_cues(&words, true);
+        assert!(vtt.starts_with("WEBVTT\n\n00:00:00.000 --> 00:00:00.850\n<v S0>Hello there.\n"), "{vtt}");
+
+        // Long runs split at two 42-character lines, balanced at a space.
+        let many: Vec<Line> = (0..30).map(|i| Line::word(String::new(), Q::new(i * 200, 1000), Q::new(i * 200 + 150, 1000), "word", None)).collect();
+        let srt = render_cues(&many, false);
+        for line in srt.lines().filter(|l| l.starts_with("word")) {
+            assert!(line.chars().count() <= CUE_LINE_CHARS, "{line}");
+        }
+        assert!(srt.contains("\n2\n"), "more than one cue: {srt}");
     }
 
     #[test]
