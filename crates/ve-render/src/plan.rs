@@ -178,7 +178,11 @@ pub fn plan(tl: &Timeline, span: Span) -> Result<Plan, RenderError> {
                 effects += clip.metadata.ve.effects.len();
             }
             if let Some(seg) = segment(tl, track, clip, (start, end), (s, e), (head, tail), &mut out.warnings)? {
-                transforms += usize::from(track.kind == TrackKind::Video && seg.transform.is_some());
+                // Only where the transform changes the picture: a fade at a
+                // clip's ends must not send the rest of a long clip to the
+                // (much slower) GPU path.
+                let moves = seg.transform.as_ref().is_some_and(|t| changes_picture(t, seg.start - seg.clip_start, seg.end - seg.clip_start));
+                transforms += usize::from(track.kind == TrackKind::Video && moves);
                 texts += usize::from(seg.text.is_some());
                 segs.push(seg);
             }
@@ -229,6 +233,39 @@ pub fn plan(tl: &Timeline, span: Span) -> Result<Plan, RenderError> {
         ));
     }
     Ok(out)
+}
+
+/// Whether `t` draws the picture any differently from the default placement
+/// at some time in `[from, to)` (seconds from the clip's start). A fade that
+/// is fully opaque between its keys over the range does not: the ffmpeg path
+/// draws those frames exactly as the GPU would.
+///
+/// Conservative with keyframes: a field counts as unchanged only when every
+/// key that shapes the curve over the range (the one at or before `from`,
+/// those inside, the one at or after `to`) holds the default value and none
+/// of them has a graph-editor handle (a handle can bulge between equal keys).
+pub(crate) fn changes_picture(t: &Transform, from: Q, to: Q) -> bool {
+    let mut base = t.clone();
+    base.keyframes.clear();
+    for (field, keys) in &t.keyframes {
+        if keys.is_empty() {
+            continue;
+        }
+        let Some(default) = Transform::default_of(field) else { return true };
+        // Keyframes override the field's own value.
+        base.set(field, default);
+        let mut keys: Vec<_> = keys.iter().collect();
+        keys.sort_by_key(|k| k.t.seconds());
+        let lo = keys.iter().rposition(|k| k.t.seconds() <= from).unwrap_or(0);
+        let hi = keys.iter().position(|k| k.t.seconds() >= to).unwrap_or(keys.len() - 1).max(lo);
+        let shaping = &keys[lo..=hi];
+        let at_default = shaping.iter().all(|k| k.v.as_f64().is_some_and(|v| (v - default).abs() <= 1e-9));
+        let no_handles = shaping.windows(2).all(|w| w[0].out.is_none() && w[1].r#in.is_none());
+        if !(at_default && no_handles) {
+            return true;
+        }
+    }
+    !base.is_identity()
 }
 
 /// The part `[s, e)` of `clip` (which spans `clip_range` on the timeline) as
@@ -311,4 +348,49 @@ fn segment(
         still,
         text: None,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn key(secs: i64, v: f64) -> serde_json::Value {
+        json!({"t": {"OTIO_SCHEMA": "RationalTime.1", "rate": 1.0, "value": secs}, "v": v})
+    }
+
+    fn transform(v: serde_json::Value) -> Transform {
+        serde_json::from_value(v).unwrap()
+    }
+
+    fn s(n: i64) -> Q {
+        Q::from_integer(n)
+    }
+
+    /// A one-second fade in and out on a 100 s clip: only the ends differ.
+    #[test]
+    fn fades_change_only_the_ends() {
+        let t = transform(json!({"keyframes": {"opacity": [key(0, 0.0), key(1, 1.0), key(99, 1.0), key(100, 0.0)]}}));
+        assert!(changes_picture(&t, s(0), s(4)));
+        assert!(!changes_picture(&t, s(1), s(5)));
+        assert!(!changes_picture(&t, s(40), s(44)));
+        assert!(!changes_picture(&t, s(95), s(99)));
+        assert!(changes_picture(&t, s(96), s(100)));
+    }
+
+    #[test]
+    fn static_values_and_handles_count() {
+        assert!(changes_picture(&transform(json!({"x": 0.02})), s(10), s(14)));
+        assert!(changes_picture(&transform(json!({"blend": "screen"})), s(10), s(14)));
+        assert!(!changes_picture(&transform(json!({"opacity": 0.5, "keyframes": {"opacity": [key(0, 1.0)]}})), s(10), s(14)));
+        // Equal keys with a graph handle may bulge in between.
+        let mut a = key(0, 1.0);
+        a["out"] = json!({"x": 0.3, "y": -0.5});
+        let t = transform(json!({"keyframes": {"opacity": [a, key(20, 1.0)]}}));
+        assert!(changes_picture(&t, s(5), s(9)));
+        // Past the last key the value holds.
+        let t = transform(json!({"keyframes": {"scale": [key(0, 2.0), key(5, 1.0)]}}));
+        assert!(!changes_picture(&t, s(10), s(14)));
+        assert!(changes_picture(&t, s(3), s(7)));
+    }
 }
