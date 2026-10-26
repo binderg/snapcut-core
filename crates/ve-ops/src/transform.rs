@@ -8,7 +8,7 @@ use indexmap::IndexMap;
 use schemars::JsonSchema;
 use serde::Serialize;
 use ve_model::Id;
-use ve_model::meta::{ClipMeta, Keyframe, Transform};
+use ve_model::meta::{BLEND_MODES, ClipMeta, Keyframe, Transform};
 use ve_model::otio::{Composable, Timeline, TrackKind};
 
 use crate::EditError;
@@ -29,6 +29,8 @@ pub struct TransformReport {
     pub crop_right: f64,
     pub crop_top: f64,
     pub crop_bottom: f64,
+    /// Blend mode (`normal` unless set).
+    pub blend: String,
     /// Fields with keyframes (their value above is the one without keyframes).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub keyframed: Vec<String>,
@@ -47,6 +49,7 @@ impl TransformReport {
             crop_right: t.crop_right,
             crop_top: t.crop_top,
             crop_bottom: t.crop_bottom,
+            blend: t.blend.clone(),
             keyframed: t.keyframes.iter().filter(|(_, k)| !k.is_empty()).map(|(n, _)| n.clone()).collect(),
         }
     }
@@ -61,6 +64,8 @@ pub struct TransformChange {
     pub values: Vec<(String, Option<f64>)>,
     /// Field -> keyframes, replacing that field's keyframes; an empty list removes them.
     pub keyframes: IndexMap<String, Vec<Keyframe>>,
+    /// New blend mode; `Some(None)` puts it back to `normal`.
+    pub blend: Option<Option<String>>,
 }
 
 /// Why a value is out of range, or `None` if it is fine.
@@ -107,6 +112,13 @@ pub fn set(tl: &Timeline, clip: &Id, change: &TransformChange) -> Result<(Timeli
             return Err(EditError::new(e));
         }
         t.set(field, v);
+    }
+    if let Some(b) = &change.blend {
+        let b = b.as_deref().unwrap_or("normal");
+        if !BLEND_MODES.contains(&b) {
+            return Err(EditError::new(format!("blend `{b}`: use one of {}", BLEND_MODES.join(", "))));
+        }
+        t.blend = b.to_owned();
     }
     for (field, keys) in &change.keyframes {
         if Transform::default_of(field).is_none() {

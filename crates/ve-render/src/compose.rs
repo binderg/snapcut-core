@@ -149,6 +149,7 @@ pub(crate) fn layout(seg: &Segment, t: Q, src: Source, canvas: &Canvas) -> (Rect
         crop: [tf.crop_left as f32, tf.crop_top as f32, tf.crop_right as f32, tf.crop_bottom as f32],
         rotation: (tf.rotation as f32).to_radians(),
         opacity: tf.opacity as f32,
+        blend: ve_model::meta::BLEND_MODES.iter().position(|m| *m == tf.blend).unwrap_or(0) as u32,
     };
     // Decode at the largest size the clip reaches (so animated scale keeps one
     // warm decoder), never above the source's own size.

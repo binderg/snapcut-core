@@ -233,7 +233,12 @@ skip a disabled video track (hidden) or audio track (muted).
 Transforms (`ve-ops::transform`, `edit.set_transform`, CLI `ve transform`):
 `metadata.ve.clip.transform` holds x/y (canvas fractions from center), scale
 (of the fitted size), rotation (degrees clockwise), opacity, crop per side,
-with keyframes like effects (clip-relative, moved on split). GPU only: the
+`blend` (one of `ve_model::meta::BLEND_MODES`: W3C set plus add, subtract,
+linear-burn), with keyframes like effects (clip-relative, moved on split).
+Blend modes mix in sRGB-encoded values (Photoshop), not linear light: before
+each blended picture the output so far is copied as its backdrop
+(`gpu::draw_blended`); frames with only normal pictures keep the one-pass
+draw, so they still match the ffmpeg path. GPU only: the
 rect shader draws a quad (crop as a UV sub-rect, rotation on the CPU,
 opacity in the fragment), and the default placement stays 0-diff vs ffmpeg.
 Decode size follows the largest scale the clip reaches, capped at the

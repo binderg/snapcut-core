@@ -208,3 +208,35 @@ async fn keyframe_curves() {
     let doc = fs::read_to_string(dir.join("edit/project.otio")).unwrap();
     assert!(doc.contains("\"ease\": \"ease-in\"") && doc.contains("\"out\""), "saved");
 }
+
+/// Blend modes: a multiplied V2 does not hide V1 (`render.layers` says it is
+/// drawn over), the frame renders on the GPU, and unknown modes are refused.
+#[tokio::test]
+async fn blend_modes() {
+    let dir = scratch("blend");
+    make_talk(&dir.join("talk.mp4"));
+    let r = ve_daemon::build_registry();
+    ok(&r, "project.init", json!({"path": dir.join("edit"), "fps": "25", "width": 160, "height": 120})).await;
+    let asset = ok(&r, "media.import", json!({"paths": [dir.join("talk.mp4")], "base_rev": 0})).await["assets"][0]["id"].clone();
+    ok(&r, "edit.insert", json!({"asset": asset, "base_rev": 1})).await;
+    ok(&r, "track.add", json!({"kind": "video", "base_rev": 2})).await;
+    let ins = ok(&r, "edit.insert", json!({"asset": asset, "at": "0s", "track": "V2", "overwrite": true, "base_rev": 3})).await;
+    let top = ins["created"].as_array().unwrap().iter().find(|c| c["track"] == "V2").unwrap()["id"].clone();
+    let frame = ok(&r, "render.layers", json!({"at": "1s"})).await;
+    assert_eq!(frame["visible"], json!(["V2"]), "normal V2 hides V1: {frame}");
+
+    let t = ok(&r, "edit.set_transform", json!({"clip": top, "blend": "multiply", "base_rev": 4})).await;
+    assert_eq!(t["blend"], "multiply", "{t}");
+    let frame = ok(&r, "render.layers", json!({"at": "1s"})).await;
+    assert_eq!(frame["visible"], json!(["V1", "V2"]), "multiplied V2 shows V1 through: {frame}");
+    assert_eq!(frame["layers"][1]["transform"]["blend"], "multiply", "{frame}");
+    let f = ok(&r, "render.frame", json!({"at": "1s", "width": 160, "format": "png"})).await;
+    assert!(f["data"].as_str().is_some_and(|d| !d.is_empty()));
+
+    let resp = call(&r, "edit.set_transform", json!({"clip": top, "blend": "burnt", "base_rev": 5})).await;
+    assert!(resp["error"]["message"].as_str().unwrap().contains("color-burn"), "{resp}");
+    // null puts it back to normal, which drops the transform from the document.
+    ok(&r, "edit.set_transform", json!({"clip": top, "blend": null, "base_rev": 5})).await;
+    let frame = ok(&r, "render.layers", json!({"at": "1s"})).await;
+    assert_eq!(frame["visible"], json!(["V2"]), "{frame}");
+}

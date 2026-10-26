@@ -176,7 +176,7 @@ FFmpeg handles decode and encode; a wgpu compositor handles everything between. 
 1. **Resolve.** For time `t`, walk the timeline and list active clips per track, their source times (after speed and trims), effects with keyframes evaluated at `t`, and any transition in progress.
 2. **Decode.** Pull source frames through a decoder pool. Each source keeps a warm decoder with a GOP-aware seek (seek to the prior keyframe, decode forward). Proxies are used when the request is low-res.
 3. **Upload.** Frames go to GPU textures in a linear working color space (convert from Rec.709/sRGB on the way in).
-4. **Composite.** Per track: apply the clip's effect stack (shader passes), then the transform; blend tracks bottom to top; apply transitions where two clips overlap.
+4. **Composite.** Per track: apply the clip's effect stack (shader passes), then the transform; blend tracks bottom to top; apply transitions where two clips overlap. Normal layers use premultiplied "over" in linear light; a clip's blend mode (W3C Compositing set plus add, subtract, linear burn) reads what is drawn below it and mixes in sRGB-encoded values, as Photoshop does. Blend modes are core because an effect only sees its own clip, never the layers under it.
 5. **Output.** Convert back to the output color space. Preview: read back to RGBA and encode as JPEG/PNG. Export: hand frames to the encoder.
 6. **Audio.** Separate graph: decode, resample (`rubato`), apply gain and fades, mix tracks, measure loudness (`ebur128`). Export muxes audio with video; preview uses the audio clock as master.
 

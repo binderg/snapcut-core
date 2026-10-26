@@ -243,6 +243,11 @@ enum Command {
         /// Remove a field's keyframes: `--clear-keys opacity`.
         #[arg(long = "clear-keys")]
         clear: Vec<String>,
+        /// How it mixes with the tracks below: normal, multiply, screen, overlay, darken, lighten,
+        /// color-dodge, color-burn, hard-light, soft-light, difference, exclusion, hue,
+        /// saturation, color, luminosity, add, subtract, linear-burn.
+        #[arg(long)]
+        blend: Option<String>,
         /// Start from the default before applying the rest.
         #[arg(long)]
         reset: bool,
@@ -863,8 +868,11 @@ fn plan(cmd: &Command, json_output: bool) -> Plan {
         }
         Command::Volume { clip, db, unlinked } => m("edit.set_volume", json!({ "clip": clip, "db": db, "linked": !unlinked })),
         Command::Unlink { clip } => m("edit.unlink", json!({ "clip": clip })),
-        Command::Transform { clip, x, y, scale, rotation, opacity, crop_left, crop_right, crop_top, crop_bottom, keys, clear, reset } => {
+        Command::Transform { clip, x, y, scale, rotation, opacity, crop_left, crop_right, crop_top, crop_bottom, keys, clear, blend, reset } => {
             let mut p = json!({ "clip": clip, "reset": reset });
+            if let Some(b) = blend {
+                p["blend"] = json!(b);
+            }
             for (k, v) in [
                 ("x", x),
                 ("y", y),

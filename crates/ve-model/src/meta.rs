@@ -315,10 +315,45 @@ pub struct Transform {
     pub crop_top: f64,
     #[serde(default, skip_serializing_if = "is_zero")]
     pub crop_bottom: f64,
+    /// How the picture mixes with what is below it: one of [`BLEND_MODES`].
+    #[serde(default = "normal", skip_serializing_if = "is_normal")]
+    pub blend: String,
     /// Field name -> keyframes (values are numbers). Times count from the
     /// clip's start on the timeline, as for effects.
     #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
     pub keyframes: IndexMap<String, Vec<Keyframe>>,
+}
+
+/// Blend modes a clip can use, in the order the compositor numbers them:
+/// the W3C Compositing set, then add, subtract and linear burn.
+pub const BLEND_MODES: [&str; 19] = [
+    "normal",
+    "multiply",
+    "screen",
+    "overlay",
+    "darken",
+    "lighten",
+    "color-dodge",
+    "color-burn",
+    "hard-light",
+    "soft-light",
+    "difference",
+    "exclusion",
+    "hue",
+    "saturation",
+    "color",
+    "luminosity",
+    "add",
+    "subtract",
+    "linear-burn",
+];
+
+fn normal() -> String {
+    "normal".to_owned()
+}
+
+fn is_normal(s: &str) -> bool {
+    s == "normal"
 }
 
 impl Default for Transform {
@@ -333,6 +368,7 @@ impl Default for Transform {
             crop_right: 0.0,
             crop_top: 0.0,
             crop_bottom: 0.0,
+            blend: normal(),
             keyframes: IndexMap::new(),
         }
     }

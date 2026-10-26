@@ -83,7 +83,7 @@ dB down.
 | `effects` | Each effect with every param's value at this frame: keyframes evaluated, defaults filled in. `missing: true` when the effect is not installed (then only what the clip stores) |
 | `transition` | Mid-transition: `{id, transition, name, params, progress (0-1), role: "outgoing"/"incoming", with: <other clip>}`. The track then has two layers |
 | `alpha` | The asset's transparency ([../model/project.md](../model/project.md#asset)) |
-| `solid` | Hides what is under it wherever it is drawn |
+| `solid` | Hides what is under it wherever it is drawn (opaque, full opacity, normal blend, no effect, square to the canvas) |
 | `visibility` | `full`, `partial` or `hidden`; `visible_percent` is the share of its on-canvas area that shows |
 | `covered_by` | Tracks above whose solid layers hide some of it |
 | `overlapped_by` | Tracks above drawn over it that may let it show through |

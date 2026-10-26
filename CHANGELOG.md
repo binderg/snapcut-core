@@ -38,6 +38,11 @@ not final (the command is `ve`).
   any length, with transparency kept: logos, title cards, photos.
 - Per-clip transforms (position, scale, rotation, opacity, crop) with
   keyframes.
+- Blend modes per clip (`blend` on `edit.set_transform`, `ve transform
+  --blend`): the W3C set (multiply, screen, overlay, darken, lighten,
+  color dodge/burn, hard/soft light, difference, exclusion, hue,
+  saturation, color, luminosity) plus add, subtract and linear burn, mixed
+  in sRGB values as Photoshop does. GPU only.
 - Every edit: optimistic concurrency (`base_rev`), dry runs, an actor, and
   a JSON Patch result. Undo and redo per actor, undo groups, history that
   survives restarts.

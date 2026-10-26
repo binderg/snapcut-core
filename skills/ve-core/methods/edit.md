@@ -166,11 +166,21 @@ bottom layer; see [tracks.md](tracks.md)).
 | `opacity` | 1 | 0 invisible to 1 opaque |
 | `crop_left`, `crop_right`, `crop_top`, `crop_bottom` | 0 | Fraction cut off that side (0 to 0.99; opposite sides under 0.99 together). The rest stays where it was |
 | `keyframes` | | Field -> `[{"at": "1s", "value": 0.5, "ease": "linear"}]`, times from the clip's start; replaces that field's keys, `[]` removes them. `ease` (`ease-in-out`, `cubic-bezier(...)`, `hold`, ...) and `in`/`out` handles shape the curve: [Keyframe curves](effects.md#keyframe-curves) |
+| `blend` | `normal` | How the picture mixes with the tracks below: `normal`, `multiply`, `screen`, `overlay`, `darken`, `lighten`, `color-dodge`, `color-burn`, `hard-light`, `soft-light`, `difference`, `exclusion`, `hue`, `saturation`, `color`, `luminosity`, `add`, `subtract`, `linear-burn`. `null` puts back `normal` |
 | `reset` | false | Start from the default before applying the rest |
 
 Fields left out keep their value; `null` puts one back to its default.
 A transform back at the default (and no keyframes) is removed from the
-document. Keyframes move with the right half when a clip is split.
+document.
+
+**Blend modes** follow the W3C Compositing spec (the modes CSS
+`mix-blend-mode` and Photoshop use), plus `add`, `subtract` and
+`linear-burn`. They mix in sRGB-encoded values, as Photoshop does, so
+`multiply` and `screen` look the way editors expect; opacity then fades the
+result back toward what is below. A clip with a blend mode never hides the
+tracks under it (`render.layers` lists them as drawn over). During a
+transition the mix keeps the blend mode when both clips share it, else it is
+drawn normally. Blending is GPU only, like the rest of the transform. Keyframes move with the right half when a clip is split.
 
 ```json
 {"clip": "clip_9c1e", "scale": 0.35, "x": 0.3, "y": 0.3,

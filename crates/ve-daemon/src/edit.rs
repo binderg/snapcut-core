@@ -288,8 +288,8 @@ pub fn unlink(p: &mut OpenProject, a: UnlinkParams) -> Result<Committed<EditRepo
 }
 
 /// A field that may be missing (keep), `null` (reset to its default) or a number.
-fn nullable<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Option<f64>>, D::Error> {
-    Option::<f64>::deserialize(d).map(Some)
+fn nullable<'de, D: serde::Deserializer<'de>, T: Deserialize<'de>>(d: D) -> Result<Option<Option<T>>, D::Error> {
+    Option::<T>::deserialize(d).map(Some)
 }
 
 mutation_params! {
@@ -325,6 +325,12 @@ mutation_params! {
         /// Field -> keyframes (times from the clip's start), replacing that field's keyframes; `[]` removes them.
         #[serde(default)]
         pub keyframes: Option<std::collections::BTreeMap<String, Vec<crate::fx::KeyframeArg>>>,
+        /// How the picture mixes with the tracks below: `normal` (default), `multiply`, `screen`,
+        /// `overlay`, `darken`, `lighten`, `color-dodge`, `color-burn`, `hard-light`, `soft-light`,
+        /// `difference`, `exclusion`, `hue`, `saturation`, `color`, `luminosity`, `add`, `subtract`,
+        /// `linear-burn`. `null` puts back `normal`.
+        #[serde(default, deserialize_with = "nullable")]
+        pub blend: Option<Option<String>>,
         /// Start from the default (fitted, centered, opaque, no keyframes) before applying the rest.
         #[serde(default)]
         pub reset: bool,
@@ -347,6 +353,7 @@ pub fn set_transform(p: &mut OpenProject, a: SetTransformParams) -> Result<Commi
         reset: a.reset,
         values: fields.into_iter().filter_map(|(k, v)| v.map(|v| (k.to_owned(), v))).collect(),
         keyframes: a.keyframes.as_ref().map(|k| crate::fx::keyframes(p, k)).transpose()?.unwrap_or_default(),
+        blend: a.blend.clone(),
     };
     commit(p, a.mutation(), "edit.set_transform", |tl| transform::set(tl, &a.clip, &change).map_err(edit_err))
 }

@@ -128,7 +128,7 @@ pub struct LayerInfo {
     /// The asset's transparency: `none`, `opaque`, `transparent` or `unmeasured`.
     pub alpha: Alpha,
     /// Hides what is under it wherever it is drawn: no see-through pixels,
-    /// full opacity, no effect, not mid-transition, square to the canvas.
+    /// full opacity, normal blend, no effect, not mid-transition, square to the canvas.
     pub solid: bool,
     /// `full`, `partial` or `hidden`.
     pub visibility: String,

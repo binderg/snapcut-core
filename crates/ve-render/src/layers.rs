@@ -7,7 +7,7 @@
 //! timeline can be scanned ([`spans`]). Coverage is worked out from
 //! rectangles and is conservative: a layer only counts as hiding what is
 //! under it when it is surely opaque there (no alpha, or a still measured
-//! opaque; full opacity; no effect; not mid-transition; not turned at an odd
+//! opaque; full opacity; normal blend; no effect; not mid-transition; not turned at an odd
 //! angle). Anything else is reported as drawn over, never as hiding.
 
 use std::collections::HashMap;
@@ -363,7 +363,7 @@ fn layer(ctx: &Ctx<'_>, track: &str, track_index: usize, seg: &Segment, at: Q, d
         effects,
         transition: None,
         alpha,
-        solid: alpha.is_solid() && xf.opacity >= 1.0 && seg.effects.is_empty() && square,
+        solid: alpha.is_solid() && xf.opacity >= 1.0 && xf.blend == 0 && seg.effects.is_empty() && square,
         visibility: Visibility::Full,
         visible_percent: 100,
         covered_by: Vec::new(),
