@@ -68,13 +68,8 @@ pub fn check_value(field: &str, v: f64) -> Option<String> {
     if !v.is_finite() {
         return Some(format!("{field} must be a finite number"));
     }
-    let (lo, hi, what) = match field {
-        "x" | "y" => (-10.0, 10.0, "canvas sizes from the center"),
-        "scale" => (0.0, 20.0, "times the fitted size"),
-        "rotation" => (-3600.0, 3600.0, "degrees"),
-        "opacity" => (0.0, 1.0, "(0 invisible, 1 opaque)"),
-        f if f.starts_with("crop_") => (0.0, 0.99, "of the picture"),
-        _ => return Some(format!("no transform field `{field}`; fields are {}", Transform::FIELDS.join(", "))),
+    let Some((lo, hi, what)) = Transform::range(field) else {
+        return Some(format!("no transform field `{field}`; fields are {}", Transform::FIELDS.join(", ")));
     };
     (!(lo..=hi).contains(&v)).then(|| format!("{field} {v} is out of range: {lo} to {hi} {what}"))
 }
@@ -245,7 +240,7 @@ mod tests {
         assert!(set(&tl, &v, &values(&[("x", Some(f64::NAN))])).is_err());
         assert!(set(&tl, &v, &values(&[("crop_left", Some(0.6)), ("crop_right", Some(0.5))])).is_err());
         let bad_key = TransformChange {
-            keyframes: [("opacity".to_owned(), vec![Keyframe { t: RationalTime::from_frames(0, Rate::integer(25)), v: "x".into(), ease: "linear".into() }])]
+            keyframes: [("opacity".to_owned(), vec![Keyframe { t: RationalTime::from_frames(0, Rate::integer(25)), v: "x".into(), ease: "linear".into(), r#in: None, out: None }])]
                 .into_iter()
                 .collect(),
             ..Default::default()
@@ -256,7 +251,7 @@ mod tests {
     #[test]
     fn split_moves_keyframes_with_the_right_half() {
         let (tl, v, _) = project();
-        let key = |f: i64, v: f64| Keyframe { t: RationalTime::from_frames(f, Rate::integer(25)), v: v.into(), ease: "linear".into() };
+        let key = |f: i64, v: f64| Keyframe { t: RationalTime::from_frames(f, Rate::integer(25)), v: v.into(), ease: "linear".into(), r#in: None, out: None };
         let change = TransformChange { keyframes: [("x".to_owned(), vec![key(0, 0.0), key(200, 1.0)])].into_iter().collect(), ..Default::default() };
         let (tl, _) = set(&tl, &v, &change).unwrap();
         let (tl, r) = split(&tl, &Split { at: Q::from_integer(4), clips: vec![], tracks: vec![], linked: true }).unwrap();

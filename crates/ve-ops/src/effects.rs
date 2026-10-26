@@ -456,5 +456,5 @@ pub fn remove_transition(tl: &Timeline, id: &Id) -> Result<(Timeline, Transition
 
 /// Keyframe at `t` seconds from the clip start.
 pub fn keyframe(t: Q, v: Value, ease: Option<String>, rate: ve_model::time::Rate) -> Keyframe {
-    Keyframe { t: RationalTime { value: t * rate.as_ratio(), rate }, v, ease: ease.unwrap_or_else(|| "linear".into()) }
+    Keyframe { t: RationalTime { value: t * rate.as_ratio(), rate }, v, ease: ease.unwrap_or_else(|| "linear".into()), r#in: None, out: None }
 }

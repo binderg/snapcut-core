@@ -97,11 +97,45 @@ halves and shifts the right half's keyframes.
 | --- | --- | --- |
 | `id` | required | The effect instance, `fx_...` |
 | `params` | object | Merged in; `null` resets a param to its default |
-| `keyframes` | object | `{"amount": [{"at": "0s", "value": 0}, {"at": "2s", "value": 1, "ease": "linear"}]}`. Replaces that param's keyframes; `[]` removes them. `at` counts from the clip's start. `ease`: `linear` (default) or `hold` |
+| `keyframes` | object | `{"amount": [{"at": "0s", "value": 0}, {"at": "2s", "value": 1, "ease": "linear"}]}`. Replaces that param's keyframes; `[]` removes them. `at` counts from the clip's start. `ease` and the `in`/`out` handles shape the curve ([Keyframe curves](#keyframe-curves)) |
 | `index` | int | Move it in the stack |
 
 Keyframed params hold their first value before the first key and their
-last after the last; numbers and colors interpolate linearly.
+last after the last; between keys they follow the curve below.
+
+## Keyframe curves
+
+The same keyframe shape is used by effect params, transition params and
+transform fields (`edit.set_transform`). A segment runs from one key to the
+next, and is shaped by the first key's `ease` or by handles, never both:
+
+```json
+{"at": "0s", "value": 0, "ease": "ease-out"}
+{"at": "0s", "value": 1, "ease": "cubic-bezier(0.3, 1.6, 0.6, 1)"}
+{"at": "0s", "value": 1, "out": {"x": 0.3, "y": 0.8}}
+{"at": "2s", "value": 1, "in": {"x": 0.3, "y": 0.8}}
+```
+
+| `ease` | |
+| --- | --- |
+| `linear` | Default |
+| `hold` | Keep this value until the next key |
+| `ease`, `ease-in`, `ease-out`, `ease-in-out` | The CSS curves |
+| `cubic-bezier(x1, y1, x2, y2)` | CSS timing function; `x1`, `x2` from 0 to 1, `y` may leave 0 to 1 to overshoot |
+
+An ease changes timing only, so it works on numbers, vectors and colors.
+
+**Handles** are for graph editors. `out` on a key and `in` on the next key
+are the two inner control points of a cubic bezier through the two values:
+`x` is a fraction of the segment's duration (0 to 1, not a time, so the
+curve keeps its shape when keys move) and `y` is an offset from that key's
+value, in the param's units (a number, or a list for vectors). A missing
+handle sits on the straight line (`x` 1/3), so one handle alone bends only
+its end, and both missing is linear. Because `y` is an offset, a segment
+between two equal values can still bulge.
+
+Curves may overshoot a param's range; the renderer clamps to it (opacity
+stays 0 to 1). True/false values switch at the next key whatever the curve.
 
 ## `effect.remove` (edit)
 

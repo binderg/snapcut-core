@@ -48,6 +48,9 @@ not final (the command is `ve`).
   validation with errors on the author's line, and a GPU test render.
 - Built in: blur, desaturate, exposure, tint, vignette; dissolve, dip,
   slide, wipe transitions. Project effects via `fx.define`.
+- Keyframe curves for effect params, transitions and transforms: linear,
+  hold, the CSS eases and `cubic-bezier(...)`, or graph-editor `in`/`out`
+  handles per key (`--key opacity@0s=0:ease-out` on the CLI).
 
 ### Rendering and export
 

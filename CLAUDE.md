@@ -300,7 +300,8 @@ GPU test render (3 frames, 2 s, NaN check). Built-ins in `plugins/core/effects`
 `<project>/effects/`. GPU pipeline: prep to Rgba16Float premultiplied
 linear, effect ping-pong at clip size, transitions on canvas-size textures,
 then composite (still 0-diff vs ffmpeg). Methods `fx.list|define`,
-`effect.add|set|remove` (keyframes linear/hold), `transition.add|set|remove`
+`effect.add|set|remove` (keyframe curves in `ve-model::curve`: linear, hold, CSS eases and
+`cubic-bezier`, or graph-editor `in`/`out` handles; renders clamp overshoot), `transition.add|set|remove`
 (OTIO Transition, handle checks, align center/start/end). GPU export
 (`ve-render::compose::encode`): every frame is composited on the GPU and piped
 as raw RGBA into one ffmpeg run (`ffmpeg::feed`, a writer thread behind a

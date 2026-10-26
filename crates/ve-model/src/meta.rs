@@ -384,6 +384,23 @@ impl Transform {
     pub fn default_of(field: &str) -> Option<f64> {
         Self::default().get(field)
     }
+
+    /// A field's allowed range and what its unit means.
+    pub fn range(field: &str) -> Option<(f64, f64, &'static str)> {
+        Some(match field {
+            "x" | "y" => (-10.0, 10.0, "canvas sizes from the center"),
+            "scale" => (0.0, 20.0, "times the fitted size"),
+            "rotation" => (-3600.0, 3600.0, "degrees"),
+            "opacity" => (0.0, 1.0, "(0 invisible, 1 opaque)"),
+            "crop_left" | "crop_right" | "crop_top" | "crop_bottom" => (0.0, 0.99, "of the picture"),
+            _ => return None,
+        })
+    }
+
+    /// `v` within the field's range (keyframe curves may overshoot it).
+    pub fn clamp(field: &str, v: f64) -> f64 {
+        Self::range(field).map_or(v, |(lo, hi, _)| v.clamp(lo, hi))
+    }
 }
 
 fn is_zero(v: &f64) -> bool {
@@ -420,8 +437,15 @@ pub struct EffectInstance {
 pub struct Keyframe {
     pub t: RationalTime,
     pub v: Value,
+    /// Shape of the segment to the next key (see [`crate::curve`]).
     #[serde(default = "linear", skip_serializing_if = "is_linear")]
     pub ease: String,
+    /// Graph-editor handle on the incoming side.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub r#in: Option<crate::curve::Handle>,
+    /// Graph-editor handle on the outgoing side.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub out: Option<crate::curve::Handle>,
 }
 
 fn linear() -> String {

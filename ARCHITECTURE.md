@@ -115,7 +115,7 @@ The project file is an OpenTimelineIO (OTIO) JSON document. Anything OTIO cannot
 }
 ```
 
-Keyframe times are relative to the clip's start on the timeline. Speed is a rational (`[num, den]`) for the same reason time is.
+Keyframe times are relative to the clip's start on the timeline. Each segment between keys is linear, held, eased (`ease-in-out`, CSS `cubic-bezier(...)`) or shaped by graph-editor handles (`out` on one key, `in` on the next: `x` a fraction of the segment, `y` an offset in value units); the math is `ve-model::curve`, shared by the renderer and any client. Speed is a rational (`[num, den]`) for the same reason time is.
 
 ## Protocol
 

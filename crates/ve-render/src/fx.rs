@@ -170,6 +170,14 @@ pub struct Param {
     pub animatable: bool,
 }
 
+impl Param {
+    /// `x` within the param's range (keyframe curves may overshoot it).
+    pub fn clamp(&self, x: f64) -> f64 {
+        let x = self.min.map_or(x, |m| x.max(m));
+        self.max.map_or(x, |m| x.min(m))
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Origin {
@@ -452,17 +460,18 @@ impl Fx {
                 ParamType::Color => {
                     let c = color(&v);
                     for (i, x) in c.iter().enumerate() {
-                        let x = if i < 3 { srgb_to_linear(*x) } else { *x };
+                        let x = x.clamp(0.0, 1.0);
+                        let x = if i < 3 { srgb_to_linear(x) } else { x };
                         out.extend_from_slice(&x.to_le_bytes());
                     }
                 }
                 ParamType::Vec(n) => {
                     for i in 0..n as usize {
-                        let x = v.get(i).and_then(Value::as_f64).unwrap_or(0.0) as f32;
+                        let x = p.clamp(v.get(i).and_then(Value::as_f64).unwrap_or(0.0)) as f32;
                         out.extend_from_slice(&x.to_le_bytes());
                     }
                 }
-                ParamType::Number => out.extend_from_slice(&(v.as_f64().unwrap_or(0.0) as f32).to_le_bytes()),
+                ParamType::Number => out.extend_from_slice(&(p.clamp(v.as_f64().unwrap_or(0.0)) as f32).to_le_bytes()),
                 ParamType::Bool => out.extend_from_slice(&(if v.as_bool().unwrap_or(false) { 1.0f32 } else { 0.0 }).to_le_bytes()),
                 ParamType::Image => {}
             }
@@ -536,48 +545,9 @@ fn first_position(report: &str) -> Option<(usize, usize)> {
     Some((parts.next()?.parse().ok()?, parts.next()?.parse().ok()?))
 }
 
-/// Value of a keyframed param at `t`: holds before the first and after the
-/// last key; linear between keys (`ease: "hold"` keeps the earlier value).
+/// Value of a keyframed param at `t` (eases and handles: [`ve_model::curve`]).
 pub fn interpolate(keys: &[Keyframe], t: Q) -> Value {
-    let mut sorted: Vec<&Keyframe> = keys.iter().collect();
-    sorted.sort_by_key(|k| k.t);
-    let first = sorted[0];
-    if t <= first.t.seconds() {
-        return first.v.clone();
-    }
-    for w in sorted.windows(2) {
-        let (a, b) = (w[0], w[1]);
-        let (ta, tb) = (a.t.seconds(), b.t.seconds());
-        if t < tb {
-            if a.ease == "hold" || tb <= ta {
-                return a.v.clone();
-            }
-            let f = ((t - ta) / (tb - ta)).to_f64();
-            return lerp(&a.v, &b.v, f);
-        }
-    }
-    sorted.last().map_or(Value::Null, |k| k.v.clone())
-}
-
-trait ToF64 {
-    fn to_f64(self) -> f64;
-}
-
-impl ToF64 for Q {
-    fn to_f64(self) -> f64 {
-        *self.numer() as f64 / *self.denom() as f64
-    }
-}
-
-fn lerp(a: &Value, b: &Value, f: f64) -> Value {
-    match (a, b) {
-        (Value::Number(x), Value::Number(y)) => {
-            let (x, y) = (x.as_f64().unwrap_or(0.0), y.as_f64().unwrap_or(0.0));
-            Value::from(x + (y - x) * f)
-        }
-        (Value::Array(x), Value::Array(y)) if x.len() == y.len() => Value::Array(x.iter().zip(y).map(|(x, y)| lerp(x, y, f)).collect()),
-        _ => if f < 1.0 { a.clone() } else { b.clone() },
-    }
+    ve_model::curve::interpolate(keys, t)
 }
 
 fn parse_params(schema: &Value) -> Result<Vec<Param>, FxError> {
@@ -958,8 +928,8 @@ mod tests {
         keys.insert(
             "amount".to_owned(),
             vec![
-                Keyframe { t: RationalTime::from_frames(0, r), v: Value::from(0.0), ease: "linear".into() },
-                Keyframe { t: RationalTime::from_frames(10, r), v: Value::from(1.0), ease: "linear".into() },
+                Keyframe { t: RationalTime::from_frames(0, r), v: Value::from(0.0), ease: "linear".into(), r#in: None, out: None },
+                Keyframe { t: RationalTime::from_frames(10, r), v: Value::from(1.0), ease: "linear".into(), r#in: None, out: None },
             ],
         );
         let b = fx.pack(&Map::new(), &keys, Q::new(1, 4));

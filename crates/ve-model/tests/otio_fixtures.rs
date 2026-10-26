@@ -130,8 +130,8 @@ fn timeline_built_in_rust_matches_python_output() {
         keyframes: [(
             "exposure".to_owned(),
             vec![
-                Keyframe { t: RationalTime::zero(ntsc()), v: json!(0.0), ease: "linear".into() },
-                Keyframe { t: RationalTime::from_frames(30, ntsc()), v: json!(0.3), ease: "ease-out".into() },
+                Keyframe { t: RationalTime::zero(ntsc()), v: json!(0.0), ease: "linear".into(), r#in: None, out: None },
+                Keyframe { t: RationalTime::from_frames(30, ntsc()), v: json!(0.3), ease: "ease-out".into(), r#in: None, out: None },
             ],
         )]
         .into(),

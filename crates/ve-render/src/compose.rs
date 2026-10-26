@@ -123,7 +123,7 @@ pub(crate) fn transform_at(seg: &Segment, t: Q) -> Option<Transform> {
     let local = t - seg.clip_start;
     for (field, keys) in tr.keyframes.iter().filter(|(_, k)| !k.is_empty()) {
         if let Some(x) = crate::fx::interpolate(keys, local).as_f64() {
-            v.set(field, x);
+            v.set(field, ve_model::meta::Transform::clamp(field, x));
         }
     }
     Some(v)

@@ -639,7 +639,7 @@ fn transforms_place_and_fade_a_layer() {
     let (next, r) = edit::insert(&tl, &insert("asset_blue", Some("V2"), Some(fr(0)), None, true)).unwrap();
     tl = next;
     let top = r.created[0].id.clone();
-    let key = |f: i64, v: f64| Keyframe { t: RationalTime::from_frames(f, Rate::integer(FPS)), v: v.into(), ease: "linear".into() };
+    let key = |f: i64, v: f64| Keyframe { t: RationalTime::from_frames(f, Rate::integer(FPS)), v: v.into(), ease: "linear".into(), r#in: None, out: None };
     let change = TransformChange {
         reset: false,
         values: vec![("scale".into(), Some(0.5)), ("x".into(), Some(0.25)), ("y".into(), Some(0.25))],

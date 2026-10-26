@@ -236,7 +236,8 @@ enum Command {
         crop_top: Option<f64>,
         #[arg(long)]
         crop_bottom: Option<f64>,
-        /// `field@time=value` keyframes (time from the clip start): `--key opacity@0s=0 --key opacity@1s=1`.
+        /// `field@time=value[:ease]` keyframes (time from the clip start): `--key opacity@0s=0:ease-out --key opacity@1s=1`.
+        /// Eases: linear, hold, ease, ease-in, ease-out, ease-in-out, cubic-bezier(x1,y1,x2,y2).
         #[arg(long = "key", value_name = "FIELD@TIME=VALUE")]
         keys: Vec<String>,
         /// Remove a field's keyframes: `--clear-keys opacity`.
@@ -472,7 +473,7 @@ enum EffectCmd {
         /// `name=value`; `name=null` resets to the default.
         #[arg(long = "param", value_name = "NAME=VALUE")]
         params: Vec<String>,
-        /// `name@time=value` keyframes (time from the clip start). Replaces that param's keys.
+        /// `name@time=value[:ease]` keyframes (time from the clip start). Replaces that param's keys.
         #[arg(long = "key", value_name = "NAME@TIME=VALUE")]
         keys: Vec<String>,
         /// Remove a param's keyframes.
@@ -543,12 +544,21 @@ fn key_map(keys: &[String], clear: &[String], json_output: bool) -> Value {
     for k in keys {
         let parsed = k.split_once('@').and_then(|(name, rest)| rest.split_once('=').map(|(t, v)| (name, t, v)));
         let Some((name, t, v)) = parsed else {
-            usage_error(format!("--key `{k}`: use NAME@TIME=VALUE, e.g. amount@1s=0.5"), json_output)
+            usage_error(format!("--key `{k}`: use NAME@TIME=VALUE[:EASE], e.g. amount@1s=0.5 or amount@0s=0:ease-out"), json_output)
+        };
+        // An ease may follow the value: `opacity@0s=0:ease-out`.
+        let (v, ease) = match v.split_once(':') {
+            Some((v, e)) => (v, Some(e.trim())),
+            None => (v, None),
         };
         let value = serde_json::from_str(v.trim()).unwrap_or_else(|_| Value::String(v.trim().to_owned()));
         let list = m.entry(name.trim().to_owned()).or_insert_with(|| json!([]));
         if let Some(a) = list.as_array_mut() {
-            a.push(json!({ "at": t.trim(), "value": value }));
+            let mut key = json!({ "at": t.trim(), "value": value });
+            if let Some(e) = ease {
+                key["ease"] = json!(e);
+            }
+            a.push(key);
         }
     }
     for c in clear {

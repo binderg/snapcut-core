@@ -170,3 +170,41 @@ async fn frame_cache_survives_unrelated_edits() {
     }
     assert!(cached(&ok(&r, "render.frame", frame("f10")).await));
 }
+
+/// Keyframe curves: eases and graph-editor handles shape a transform, read
+/// back as data through `render.layers`; bad shapes are refused.
+#[tokio::test]
+async fn keyframe_curves() {
+    let dir = scratch("curves");
+    make_talk(&dir.join("talk.mp4"));
+    let r = ve_daemon::build_registry();
+    ok(&r, "project.init", json!({"path": dir.join("edit"), "fps": "25", "width": 160, "height": 120})).await;
+    let asset = ok(&r, "media.import", json!({"paths": [dir.join("talk.mp4")], "base_rev": 0})).await["assets"][0]["id"].clone();
+    let ins = ok(&r, "edit.insert", json!({"asset": asset, "base_rev": 1})).await;
+    let video = ins["created"].as_array().unwrap().iter().find(|c| c["track"] == "V1").unwrap()["id"].clone();
+    let opacity = async |at: &str| ok(&r, "render.layers", json!({"at": at})).await["layers"][0]["opacity"].as_f64().unwrap();
+
+    // ease-in: behind linear at the middle, exact at the ends.
+    let keys = json!({"opacity": [{"at": "0s", "value": 0, "ease": "ease-in"}, {"at": "2s", "value": 1}]});
+    ok(&r, "edit.set_transform", json!({"clip": video, "keyframes": keys, "base_rev": 2})).await;
+    assert!(opacity("f25").await < 0.4);
+    assert_eq!(opacity("f50").await, 1.0);
+
+    // Handles: an overshooting bump between two equal values, clamped to the range at render.
+    let keys = json!({"scale": [{"at": "0s", "value": 1, "out": {"x": 0.3, "y": 0.8}}, {"at": "2s", "value": 1, "in": {"x": 0.3, "y": 0.8}}]});
+    ok(&r, "edit.set_transform", json!({"clip": video, "keyframes": keys, "base_rev": 3})).await;
+    let w = ok(&r, "render.layers", json!({"at": "f25"})).await["layers"][0]["rect"]["w"].as_f64().unwrap();
+    assert!(w > 160.0 * 1.4, "bump at the middle: {w}");
+
+    // An ease and handles on one segment, or a bad ease, are refused.
+    let both = json!({"x": [{"at": "0s", "value": 0, "ease": "ease-out", "out": {"x": 0.2, "y": 0}}, {"at": "1s", "value": 1}]});
+    let resp = call(&r, "edit.set_transform", json!({"clip": video, "keyframes": both, "base_rev": 4})).await;
+    assert!(resp["error"]["message"].as_str().unwrap().contains("one or the other"), "{resp}");
+    let bad = json!({"x": [{"at": "0s", "value": 0, "ease": "springy"}, {"at": "1s", "value": 1}]});
+    let resp = call(&r, "edit.set_transform", json!({"clip": video, "keyframes": bad, "base_rev": 4})).await;
+    assert!(resp["error"]["message"].as_str().unwrap().contains("cubic-bezier"), "{resp}");
+
+    // The eases are saved in the project as written.
+    let doc = fs::read_to_string(dir.join("edit/project.otio")).unwrap();
+    assert!(doc.contains("\"ease\": \"ease-in\"") && doc.contains("\"out\""), "saved");
+}

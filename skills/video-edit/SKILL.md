@@ -92,7 +92,7 @@ Exit codes: 0 ok, 2 bad arguments (the message says what), 3 stale revision,
 | Tracks: list, rename, reorder, remove | `ve track list`, `ve track rename V2 Broll`, `ve track move V2 0`, `ve track rm V2 [--force]` |
 | Hide a video track / mute an audio track | `ve track hide V2`, `ve track show V2` (`mute` / `unmute` are the same) |
 | Picture in picture (bottom right, 35%) | `ve transform clip_9c1e --scale 0.35 --x 0.3 --y 0.3` |
-| Fade a layer in, move, rotate, crop | `ve transform clip_9c1e --key opacity@0s=0 --key opacity@0.5s=1`, `--rotation 90`, `--crop-left 0.2`; `--reset` puts it back |
+| Fade a layer in, move, rotate, crop | `ve transform clip_9c1e --key opacity@0s=0:ease-out --key opacity@0.5s=1` (eases: `ease-in`, `ease-out`, `ease-in-out`, `hold`, `cubic-bezier(x1,y1,x2,y2)`), `--rotation 90`, `--crop-left 0.2`; `--reset` puts it back |
 | Effects available | `ve fx list` |
 | Effect on a clip | `ve effect add clip_7f3a core.color/exposure --param stops=0.5`; change with `ve effect set fx_1a2b --param stops=1`, animate with `--key stops@0s=0 --key stops@2s=1`; `ve effect rm fx_1a2b` |
 | Transition on a cut | `ve transition add --at 00:00:42:10 [--type core.transition/wipe] [--duration 15f]`; `ve transition rm tr_1a2b` |

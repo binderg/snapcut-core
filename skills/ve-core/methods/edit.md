@@ -165,7 +165,7 @@ bottom layer; see [tracks.md](tracks.md)).
 | `rotation` | 0 | Degrees, clockwise, around the picture's center |
 | `opacity` | 1 | 0 invisible to 1 opaque |
 | `crop_left`, `crop_right`, `crop_top`, `crop_bottom` | 0 | Fraction cut off that side (0 to 0.99; opposite sides under 0.99 together). The rest stays where it was |
-| `keyframes` | | Field -> `[{"at": "1s", "value": 0.5, "ease": "linear"}]`, times from the clip's start; replaces that field's keys, `[]` removes them. `ease` is `linear` or `hold` |
+| `keyframes` | | Field -> `[{"at": "1s", "value": 0.5, "ease": "linear"}]`, times from the clip's start; replaces that field's keys, `[]` removes them. `ease` (`ease-in-out`, `cubic-bezier(...)`, `hold`, ...) and `in`/`out` handles shape the curve: [Keyframe curves](effects.md#keyframe-curves) |
 | `reset` | false | Start from the default before applying the rest |
 
 Fields left out keep their value; `null` puts one back to its default.

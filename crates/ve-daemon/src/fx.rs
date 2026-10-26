@@ -263,28 +263,35 @@ pub struct KeyframeArg {
     /// Time from the clip's start (`0s`, `1.5s`, `f12`, `00:00:02:00`).
     pub at: String,
     pub value: Value,
-    /// `linear` (default) or `hold` (keep this value until the next key).
+    /// Shape of the segment to the next key: `linear` (default), `hold`
+    /// (keep this value until the next key), `ease`, `ease-in`, `ease-out`,
+    /// `ease-in-out`, or `cubic-bezier(x1, y1, x2, y2)` as in CSS.
     #[serde(default)]
     pub ease: Option<String>,
+    /// Graph-editor handle into this key: `{"x": fraction of the segment, "y": offset from this value}`.
+    #[serde(default, rename = "in")]
+    pub r#in: Option<ve_model::curve::Handle>,
+    /// Graph-editor handle out of this key, same shape. A segment uses an ease or handles, not both.
+    #[serde(default)]
+    pub out: Option<ve_model::curve::Handle>,
 }
 
 pub(crate) fn keyframes(p: &OpenProject, keys: &std::collections::BTreeMap<String, Vec<KeyframeArg>>) -> Result<IndexMap<String, Vec<ve_model::meta::Keyframe>>, RpcError> {
     let rate = p.timeline.output_rate();
     keys.iter()
         .map(|(name, list)| {
-            let ks = list
+            let mut ks = list
                 .iter()
                 .map(|k| {
-                    if let Some(e) = &k.ease
-                        && e != "linear"
-                        && e != "hold"
-                    {
-                        return Err(invalid(format!("ease `{e}`: use linear or hold")));
-                    }
                     let t = parse_time("at", &k.at, rate)?;
-                    Ok(effects::keyframe(t, k.value.clone(), k.ease.clone(), rate))
+                    let mut kf = effects::keyframe(t, k.value.clone(), k.ease.as_ref().map(|e| e.trim().to_owned()), rate);
+                    kf.r#in = k.r#in.clone();
+                    kf.out = k.out.clone();
+                    Ok(kf)
                 })
                 .collect::<Result<Vec<_>, RpcError>>()?;
+            ks.sort_by_key(|k| k.t);
+            ve_model::curve::check(&ks).map_err(|e| invalid(format!("keyframes for `{name}`: {e}")))?;
             Ok((name.clone(), ks))
         })
         .collect()
