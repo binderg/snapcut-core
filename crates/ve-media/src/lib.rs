@@ -279,7 +279,12 @@ const STANDARD_RATES: [(i64, i64); 12] = [
 /// stays right on variable-frame-rate phone video, where the average drifts
 /// (`2040/89`). If it is not a standard rate (some containers report a
 /// timebase like 90000), use the average snapped to the nearest standard
-/// rate within 0.5%, else the average as is.
+/// rate within 0.5%. Failing that, a plain capture rate such as `30303/1000`
+/// (a screen recorder's), else the average rounded to 1/1000 fps.
+///
+/// Never the raw average of a variable-rate file: it is a fraction like
+/// `2049785829/67642943`, and clip times in such a rate overflow `Ratio<i64>`
+/// as soon as a few of them are added up.
 fn nominal_rate(r: Option<Q>, avg: Option<Q>) -> Option<Rate> {
     let standard = |q: Q| STANDARD_RATES.iter().map(|&(n, d)| Q::new(n, d)).find(|s| *s == q);
     if let Some(s) = r.and_then(standard) {
@@ -290,7 +295,18 @@ fn nominal_rate(r: Option<Q>, avg: Option<Q>) -> Option<Rate> {
         let diff = q - *s;
         diff * Q::from_integer(200) < *s && -diff * Q::from_integer(200) < *s
     });
-    let q = close.unwrap_or(q);
+    if let Some(s) = close {
+        return Some(Rate::new(*s.numer(), *s.denom()));
+    }
+    // A capture rate is plausible when it is a real frame rate (not a
+    // timebase like 90000) written with a small denominator.
+    let plausible = |q: &Q| *q.denom() <= 1001 && *q <= Q::from_integer(240);
+    let q = match r.filter(plausible) {
+        Some(r) => r,
+        None if plausible(&q) => q,
+        // An odd average: keep 1/1000 fps, plenty for timing, small enough to add up.
+        None => Q::new((q * Q::from_integer(1000)).round().to_integer().max(1), 1000),
+    };
     Some(Rate::new(*q.numer(), *q.denom()))
 }
 
@@ -415,6 +431,22 @@ mod tests {
     fn odd_timebase_rate_falls_back_to_snapped_average() {
         let m = summarize(&json!({"streams": [video_stream("90000/1", "29999/1001")]})).unwrap();
         assert_eq!(m.video.unwrap().rate, Rate::new(30_000, 1001));
+    }
+
+    /// A screen recording at 30.303 fps (a real file): the average is a huge
+    /// fraction that made clip times overflow, so the capture rate is kept.
+    #[test]
+    fn odd_vfr_rate_keeps_the_plain_capture_rate() {
+        let m = summarize(&json!({"streams": [video_stream("30303/1000", "2049785829/67642943")]})).unwrap();
+        let v = m.video.unwrap();
+        assert_eq!(v.rate, Rate::new(30_303, 1000));
+        assert!(v.vfr);
+    }
+
+    #[test]
+    fn odd_average_with_a_timebase_rate_is_rounded() {
+        let m = summarize(&json!({"streams": [video_stream("90000/1", "2049785829/67642943")]})).unwrap();
+        assert_eq!(m.video.unwrap().rate, Rate::new(30_303, 1000));
     }
 
     #[test]
