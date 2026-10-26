@@ -22,8 +22,16 @@ JSON-RPC 2.0 protocol. Primary use case: an agent editing real footage
 - **`ui.*` methods are temporary core code that must move to a UI plugin.**
   Anything only a human editor needs (media thumbnails, later filmstrips)
   lives in `ve-daemon::ui` behind the `ui-api` feature and is documented in
-  `skills/ve-ui/`, never `ve-core`. When `ve-plugin` has a host, move it into
-  `plugins/` and delete the feature. Don't add agent-facing methods there.
+  `skills/ve-ui/`, never `ve-core`. Don't add agent-facing methods there.
+  The plugin host exists (Oct 25 2026) but the move waits (decided Oct 25
+  2026): `ui.thumbnail` reads frames from asset files with ffmpeg, so as a
+  Python plugin the editor's thumbnails would need Python and an extra
+  plugin search path; `ui.cache_hint`/`ui.cache_status` drive the
+  in-process frame cache and warm decoders, which a separate process
+  cannot; `ui.move_push` would become several revisions instead of one.
+  Move them when the editor can ship a plugin that needs no Python (e.g. a
+  small Rust binary bundled with the Tauri app); the editor's own plugins
+  go in `ui/plugins/` (inside the untracked `ui/`).
 - **Agent interface is CLI + skills (SKILL.md), not MCP.** Don't build MCP. Don't
   make choices that would prevent someone else writing a thin MCP shim from `describe`.
 - **Standards over invention:** OTIO JSON project, JSON-RPC 2.0 + OpenRPC,
