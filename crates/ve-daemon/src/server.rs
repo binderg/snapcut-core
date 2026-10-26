@@ -221,15 +221,16 @@ impl Connection {
             *self.events.lock().unwrap_or_else(|e| e.into_inner()) = Some(task);
         }
         let (ctx, out) = (self.ctx.clone(), self.out.clone());
+        // Kept so a call that panics still gets an error with its own id;
+        // with `id: null` the caller could never match it and would wait forever.
+        let id = call_id(&raw);
         tokio::spawn(async move {
             let registry = ctx.registry.clone();
             let handle = tokio::runtime::Handle::current();
-            let resp = tokio::task::spawn_blocking(move || handle.block_on(registry.dispatch(&raw)))
-                .await
-                .unwrap_or_else(|e| {
-                    json!({ "jsonrpc": "2.0", "id": null, "error": { "code": -32603, "message": format!("call panicked: {e}") } })
-                        .to_string()
-                });
+            let resp = tokio::task::spawn_blocking(move || handle.block_on(registry.dispatch(&raw))).await.unwrap_or_else(|e| match id {
+                Some(id) => panicked(id, &e),
+                None => String::new(),
+            });
             ctx.touch();
             // Notifications (no id) get no response.
             if !resp.trim().is_empty() {
@@ -247,6 +248,29 @@ impl Drop for Connection {
         self.ctx.active.fetch_sub(1, Ordering::SeqCst);
         self.ctx.touch();
     }
+}
+
+/// The id of a request, `None` for a notification (or a message that is not JSON).
+fn call_id(raw: &str) -> Option<Value> {
+    #[derive(Deserialize)]
+    struct Head {
+        id: Option<Value>,
+    }
+    serde_json::from_str::<Head>(raw).ok().and_then(|h| h.id)
+}
+
+/// The error reply for a call whose handler panicked. The panic message says
+/// what went wrong (an overflow, an index out of range), so it is passed on.
+fn panicked(id: Value, e: &tokio::task::JoinError) -> String {
+    let message = match e.is_panic() {
+        true => {
+            let text = e.to_string();
+            tracing::error!("call {id} panicked: {text}");
+            format!("internal error (the engine hit a bug while handling this call): {text}")
+        }
+        false => format!("call cancelled: {e}"),
+    };
+    json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32603, "message": message } }).to_string()
 }
 
 /// Cheap check of a message's method without a full parse of large params.
@@ -360,6 +384,25 @@ mod tests {
         for bad in ["null", "http://example.com", "http://localhost.evil.com", "http://127.0.0.1.nip.io", "file://", "ws://localhost"] {
             assert!(!is_loopback_origin(bad), "{bad}");
         }
+    }
+
+    #[test]
+    fn reads_call_ids() {
+        assert_eq!(call_id(r#"{"jsonrpc":"2.0","id":7,"method":"render.frame"}"#), Some(json!(7)));
+        assert_eq!(call_id(r#"{"jsonrpc":"2.0","id":"a","method":"x"}"#), Some(json!("a")));
+        assert_eq!(call_id(r#"{"jsonrpc":"2.0","method":"x"}"#), None);
+        assert_eq!(call_id("not json"), None);
+    }
+
+    /// A handler that panics must still answer with the caller's id, or the
+    /// caller (the editor's player) waits forever.
+    #[tokio::test]
+    async fn panicking_call_answers_with_its_id() {
+        let e = tokio::task::spawn_blocking(|| panic!("attempt to multiply with overflow")).await.unwrap_err();
+        let reply: Value = serde_json::from_str(&panicked(json!(42), &e)).unwrap();
+        assert_eq!(reply["id"], json!(42));
+        assert_eq!(reply["error"]["code"], json!(-32603));
+        assert!(reply["error"]["message"].as_str().unwrap().contains("internal error"), "{reply}");
     }
 
     #[test]

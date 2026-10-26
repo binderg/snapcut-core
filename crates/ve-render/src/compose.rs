@@ -330,7 +330,9 @@ pub fn frame_key(tl: &Timeline, at: Q, width: u32, format: ImageFormat, fx: &Reg
     if f < 0 || Q::from_integer(f) / r >= end {
         return Err(RenderError::Invalid(format!("no frame there: the timeline has {} frames", (end * r).to_integer())));
     }
-    Ok(frame_keys(tl, f, f + 1, width, format, fx)?.remove(0))
+    frame_keys(tl, f, f + 1, width, format, fx)?
+        .pop()
+        .ok_or_else(|| RenderError::Invalid(format!("no frame there: frame {f} is past the end of the timeline")))
 }
 
 /// [`frame_key`] for every frame in `[from, to)` (frame numbers at the
