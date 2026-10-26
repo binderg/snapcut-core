@@ -396,7 +396,13 @@ enum PluginCmd {
     /// Installed plugins, their commands, and whether their secrets are set.
     List,
     /// Copy a plugin folder into your plugin folder (replacing an older copy of it).
-    Install { folder: PathBuf },
+    /// Refused when its `engine` range or `protocol` does not match this engine.
+    Install {
+        folder: PathBuf,
+        /// Install even if it does not match this engine.
+        #[arg(long)]
+        force: bool,
+    },
     /// API keys plugins need, kept in the OS keychain (never in the project).
     #[command(subcommand)]
     Secret(SecretCmd),
@@ -1743,7 +1749,7 @@ async fn plugin_command(cli: &Cli, cmd: &PluginCmd) -> anyhow::Result<()> {
             }
             print_plugins(&list);
         }
-        PluginCmd::Install { folder } => match ve_plugin::install(&absolute(folder)) {
+        PluginCmd::Install { folder, force } => match ve_plugin::install(&absolute(folder), &ve_daemon::ENGINE_VERSION.parse().expect("engine version is semver"), *force) {
             Ok((m, dest)) => {
                 if cli.json {
                     println!("{}", json!({ "id": m.id, "version": m.version.to_string(), "dir": dest }));

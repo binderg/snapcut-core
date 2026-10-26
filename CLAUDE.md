@@ -54,6 +54,11 @@ JSON-RPC 2.0 protocol. Primary use case: an agent editing real footage
 - **One method registry** (`ve-protocol::Registry` on jsonrpsee `RpcModule`);
   every transport calls `Registry::dispatch(raw_json)`. OpenRPC is generated
   from the same registrations, so it cannot drift.
+- **Protocol stability (Oct 25 2026):** additive within a protocol major.
+  `ve-daemon/tests/protocol.rs` diffs stable methods against
+  `tests/fixtures/protocol-<major>.json` and fails on removals, new required
+  params or narrowed types; record additions with `VE_UPDATE_PROTOCOL=1`.
+  Retire methods with `Registry::deprecate` (works until the next major).
 - **Optimistic concurrency:** mutating calls carry `base_rev`; `stale_revision`
   on conflict. Every call carries an `actor` (user/agent/plugin). Dry runs on all
   mutations. Plugin callbacks run inside a transaction (`txn_id`) so a plugin's

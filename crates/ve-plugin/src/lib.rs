@@ -39,8 +39,16 @@ pub fn user_dir() -> Option<PathBuf> {
 
 /// Copy a plugin folder into the user's plugin folder (replacing an older
 /// copy of the same plugin). Returns where it went.
-pub fn install(src: &Path) -> Result<(Manifest, PathBuf), PluginError> {
+/// Copy a plugin folder into the user plugin folder. A plugin whose
+/// `engine` range or `protocol` does not match `engine` is refused unless
+/// `force` (it would be skipped on load anyway).
+pub fn install(src: &Path, engine: &semver::Version, force: bool) -> Result<(Manifest, PathBuf), PluginError> {
     let manifest = Manifest::load(src)?;
+    if let Err(why) = manifest.compatible(engine)
+        && !force
+    {
+        return Err(PluginError::Other(format!("{why}; not installed (--force installs it anyway, but this engine will not load it)")));
+    }
     let root = user_dir().ok_or_else(|| PluginError::Other("no user data folder on this system; set VE_PLUGINS_DIR".into()))?;
     let dest = root.join(&manifest.id);
     let same = std::fs::canonicalize(src).ok().zip(std::fs::canonicalize(&dest).ok()).is_some_and(|(a, b)| a == b);

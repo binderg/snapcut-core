@@ -45,7 +45,12 @@ pub(crate) fn document(title: &str, version: &str, specs: &[MethodSpec], with_de
 }
 
 fn method(spec: &MethodSpec) -> Method {
-    method_from(spec.name, spec.summary, spec.mutates, &spec.params, spec.result.clone())
+    let mut m = method_from(spec.name, spec.summary, spec.mutates, &spec.params, spec.result.clone());
+    if let Some(instead) = spec.deprecated {
+        m.deprecated = Some(true);
+        m.description = Some(format!("Deprecated: {instead}. It keeps working until protocol {}.", crate::PROTOCOL_VERSION + 1));
+    }
+    m
 }
 
 /// A method added at run time (plugins), as an OpenRPC method object.

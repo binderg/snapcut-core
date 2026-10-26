@@ -108,6 +108,12 @@ not final (the command is `ve`).
 
 ### Protocol and tools
 
+- Protocol stability: within a protocol major, changes are additive; a
+  snapshot test fails the build on a breaking change. Deprecated methods are
+  marked in `describe` and keep working until the next major.
+- `ve plugin install` refuses plugins whose `engine` range or `protocol`
+  does not match (`--force` to copy anyway).
+
 - JSON-RPC 2.0 over a local socket and a WebSocket (token, loopback only),
   one daemon per project started on demand, `project.changed` events.
 - OpenRPC document generated from the code (`ve describe`).
