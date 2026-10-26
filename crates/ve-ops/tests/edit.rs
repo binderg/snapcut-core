@@ -829,3 +829,51 @@ fn still_images_get_a_default_length_and_no_media_limit() {
     let (tl, _) = edit::insert(&tl, &p2).unwrap();
     assert_eq!(rows(&tl).iter().find(|r| r.id != id).unwrap().dur, fr(7));
 }
+
+/// Text clips are ordinary clips: they go on a free track without pushing
+/// anything, split and trim like any clip (and extend freely: no media
+/// length), and keep their words through edits.
+#[test]
+fn text_clips_place_split_and_trim() {
+    use ve_model::text::{TextClip, TextStyle};
+    let tl = insert_all(&project());
+    let text = |s: &str| TextClip { text: s.into(), style: TextStyle::default() };
+    let add = edit::AddText {
+        items: vec![edit::TextItem { text: text("Title"), start: sec(1), duration: sec(2), transform: None }],
+        new_track_name: Some("Text".into()),
+        ..Default::default()
+    };
+    let before = rows(&tl);
+    let (tl, rep) = edit::add_text(&tl, &add).unwrap();
+    assert_eq!(rep.created[0].track, "Text");
+    let after = rows(&tl);
+    assert!(before.iter().all(|b| after.iter().any(|a| a.id == b.id && a.start == b.start && a.dur == b.dur)), "nothing else moved");
+    let id = rep.created[0].id.clone();
+
+    // Again over the same span: the Text track is busy, so another track is made.
+    let (tl2, rep2) = edit::add_text(&tl, &add).unwrap();
+    assert_ne!(rep2.created[0].track, "Text");
+    // Naming the busy track is refused unless overwriting.
+    let named = edit::AddText { track: Some("Text".into()), ..add.clone() };
+    assert!(edit::add_text(&tl, &named).unwrap_err().0.contains("overwrite"));
+    drop(tl2);
+
+    let (tl, rep) = edit::split(&tl, &Split { at: sec(2), clips: vec![id.clone()], tracks: vec![], linked: true }).unwrap();
+    let right = rep.created[0].id.clone();
+    let words = |tl: &Timeline, id: &Id| {
+        tl.tracks.children.iter().find_map(|c| match c {
+            Composable::Track(t) => t.children.iter().find_map(|i| match i {
+                Composable::Clip(c) if clip_id(c) == Some(id) => c.text().map(|t| t.unwrap().text),
+                _ => None,
+            }),
+            _ => None,
+        })
+    };
+    assert_eq!(words(&tl, &right).as_deref(), Some("Title"));
+    // Longer than anything a file could give: text has no media end.
+    let (tl, _) = edit::trim(&tl, &Trim { clip: right.clone(), in_delta: None, out_delta: Some(sec(600)), roll: false, linked: true }).unwrap();
+    let (tl, _) = edit::set_text(&tl, &right, &edit::TextChange { text: Some("New".into()), ..Default::default() }).unwrap();
+    assert_eq!(words(&tl, &right).as_deref(), Some("New"));
+    assert_eq!(words(&tl, &id).as_deref(), Some("Title"), "the left half keeps its words");
+    assert!(edit::set_text(&tl, &ids_of(&rows(&tl), TrackKind::Audio)[0], &edit::TextChange::default()).unwrap_err().0.contains("not a text clip"));
+}

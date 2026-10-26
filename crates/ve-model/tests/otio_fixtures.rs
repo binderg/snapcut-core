@@ -203,3 +203,27 @@ markers:
 "#;
     assert_eq!(ve_model::summary::summary(&tl), expected);
 }
+
+/// Text clips (`GeneratorReference` with `ve.text`), as the engine writes
+/// them; `scripts/otio_roundtrip.py` checks Python OTIO keeps them too.
+#[test]
+fn text_clip_fixture_round_trips_and_reads() {
+    let original = fixture("text_clips.otio");
+    let timeline: Timeline = serde_json::from_value(original.clone()).unwrap();
+    assert_eq!(serde_json::to_value(&timeline).unwrap(), original);
+    let texts: Vec<String> = timeline
+        .tracks
+        .children
+        .iter()
+        .filter_map(|c| match c {
+            ve_model::Composable::Track(t) => Some(t),
+            _ => None,
+        })
+        .flat_map(|t| t.children.iter())
+        .filter_map(|c| match c {
+            ve_model::Composable::Clip(c) => c.text().map(|t| t.unwrap().text),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(texts, ["Big news", "Lower third: Jane Doe"]);
+}

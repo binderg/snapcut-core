@@ -1371,3 +1371,178 @@ pub fn report_for(tl: &Timeline) -> EditReport {
         .unwrap_or(Q::from_integer(0));
     EditReport { duration: tc(end, rate), ..Default::default() }
 }
+
+// --- text clips ---
+
+/// One text clip to put on the timeline.
+#[derive(Debug, Clone)]
+pub struct TextItem {
+    pub text: ve_model::text::TextClip,
+    /// Timeline start and length, seconds (snapped to frames).
+    pub start: Q,
+    pub duration: Q,
+    /// Placement; `None` is centered at its own size.
+    pub transform: Option<ve_model::meta::Transform>,
+}
+
+/// [`add_text`]: where the clips go.
+#[derive(Debug, Clone, Default)]
+pub struct AddText {
+    pub items: Vec<TextItem>,
+    /// A video track by name or ID. Without it: the topmost video track that
+    /// is free over every item, else a new video track on top.
+    pub track: Option<String>,
+    /// Name for a new track, if one is made (used when no track has it yet).
+    pub new_track_name: Option<String>,
+    /// On a named track, replace what is under the items instead of refusing.
+    pub overwrite: bool,
+    /// On a named track, first remove its text clips over the whole span of
+    /// the items (re-making captions replaces the old ones).
+    pub clear_text: bool,
+}
+
+/// Default length of a text clip.
+pub const TEXT_SECONDS: i64 = 3;
+
+/// Put text clips on a video track. Never moves other content: the clips
+/// go into free space (or, with `overwrite`, over what is there).
+pub fn add_text(tl: &Timeline, p: &AddText) -> Result<(Timeline, EditReport)> {
+    if p.items.is_empty() {
+        return Err(EditError::new("no text to add"));
+    }
+    for it in &p.items {
+        it.text.style.check().map_err(EditError::new)?;
+    }
+    // Frame-snapped ranges; a caption never runs into the next one.
+    let rate = tl.output_rate();
+    let snap = |t: Q| (t * rate.as_ratio()).round() / rate.as_ratio();
+    let mut ranges: Vec<(Q, Q)> = p.items.iter().map(|it| (snap(it.start), snap(it.start + it.duration))).collect();
+    let mut order: Vec<usize> = (0..ranges.len()).collect();
+    order.sort_by_key(|&i| ranges[i].0);
+    for w in order.windows(2) {
+        let next = ranges[w[1]].0;
+        if ranges[w[0]].1 > next {
+            ranges[w[0]].1 = next;
+        }
+    }
+    let zero = Q::from_integer(0);
+    if let Some((s, _)) = ranges.iter().find(|r| r.0 < zero) {
+        return Err(EditError::new(format!("text at {} is before the timeline start", seconds_text(*s))));
+    }
+
+    let d0 = Doc::new(tl)?;
+    let (lo, hi) = (ranges.iter().map(|r| r.0).min().unwrap_or(zero), ranges.iter().map(|r| r.1).max().unwrap_or(zero));
+    let is_text = |it: &Placed| it.clip().is_some_and(|c| c.text().is_some());
+    let cleared = |it: &Placed| p.clear_text && p.track.is_some() && is_text(it) && it.start < hi && lo < it.end();
+    let free = |d: &Doc, lane: usize| {
+        ranges.iter().filter(|r| r.1 > r.0).all(|&(a, b)| {
+            !d.lane_ref(lane)
+                .items
+                .iter()
+                .any(|it| !matches!(it.item, Composable::Gap(_)) && !cleared(it) && it.start < b && a < it.end().max(it.start))
+        })
+    };
+    let (mut d, lane) = match &p.track {
+        Some(r) => {
+            let lane = d0.find_track(r)?;
+            if d0.kind(lane) != TrackKind::Video {
+                return Err(EditError::new(format!("track {} is an audio track; text goes on a video track", d0.track_name(lane))));
+            }
+            if !p.overwrite && !free(&d0, lane) {
+                return Err(EditError::new(format!(
+                    "track {} has clips where the text goes; leave out `track` to use a free track, or pass overwrite",
+                    d0.track_name(lane)
+                )));
+            }
+            (d0, lane)
+        }
+        None => {
+            let videos: Vec<usize> = d0.track_indices().into_iter().filter(|&i| d0.kind(i) == TrackKind::Video).collect();
+            // Topmost first: later video tracks draw on top.
+            match videos.iter().rev().find(|&&i| free(&d0, i)).copied() {
+                Some(lane) => (d0, lane),
+                None => {
+                    let name = p.new_track_name.as_deref().filter(|n| crate::tracks::check_name(tl, n, None).is_ok());
+                    let (with_track, _) = crate::tracks::add(tl, TrackKind::Video, name, None)?;
+                    let d = Doc::new(&with_track)?;
+                    let lane = d.track_indices().into_iter().rfind(|&i| d.kind(i) == TrackKind::Video).expect("a video track was just added");
+                    (d, lane)
+                }
+            }
+        }
+    };
+
+    if p.track.is_some() && p.clear_text {
+        d.lane(lane).items.retain(|it| !cleared(it));
+    }
+    for (it, &(a, b)) in p.items.iter().zip(&ranges) {
+        if b <= a {
+            continue;
+        }
+        let id = d.ids.fresh("clip");
+        let name: String = it.text.text.lines().next().unwrap_or("").chars().take(40).collect();
+        let media = MediaReference::Generator(ve_model::text::GeneratorReference::text(&it.text));
+        let mut clip = Clip::new(if name.is_empty() { "Text".to_owned() } else { name }, media, TimeRange::new(RationalTime::zero(rate), at_rate(b - a, rate)));
+        let mut meta = ClipMeta::new(id.clone());
+        meta.transform = it.transform.clone().filter(|t| !t.is_identity()).map(Box::new);
+        clip.metadata.ve.clip = Some(meta);
+        let mut ids = std::mem::replace(&mut d.ids, Ids::new(HashSet::new()));
+        let l = d.lane(lane);
+        l.remove_range(a, b, &mut ids)?;
+        l.place(Placed { start: a, item: Composable::Clip(clip) });
+        d.ids = ids;
+        d.created.push(id);
+    }
+    d.finish()
+}
+
+/// [`set_text`]: what to change on a text clip.
+#[derive(Debug, Clone, Default)]
+pub struct TextChange {
+    pub text: Option<String>,
+    /// Style fields to change (`null` puts one back to its default), as
+    /// [`ve_model::text::TextStyle`] names them.
+    pub style: serde_json::Map<String, serde_json::Value>,
+    /// Start from the default style before applying `style`.
+    pub reset_style: bool,
+}
+
+/// Change the words or style of a text clip.
+pub fn set_text(tl: &Timeline, clip: &Id, change: &TextChange) -> Result<(Timeline, EditReport)> {
+    let mut d = Doc::new(tl)?;
+    let (i, j) = d.locate(clip)?;
+    let current = match d.lane_ref(i).items[j].clip().and_then(Clip::text) {
+        Some(t) => t.map_err(EditError::new)?,
+        None => return Err(EditError::new(format!("{clip} is not a text clip"))),
+    };
+    let mut params = serde_json::to_value(&current).map_err(|e| EditError::new(e.to_string()))?;
+    let obj = params.as_object_mut().expect("a text clip is an object");
+    if change.reset_style {
+        let defaults = serde_json::to_value(ve_model::text::TextStyle::default()).map_err(|e| EditError::new(e.to_string()))?;
+        for (k, v) in defaults.as_object().into_iter().flatten() {
+            obj.insert(k.clone(), v.clone());
+        }
+    }
+    let defaults = serde_json::to_value(ve_model::text::TextStyle::default()).map_err(|e| EditError::new(e.to_string()))?;
+    for (k, v) in &change.style {
+        if k == "text" {
+            return Err(EditError::new("set the words with `text`, not inside `style`"));
+        }
+        let Some(default) = defaults.get(k) else {
+            let names: Vec<&String> = defaults.as_object().map(|o| o.keys().collect()).unwrap_or_default();
+            return Err(EditError::new(format!("no style field `{k}`; fields are {}", names.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", "))));
+        };
+        obj.insert(k.clone(), if v.is_null() { default.clone() } else { v.clone() });
+    }
+    if let Some(t) = &change.text {
+        obj.insert("text".into(), serde_json::Value::String(t.clone()));
+    }
+    let next: ve_model::text::TextClip = serde_json::from_value(params).map_err(|e| EditError::new(format!("text style: {e}")))?;
+    next.style.check().map_err(EditError::new)?;
+    let c = d.lane(i).items[j].clip_mut().expect("located a clip");
+    c.media_references.insert(c.active_media_reference_key.clone(), MediaReference::Generator(ve_model::text::GeneratorReference::text(&next)));
+    let first: String = next.text.lines().next().unwrap_or("").chars().take(40).collect();
+    c.name = if first.is_empty() { "Text".to_owned() } else { first };
+    d.mark_changed(clip);
+    d.finish()
+}

@@ -201,7 +201,8 @@ impl Graph {
             }
             let transparent = !layers.is_empty();
             let mut placed: Vec<(i64, i64, &Segment)> = Vec::new();
-            for s in &track.segments {
+            // Text is drawn only by the GPU compositor; here it is a gap.
+            for s in track.segments.iter().filter(|s| s.text.is_none()) {
                 let (f0, f1) = (index(s.start - start, r), index(s.end - start, r));
                 if f1 > f0 {
                     placed.push((f0, f1, s));

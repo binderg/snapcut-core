@@ -280,6 +280,24 @@ enum Command {
     /// Transitions on cuts.
     #[command(subcommand)]
     Transition(TransitionCmd),
+    /// Text clips (titles, labels): `ve text add "Hello" --at 5s --duration 3s`.
+    #[command(subcommand)]
+    Text(TextCmd),
+    /// Caption clips from the transcript, timed to the edited timeline:
+    /// `ve captions` (again after editing: `ve captions --track Captions`).
+    Captions {
+        #[command(flatten)]
+        span: Span,
+        /// Replace the text clips on this track instead of making a new `Captions` track.
+        #[arg(long)]
+        track: Option<String>,
+        /// Vertical position, canvas heights from the center (default 0.36, near the bottom).
+        #[arg(long, allow_hyphen_values = true)]
+        y: Option<f64>,
+        /// Look over the caption default: `--style size=0.07 --style color=[1,1,0]`.
+        #[arg(long = "style", value_name = "FIELD=VALUE")]
+        style: Vec<String>,
+    },
     /// Undo the last step (one edit, or a whole group).
     Undo,
     /// Redo the last undone step.
@@ -487,6 +505,46 @@ enum FxCmd {
         folder: PathBuf,
         #[arg(long)]
         dry_run: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum TextCmd {
+    /// `ve text add "Big news" --at 00:00:05:00 --duration 3s --style size=0.1 --style weight=700 --y -0.3`.
+    /// Goes on a free video track (a new `Text` track if none); never pushes other clips.
+    Add {
+        text: String,
+        #[arg(long)]
+        at: Option<String>,
+        #[arg(long)]
+        duration: Option<String>,
+        /// A video track by name or ID (default: a free one).
+        #[arg(long)]
+        track: Option<String>,
+        /// On `--track`, replace what is under the text.
+        #[arg(long)]
+        overwrite: bool,
+        /// `FIELD=VALUE`: font, size, weight, italic, color, align, width, line_height,
+        /// outline, outline_color, shadow, shadow_color, background, padding.
+        #[arg(long = "style", value_name = "FIELD=VALUE")]
+        style: Vec<String>,
+        /// Center position, canvas widths from the center.
+        #[arg(long, allow_hyphen_values = true)]
+        x: Option<f64>,
+        /// Center position, canvas heights from the center; positive is down.
+        #[arg(long, allow_hyphen_values = true)]
+        y: Option<f64>,
+    },
+    /// `ve text set clip_7f3a --text "New words" --style color=[1,0.8,0]`. Move or fade it with `ve transform`.
+    Set {
+        clip: String,
+        #[arg(long)]
+        text: Option<String>,
+        #[arg(long = "style", value_name = "FIELD=VALUE")]
+        style: Vec<String>,
+        /// Start from the default look before applying `--style`.
+        #[arg(long)]
+        reset_style: bool,
     },
 }
 
@@ -979,6 +1037,20 @@ fn plan(cmd: &Command, json_output: bool) -> Plan {
             m("effect.set", p)
         }
         Command::Effect(EffectCmd::Rm { id }) => m("effect.remove", json!({ "id": id })),
+        Command::Text(TextCmd::Add { text, at, duration, track, overwrite, style, x, y }) => m(
+            "text.add",
+            json!({ "text": text, "at": at, "duration": duration, "track": track, "overwrite": overwrite, "style": param_map(style, json_output), "x": x, "y": y }),
+        ),
+        Command::Text(TextCmd::Set { clip, text, style, reset_style }) => {
+            m("text.set", json!({ "clip": clip, "text": text, "style": param_map(style, json_output), "reset_style": reset_style }))
+        }
+        Command::Captions { span, track, y, style } => {
+            let mut p = span_params(span);
+            p["track"] = json!(track);
+            p["y"] = json!(y);
+            p["style"] = param_map(style, json_output);
+            m("text.captions", p)
+        }
         Command::Transition(TransitionCmd::Add { clip, at, track, kind, duration, align, params }) => {
             let mut p = json!({ "clip": clip, "at": at, "track": track, "params": param_map(params, json_output) });
             if let Some(k) = kind {
@@ -1449,6 +1521,15 @@ fn write_output(result: &Value, output: &Path, json_output: bool) {
 }
 
 fn main() -> anyhow::Result<()> {
+    // Debug builds of the argument parser need more stack than the 1 MiB
+    // Windows gives the main thread; 8 MiB is the usual Linux default.
+    match std::thread::Builder::new().name("ve".into()).stack_size(8 << 20).spawn(real_main)?.join() {
+        Ok(result) => result,
+        Err(panic) => std::panic::resume_unwind(panic),
+    }
+}
+
+fn real_main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .with_writer(std::io::stderr)
@@ -1771,8 +1852,16 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         | Command::Track(_)
         | Command::Effect(_)
         | Command::Transition(_)
+        | Command::Text(_)
         | Command::Undo
         | Command::Redo => print_commit(&result),
+        Command::Captions { .. } => {
+            print_commit(&result);
+            println!("{} captions", result["captions"]);
+            for a in result["missing"].as_array().into_iter().flatten() {
+                eprintln!("{} has no transcript yet, so it has no captions (a speech-to-text plugin makes one: `ve plugin list`)", a.as_str().unwrap_or("?"));
+            }
+        }
         Command::Jobs { cmd: None } => {
             let jobs = result["jobs"].as_array().cloned().unwrap_or_default();
             if jobs.is_empty() {

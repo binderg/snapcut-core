@@ -39,6 +39,38 @@ pub(crate) struct Source {
     height: u32,
 }
 
+/// A text clip's picture at `t`, drawn sharp for the largest scale the clip
+/// reaches, with its native size (at scale 1) on this canvas.
+pub(crate) fn text_picture(seg: &Segment, canvas: &Canvas) -> Result<Option<(std::sync::Arc<crate::text::TextImage>, f32, f32)>> {
+    let Some(t) = &seg.text else { return Ok(None) };
+    let most = seg
+        .transform
+        .as_ref()
+        .map_or(1.0, |tr| tr.keyframes.get("scale").into_iter().flatten().filter_map(|k| k.v.as_f64()).fold(tr.scale, f64::max))
+        .clamp(1.0, 8.0) as f32;
+    let img = crate::text::render(t, canvas.width, canvas.height, most)?;
+    Ok(Some((std::sync::Arc::clone(&img), img.width as f32 / most, img.height as f32 / most)))
+}
+
+/// Where a text clip's picture goes at `t`: its native size, centered,
+/// then the transform (scale around its own center, x/y in canvas fractions).
+pub(crate) fn text_layout(seg: &Segment, t: Q, (w, h): (f32, f32), canvas: &Canvas) -> (Rect, Xf) {
+    let (cw, ch) = (canvas.width as f32, canvas.height as f32);
+    let base = Rect { x: (cw - w) / 2.0, y: (ch - h) / 2.0, w, h };
+    let Some(tf) = transform_at(seg, t) else { return (base, Xf::default()) };
+    let scale = tf.scale as f32;
+    let (sw, sh) = (w * scale, h * scale);
+    let cx = cw / 2.0 + tf.x as f32 * cw;
+    let cy = ch / 2.0 + tf.y as f32 * ch;
+    let xf = Xf {
+        crop: [tf.crop_left as f32, tf.crop_top as f32, tf.crop_right as f32, tf.crop_bottom as f32],
+        rotation: (tf.rotation as f32).to_radians(),
+        opacity: tf.opacity as f32,
+        blend: ve_model::meta::BLEND_MODES.iter().position(|m| *m == tf.blend).unwrap_or(0) as u32,
+    };
+    (Rect { x: cx - sw / 2.0, y: cy - sh / 2.0, w: sw, h: sh }, xf)
+}
+
 /// Every source file the project knows.
 pub(crate) fn sources(tl: &Timeline) -> HashMap<PathBuf, Source> {
     tl.metadata
@@ -181,6 +213,10 @@ struct Ctx<'a> {
 }
 
 fn decoded(ctx: &mut Ctx<'_>, seg: &Segment, t: Q, slot: usize) -> Result<Decoded> {
+    if let Some((img, w, h)) = text_picture(seg, ctx.canvas)? {
+        let (rect, xf) = text_layout(seg, t, (w, h), ctx.canvas);
+        return Ok(Decoded { rgba: img.rgba.clone(), width: img.width, height: img.height, rect, xf, effects: passes(seg, t, ctx.fx)? });
+    }
     let src = *ctx
         .sources
         .get(&seg.path)
@@ -343,7 +379,10 @@ pub fn frame_keys(tl: &Timeline, from: i64, to: i64, width: u32, format: ImageFo
         };
         put(&head);
         let mut layer = |put: &mut dyn FnMut(&str), seg: &Segment| -> Result<()> {
-            put(&format!("file {} frame {} rate {}", file_id(&seg.path), source_frame(seg, at), seg.media_rate));
+            match &seg.text {
+                Some(t) => put(&format!("text {}", serde_json::to_string(t.as_ref()).unwrap_or_default())),
+                None => put(&format!("file {} frame {} rate {}", file_id(&seg.path), source_frame(seg, at), seg.media_rate)),
+            }
             if let Some(t) = transform_at(seg, at) {
                 put(&serde_json::to_string(&t).unwrap_or_default());
             }

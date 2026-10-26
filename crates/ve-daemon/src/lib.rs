@@ -24,6 +24,7 @@ pub mod plugins;
 pub mod project;
 pub mod render;
 pub mod server;
+pub mod text;
 pub mod transcript;
 #[cfg(feature = "ui-api")]
 pub mod ui;
@@ -278,6 +279,9 @@ pub fn registry(session: Arc<Session>) -> Arc<Registry> {
     on_project!("edit.delete", "Remove clips and leave gaps", true, edit::delete);
     on_project!("edit.set_speed", "Change a clip's speed (exact ratio); writes OTIO LinearTimeWarp too", true, edit::set_speed);
     on_project!("edit.set_volume", "Set a clip's audio gain in dB", true, edit::set_volume);
+    on_project!("text.add", "Put a text clip (title, label) on a video track; never pushes other clips", true, text::add);
+    on_project!("text.set", "Change a text clip's words or look", true, text::set);
+    on_project!("text.captions", "Caption clips from the transcript, timed to the edited timeline, on their own track", true, text::captions);
     on_project!("edit.set_transform", "Position, scale, rotate, fade (opacity) or crop a video clip's picture", true, edit::set_transform);
     on_project!("edit.unlink", "Break a clip's link with its partners so each is edited alone", true, edit::unlink);
     on_project!("track.add", "Add a video or audio track (any number of each)", true, edit::track_add);

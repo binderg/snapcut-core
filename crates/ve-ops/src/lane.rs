@@ -82,6 +82,7 @@ pub fn media_bounds(c: &Clip) -> Option<(Q, Q)> {
     let r = match c.active_media()? {
         ve_model::MediaReference::External(e) => e.available_range?,
         ve_model::MediaReference::Missing(m) => m.available_range?,
+        ve_model::MediaReference::Generator(g) => g.available_range?,
     };
     Some((r.start_time.seconds(), r.end_exclusive().seconds()))
 }
@@ -193,6 +194,7 @@ impl Lane {
                 let avail = match clip.active_media() {
                     Some(ve_model::MediaReference::External(e)) => e.available_range,
                     Some(ve_model::MediaReference::Missing(m)) => m.available_range,
+                    Some(ve_model::MediaReference::Generator(g)) => g.available_range,
                     None => None,
                 };
                 clip.source_range = Some(avail.ok_or_else(|| {

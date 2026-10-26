@@ -33,7 +33,7 @@ Read in this order the first time; afterwards jump to what you need.
 | [editing/revisions-and-undo.md](editing/revisions-and-undo.md) | `base_rev`, `dry_run`, `actor`, the result of every edit, undo groups |
 | [editing/events.md](editing/events.md) | `events.subscribe`, `project.changed`, keeping a live copy of the project |
 | [methods/index.md](methods/index.md) | Every method, one line each, linking to the details |
-| [methods/](methods/) | One file per method family: `project`, `media`, `edit`, `tracks`, `effects`, `markers`, `history`, `render`, `analyze`, `measure`, `transcript`, `plugin`, `jobs`, `cache`, `system` |
+| [methods/](methods/) | One file per method family: `project`, `media`, `edit`, `tracks`, `effects`, `text`, `markers`, `history`, `render`, `analyze`, `measure`, `transcript`, `plugin`, `jobs`, `cache`, `system` |
 | [guides/frontend.md](guides/frontend.md) | Building a UI on the engine, step by step |
 | [guides/writing-effects.md](guides/writing-effects.md) | The contract for writing your own effect or transition (WGSL) |
 | [guides/writing-plugins.md](guides/writing-plugins.md) | Writing a plugin: manifest, the stdio protocol, calling back into the engine, progress, cancel, secrets, CLI commands |

@@ -69,6 +69,8 @@ pub struct Segment {
     /// A still image: the same picture for the whole segment, possibly with
     /// transparency. `media_rate` is the project rate.
     pub still: bool,
+    /// A text clip: drawn by [`crate::text`], not read from a file (`path` is empty).
+    pub text: Option<std::sync::Arc<ve_model::text::TextClip>>,
 }
 
 impl Segment {
@@ -136,6 +138,7 @@ pub fn plan(tl: &Timeline, span: Span) -> Result<Plan, RenderError> {
     let mut transitions = 0;
     let mut effects = 0;
     let mut transforms = 0;
+    let mut texts = 0;
     for c in &tl.tracks.children {
         let Composable::Track(track) = c else {
             out.warnings.push("a top-level item that is not a track was skipped".into());
@@ -176,6 +179,7 @@ pub fn plan(tl: &Timeline, span: Span) -> Result<Plan, RenderError> {
             }
             if let Some(seg) = segment(tl, track, clip, (start, end), (s, e), (head, tail), &mut out.warnings)? {
                 transforms += usize::from(track.kind == TrackKind::Video && seg.transform.is_some());
+                texts += usize::from(seg.text.is_some());
                 segs.push(seg);
             }
         }
@@ -210,7 +214,10 @@ pub fn plan(tl: &Timeline, span: Span) -> Result<Plan, RenderError> {
             TrackKind::Audio => out.audio.push(t),
         }
     }
-    out.gpu_features = transitions + effects + transforms;
+    out.gpu_features = transitions + effects + transforms + texts;
+    if texts > 0 {
+        out.warnings.push(format!("{texts} text clip(s) in range: {GPU_ONLY} them; this render leaves them out"));
+    }
     if transitions + effects > 0 {
         out.warnings.push(format!(
             "{transitions} transition(s) and {effects} effect(s) in range: {GPU_ONLY} them; this render shows plain cuts and unprocessed clips"
@@ -238,6 +245,33 @@ fn segment(
     warnings: &mut Vec<String>,
 ) -> Result<Option<Segment>, RenderError> {
     let id = clip_id(clip).map_or_else(|| clip.name.clone(), ToString::to_string);
+    if let Some(text) = clip.text() {
+        // Text has no sound; on an audio track it plays nothing.
+        if track.kind == TrackKind::Audio {
+            return Ok(None);
+        }
+        let text = text.map_err(|e| RenderError::Invalid(format!("{id}: {e}")))?;
+        let src = clip.source_range.expect("lanes fill in source ranges");
+        return Ok(Some(Segment {
+            clip: id,
+            path: PathBuf::new(),
+            start: s,
+            end: e,
+            media_start: src.start_time.seconds() + (s - start),
+            speed: Q::from_integer(1),
+            volume_db: 0.0,
+            media_rate: tl.output_rate(),
+            bounds: None,
+            head,
+            tail,
+            clip_start: start,
+            clip_duration: end - start,
+            effects: clip.metadata.ve.effects.clone(),
+            transform: clip.metadata.ve.clip.as_ref().and_then(|m| m.transform.as_deref().cloned()).filter(|t| !t.is_identity()),
+            still: true,
+            text: Some(std::sync::Arc::new(text)),
+        }));
+    }
     let url = match clip.active_media() {
         Some(MediaReference::External(e)) => e.target_url.clone(),
         _ => return Err(RenderError::Media(format!("{id} has no media (missing reference)"))),
@@ -275,5 +309,6 @@ fn segment(
         effects: clip.metadata.ve.effects.clone(),
         transform: clip.metadata.ve.clip.as_ref().and_then(|m| m.transform.as_deref().cloned()).filter(|t| !t.is_identity()),
         still,
+        text: None,
     }))
 }

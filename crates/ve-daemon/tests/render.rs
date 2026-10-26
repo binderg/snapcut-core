@@ -296,3 +296,66 @@ async fn export_formats() {
     let resp = call(&r, "render.export", json!({"format": "avi"})).await;
     assert!(resp["error"]["message"].as_str().unwrap().contains("formats are"), "{resp}");
 }
+
+/// Text clips: added on a free track above the footage, drawn by the GPU
+/// compositor, reported by `render.layers`, restyled with `text.set`; and
+/// captions made from a transcript, replaced when made again.
+#[tokio::test]
+async fn text_clips_and_captions() {
+    let dir = scratch("text");
+    make_talk(&dir.join("talk.mp4"));
+    let r = ve_daemon::build_registry();
+    ok(&r, "project.init", json!({"path": dir.join("edit"), "fps": "25", "width": 320, "height": 180})).await;
+    let asset = ok(&r, "media.import", json!({"paths": [dir.join("talk.mp4")], "base_rev": 0})).await["assets"][0]["id"].clone();
+    ok(&r, "edit.insert", json!({"asset": asset, "base_rev": 1})).await;
+
+    // V1 holds the footage, so the title goes on a new track on top.
+    let added = ok(&r, "text.add", json!({"text": "Hello", "at": "1s", "duration": "2s", "style": {"size": 0.2, "weight": 700}, "base_rev": 2})).await;
+    let created = &added["created"][0];
+    assert_eq!(created["track"], "Text", "{added}");
+    assert_eq!((created["start"].as_str(), created["end"].as_str()), (Some("00:00:01:00"), Some("00:00:03:00")));
+    let title = created["id"].clone();
+
+    let frame = ok(&r, "render.layers", json!({"at": "2s"})).await;
+    assert_eq!(frame["layers"][1]["text"], "Hello", "{frame}");
+    assert_eq!(frame["visible"], json!(["V1", "Text"]), "text never hides the footage: {frame}");
+
+    // White letters in the middle of the frame; the footage (red) around them.
+    let png = |f: &Value| image::load_from_memory(&base64::engine::general_purpose::STANDARD.decode(f["data"].as_str().unwrap()).unwrap()).unwrap().to_rgb8();
+    let shot = png(&ok(&r, "render.frame", json!({"at": "2s", "width": 320, "format": "png"})).await);
+    shot.save(dir.join("title.png")).unwrap();
+    let white = shot.pixels().filter(|p| p[0] > 230 && p[1] > 230 && p[2] > 230).count();
+    assert!(white > 300, "letters drawn: {white} white pixels");
+    assert!(shot.get_pixel(160, 10)[0] > 150, "footage around the text");
+
+    // Restyle: yellow on a black box. Unknown fields are refused.
+    ok(&r, "text.set", json!({"clip": title, "text": "Hi there", "style": {"color": [1, 1, 0], "background": [0, 0, 0, 1]}, "base_rev": 3})).await;
+    let shot = png(&ok(&r, "render.frame", json!({"at": "2s", "width": 320, "format": "png"})).await);
+    let yellow = shot.pixels().filter(|p| p[0] > 200 && p[1] > 200 && p[2] < 80).count();
+    let black = shot.pixels().filter(|p| p[0] < 30 && p[1] < 30 && p[2] < 30).count();
+    assert!(yellow > 200 && black > 500, "yellow on black: {yellow} {black}");
+    let resp = call(&r, "text.set", json!({"clip": title, "style": {"colour": [1, 0, 0]}, "base_rev": 4})).await;
+    assert!(resp["error"]["message"].as_str().unwrap().contains("no style field"), "{resp}");
+    let text = ok(&r, "project.summary", json!({})).await["text"].as_str().unwrap().to_owned();
+    assert!(text.contains("text \"Hi there\""), "{text}");
+
+    // Captions from a transcript (media time on the source), on their own track.
+    let w = |s: &str, e: &str, t: &str| json!({"start": s, "end": e, "text": t, "speaker": "S0"});
+    let words = [w("0.1s", "0.4s", "So"), w("0.45s", "0.9s", "today."), w("2.6s", "3.0s", "Next"), w("3.05s", "3.5s", "part")];
+    ok(&r, "transcript.set", json!({"asset": asset, "words": words})).await;
+    let made = ok(&r, "text.captions", json!({"base_rev": 4})).await;
+    assert_eq!(made["captions"], 2, "{made}");
+    let track = made["created"][0]["track"].as_str().unwrap().to_owned();
+    assert_eq!(track, "Captions");
+    let low = ok(&r, "render.layers", json!({"at": "0.2s"})).await;
+    png(&ok(&r, "render.frame", json!({"at": "0.2s", "width": 320, "format": "png"})).await).save(dir.join("caption.png")).unwrap();
+    let cap = low["layers"].as_array().unwrap().iter().find(|l| l["track"] == "Captions").expect("a caption shows").clone();
+    assert_eq!(cap["text"], "So today.");
+    assert!(cap["rect"]["y"].as_f64().unwrap() > 90.0, "near the bottom: {cap}");
+    // Again on the same track replaces the old captions instead of failing.
+    let again = ok(&r, "text.captions", json!({"track": "Captions", "base_rev": 5})).await;
+    assert_eq!(again["removed"].as_array().unwrap().len(), 2, "{again}");
+    // A GPU export draws them.
+    let ex = ok(&r, "render.export", json!({"preset": "draft-540p", "from": "0s", "to": "1s"})).await;
+    assert!(ex["size_bytes"].as_u64().unwrap() > 0);
+}

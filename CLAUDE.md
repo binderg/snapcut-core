@@ -244,6 +244,20 @@ source frame 0. Both paths agree exactly on hard alpha edges. ve-analyze is buil
 opt-level 2 in dev (per-sample loops). On Windows the CLI starts daemons from
 a copy of `ve.exe` in `<cache>/ve/bin/` so a running daemon never blocks a
 rebuild; `VE_DAEMON_ORIGIN` tells the daemon which binary it stands for.
+Text (`ve-model::text`, `ve-render::text`, `ve_ops::edit::{add_text, set_text}`,
+`ve-daemon::text`): text clips are clips whose media is OTIO
+`GeneratorReference.1` (`generator_kind: "ve.text"`, parameters = words +
+`TextStyle`, sizes as canvas fractions). `cosmic-text` lays out with system
+fonts, swash rasterizes, the CPU builds box/shadow/outline/fill into a
+straight-alpha picture (cached by style + canvas), drawn at native size and
+centered (`compose::text_layout`); transforms, blends and keyframes apply.
+GPU only (the ffmpeg graph leaves them out with a warning). `text.add`
+picks the topmost free video track or makes one; never pushes clips.
+`text.captions` groups transcript words like the SRT export
+(`transcript::timeline_cues`) onto a `Captions` track; with `track` it
+replaces that track's text clips in range. CLI `ve text add|set`,
+`ve captions`. Text+ / motion graphics are generator plugins, not core.
+The CLI runs on an 8 MiB thread: debug clap overflowed Windows' 1 MiB main stack.
 Tracks (`ve-ops::tracks`): `track.add|remove|rename|move|list`, any number
 of video and audio tracks. Positions (`index`) count within a kind; for video
 that is the stacking order (0 is the bottom). Removing a track with clips

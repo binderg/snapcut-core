@@ -332,6 +332,41 @@ const CUE_SECONDS: i64 = 6;
 /// change, a pause of 0.7 s or more, after a sentence once it has some text,
 /// or when it would pass two 42-character lines or six seconds.
 fn render_cues(words: &[Line], vtt: bool) -> String {
+    let cues = cues(words);
+    let stamp = |t: Q| {
+        let ms = (t * Q::from_integer(1000)).round().to_integer().max(0);
+        let sep = if vtt { '.' } else { ',' };
+        format!("{:02}:{:02}:{:02}{sep}{:03}", ms / 3_600_000, ms / 60_000 % 60, ms / 1000 % 60, ms % 1000)
+    };
+    let mut out = String::new();
+    if vtt {
+        out.push_str("WEBVTT\n\n");
+    }
+    for (i, c) in cues.iter().enumerate() {
+        if !vtt {
+            out.push_str(&format!("{}\n", i + 1));
+        }
+        out.push_str(&format!("{} --> {}\n", stamp(c.start), stamp(c.end)));
+        let body = c.lines.join("\n");
+        match c.speaker.as_deref().filter(|_| vtt) {
+            Some(sp) => out.push_str(&format!("<v {sp}>{body}\n\n")),
+            None => out.push_str(&format!("{body}\n\n")),
+        }
+    }
+    out
+}
+
+/// One caption: when it shows, who speaks, and its lines.
+pub(crate) struct Cue {
+    pub start: Q,
+    pub end: Q,
+    pub speaker: Option<String>,
+    pub lines: Vec<String>,
+}
+
+/// Group timed words into captions (see [`render_cues`] for the rules).
+/// A caption never runs into the next one.
+fn cues(words: &[Line]) -> Vec<Cue> {
     let mut cues: Vec<(Q, Q, Option<String>, Vec<String>)> = Vec::new();
     let mut prev: Option<&Line> = None;
     for w in words {
@@ -356,30 +391,25 @@ fn render_cues(words: &[Line], vtt: bool) -> String {
         }
         prev = Some(w);
     }
-    let stamp = |t: Q| {
-        let ms = (t * Q::from_integer(1000)).round().to_integer().max(0);
-        let sep = if vtt { '.' } else { ',' };
-        format!("{:02}:{:02}:{:02}{sep}{:03}", ms / 3_600_000, ms / 60_000 % 60, ms / 1000 % 60, ms % 1000)
-    };
-    let mut out = String::new();
-    if vtt {
-        out.push_str("WEBVTT\n\n");
-    }
-    for (i, (start, end, speaker, text)) in cues.iter().enumerate() {
-        // A caption never runs into the next one.
-        let end = cues.get(i + 1).map_or(*end, |n| (*end).min(n.0));
-        if !vtt {
-            out.push_str(&format!("{}\n", i + 1));
-        }
-        out.push_str(&format!("{} --> {}\n", stamp(*start), stamp(end)));
-        let lines = wrap(&text.join(" "));
-        let body = lines.join("\n");
-        match speaker.as_deref().filter(|_| vtt) {
-            Some(s) => out.push_str(&format!("<v {s}>{body}\n\n")),
-            None => out.push_str(&format!("{body}\n\n")),
-        }
-    }
-    out
+    let starts: Vec<Q> = cues.iter().map(|c| c.0).collect();
+    cues.into_iter()
+        .enumerate()
+        .map(|(i, (start, end, speaker, words))| Cue {
+            start,
+            end: starts.get(i + 1).map_or(end, |&n| end.min(n)),
+            speaker,
+            lines: wrap(&words.join(" ")),
+        })
+        .collect()
+}
+
+/// Captions for the words that play on the timeline in `[from, to)`
+/// (timeline time), and the assets in range with no transcript.
+pub(crate) fn timeline_cues(project: &OpenProject, from: Option<String>, to: Option<String>) -> Result<(Vec<Cue>, Vec<Id>), RpcError> {
+    let p = GetParams { asset: None, from, to, format: Format::Words };
+    let (words, missing) = timeline_words(project, &p)?;
+    let lines: Vec<Line> = words.iter().map(|(t0, w, t1)| Line::word(String::new(), *t0, *t1, &w.text, w.speaker.as_deref())).collect();
+    Ok((cues(&lines), missing))
 }
 
 /// Break caption text into lines of at most [`CUE_LINE_CHARS`] at spaces,
@@ -414,6 +444,19 @@ fn wrap(text: &str) -> Vec<String> {
 }
 
 fn timeline(project: &OpenProject, p: &GetParams) -> Result<TimelineTranscript, RpcError> {
+    let (words, missing) = timeline_words(project, p)?;
+    let text = p.format.is_text().then(|| {
+        let lines: Vec<Line> = words.iter().map(|(t0, w, t1)| Line::word(w.start.clone(), *t0, *t1, &w.text, w.speaker.as_deref())).collect();
+        p.format.render(&lines)
+    });
+    let words = (p.format == Format::Words).then(|| words.into_iter().map(|(_, w, _)| w).collect());
+    Ok(TimelineTranscript { revision: project.revision(), words, text, missing })
+}
+
+/// Words that play on the timeline in the range, in order, with their exact
+/// timeline start and end; and the assets in range with no transcript.
+#[allow(clippy::type_complexity)]
+fn timeline_words(project: &OpenProject, p: &GetParams) -> Result<(Vec<(Q, TimelineWord, Q)>, Vec<Id>), RpcError> {
     let tl = &project.timeline;
     let rate = tl.output_rate();
     let start = p.from.as_deref().map(|s| parse_time("from", s, rate)).transpose()?.unwrap_or(Q::from_integer(0));
@@ -478,12 +521,7 @@ fn timeline(project: &OpenProject, p: &GetParams) -> Result<TimelineTranscript, 
         }
     }
     words.sort_by_key(|w| w.0);
-    let text = p.format.is_text().then(|| {
-        let lines: Vec<Line> = words.iter().map(|(t0, w, t1)| Line::word(w.start.clone(), *t0, *t1, &w.text, w.speaker.as_deref())).collect();
-        p.format.render(&lines)
-    });
-    let words = (p.format == Format::Words).then(|| words.into_iter().map(|(_, w, _)| w).collect());
-    Ok(TimelineTranscript { revision: project.revision(), words, text, missing })
+    Ok((words, missing))
 }
 
 /// Timecode of the frame `t` falls in (or, with `ceil`, the first frame at or after it).

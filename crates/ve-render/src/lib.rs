@@ -26,6 +26,7 @@ pub mod graph;
 pub mod layers;
 pub mod plan;
 pub mod source;
+pub mod text;
 
 use std::path::Path;
 

@@ -1,0 +1,456 @@
+{
+  "OTIO_SCHEMA": "Timeline.1",
+  "metadata": {
+    "ve": {
+      "assets": [
+        {
+          "hash": "eea3db178644e668bf1ddbf74d0896f627fec61bd0ecfeb40aedf7b4318beb44",
+          "id": "asset_91b7f1",
+          "kind": "source",
+          "media": {
+            "audio": {
+              "channels": 1,
+              "codec": "aac",
+              "sample_rate": 48000
+            },
+            "duration": {
+              "OTIO_SCHEMA": "RationalTime.1",
+              "rate": 25.0,
+              "value": 150.0
+            },
+            "size_bytes": 47212,
+            "video": {
+              "alpha": "none",
+              "codec": "h264",
+              "color": {
+                "bit_depth": 8,
+                "chroma": "4:2:0",
+                "dynamic_range": "sdr",
+                "pixel_format": "yuv420p"
+              },
+              "height": 120,
+              "rate": [
+                25,
+                1
+              ],
+              "width": 160
+            }
+          },
+          "url": "file:///media/talk.mp4"
+        }
+      ],
+      "project": {
+        "output": {
+          "color_space": "bt709",
+          "height": 360,
+          "rate": [
+            25,
+            1
+          ],
+          "sample_rate": 48000,
+          "width": 640
+        },
+        "revision": 4,
+        "schema_version": "0.1.0"
+      }
+    }
+  },
+  "name": "edit",
+  "global_start_time": {
+    "OTIO_SCHEMA": "RationalTime.1",
+    "value": 0.0,
+    "rate": 25.0
+  },
+  "tracks": {
+    "OTIO_SCHEMA": "Stack.1",
+    "metadata": {},
+    "name": "tracks",
+    "source_range": null,
+    "effects": [],
+    "markers": [],
+    "enabled": true,
+    "color": null,
+    "children": [
+      {
+        "OTIO_SCHEMA": "Track.1",
+        "metadata": {
+          "ve": {
+            "track": {
+              "id": "trk_430e07"
+            }
+          }
+        },
+        "name": "V1",
+        "source_range": null,
+        "effects": [],
+        "markers": [],
+        "enabled": true,
+        "color": null,
+        "children": [
+          {
+            "OTIO_SCHEMA": "Clip.2",
+            "metadata": {
+              "ve": {
+                "clip": {
+                  "id": "clip_6b7799",
+                  "link": "lnk_a38589",
+                  "speed": [
+                    1,
+                    1
+                  ],
+                  "volume_db": 0.0
+                }
+              }
+            },
+            "name": "talk.mp4",
+            "source_range": {
+              "OTIO_SCHEMA": "TimeRange.1",
+              "start_time": {
+                "OTIO_SCHEMA": "RationalTime.1",
+                "value": 0.0,
+                "rate": 25.0
+              },
+              "duration": {
+                "OTIO_SCHEMA": "RationalTime.1",
+                "value": 150.0,
+                "rate": 25.0
+              }
+            },
+            "effects": [],
+            "markers": [],
+            "enabled": true,
+            "color": null,
+            "media_references": {
+              "DEFAULT_MEDIA": {
+                "OTIO_SCHEMA": "ExternalReference.1",
+                "metadata": {},
+                "name": "",
+                "available_range": {
+                  "OTIO_SCHEMA": "TimeRange.1",
+                  "start_time": {
+                    "OTIO_SCHEMA": "RationalTime.1",
+                    "value": 0.0,
+                    "rate": 25.0
+                  },
+                  "duration": {
+                    "OTIO_SCHEMA": "RationalTime.1",
+                    "value": 150.0,
+                    "rate": 25.0
+                  }
+                },
+                "available_image_bounds": null,
+                "target_url": "file:///media/talk.mp4"
+              }
+            },
+            "active_media_reference_key": "DEFAULT_MEDIA"
+          }
+        ],
+        "kind": "Video"
+      },
+      {
+        "OTIO_SCHEMA": "Track.1",
+        "metadata": {
+          "ve": {
+            "track": {
+              "id": "trk_61534c"
+            }
+          }
+        },
+        "name": "Text",
+        "source_range": null,
+        "effects": [],
+        "markers": [],
+        "enabled": true,
+        "color": null,
+        "children": [
+          {
+            "OTIO_SCHEMA": "Gap.1",
+            "metadata": {},
+            "name": "",
+            "source_range": {
+              "OTIO_SCHEMA": "TimeRange.1",
+              "start_time": {
+                "OTIO_SCHEMA": "RationalTime.1",
+                "value": 0.0,
+                "rate": 25.0
+              },
+              "duration": {
+                "OTIO_SCHEMA": "RationalTime.1",
+                "value": 25.0,
+                "rate": 25.0
+              }
+            },
+            "effects": [],
+            "markers": [],
+            "enabled": true,
+            "color": null
+          },
+          {
+            "OTIO_SCHEMA": "Clip.2",
+            "metadata": {
+              "ve": {
+                "clip": {
+                  "id": "clip_528df9",
+                  "speed": [
+                    1,
+                    1
+                  ],
+                  "transform": {
+                    "y": -0.3
+                  },
+                  "volume_db": 0.0
+                }
+              }
+            },
+            "name": "Big news",
+            "source_range": {
+              "OTIO_SCHEMA": "TimeRange.1",
+              "start_time": {
+                "OTIO_SCHEMA": "RationalTime.1",
+                "value": 0.0,
+                "rate": 25.0
+              },
+              "duration": {
+                "OTIO_SCHEMA": "RationalTime.1",
+                "value": 50.0,
+                "rate": 25.0
+              }
+            },
+            "effects": [],
+            "markers": [],
+            "enabled": true,
+            "color": null,
+            "media_references": {
+              "DEFAULT_MEDIA": {
+                "OTIO_SCHEMA": "GeneratorReference.1",
+                "metadata": {},
+                "name": "",
+                "available_range": null,
+                "available_image_bounds": null,
+                "generator_kind": "ve.text",
+                "parameters": {
+                  "align": "center",
+                  "background": [
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0
+                  ],
+                  "color": [
+                    1.0,
+                    0.85,
+                    0.0
+                  ],
+                  "font": "sans-serif",
+                  "italic": false,
+                  "line_height": 1.2,
+                  "outline": 0.1,
+                  "outline_color": [
+                    0.0,
+                    0.0,
+                    0.0,
+                    1.0
+                  ],
+                  "padding": 0.3,
+                  "shadow": 0.0,
+                  "shadow_color": [
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.6
+                  ],
+                  "size": 0.12,
+                  "text": "Big news",
+                  "weight": 800,
+                  "width": 0.8
+                }
+              }
+            },
+            "active_media_reference_key": "DEFAULT_MEDIA"
+          }
+        ],
+        "kind": "Video"
+      },
+      {
+        "OTIO_SCHEMA": "Track.1",
+        "metadata": {
+          "ve": {
+            "track": {
+              "id": "trk_61fde8"
+            }
+          }
+        },
+        "name": "V2",
+        "source_range": null,
+        "effects": [],
+        "markers": [],
+        "enabled": true,
+        "color": null,
+        "children": [
+          {
+            "OTIO_SCHEMA": "Clip.2",
+            "metadata": {
+              "ve": {
+                "clip": {
+                  "id": "clip_48daf4",
+                  "speed": [
+                    1,
+                    1
+                  ],
+                  "transform": {
+                    "x": -0.2,
+                    "y": 0.35
+                  },
+                  "volume_db": 0.0
+                }
+              }
+            },
+            "name": "Lower third: Jane Doe",
+            "source_range": {
+              "OTIO_SCHEMA": "TimeRange.1",
+              "start_time": {
+                "OTIO_SCHEMA": "RationalTime.1",
+                "value": 0.0,
+                "rate": 25.0
+              },
+              "duration": {
+                "OTIO_SCHEMA": "RationalTime.1",
+                "value": 100.0,
+                "rate": 25.0
+              }
+            },
+            "effects": [],
+            "markers": [],
+            "enabled": true,
+            "color": null,
+            "media_references": {
+              "DEFAULT_MEDIA": {
+                "OTIO_SCHEMA": "GeneratorReference.1",
+                "metadata": {},
+                "name": "",
+                "available_range": null,
+                "available_image_bounds": null,
+                "generator_kind": "ve.text",
+                "parameters": {
+                  "align": "left",
+                  "background": [
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.6
+                  ],
+                  "color": [
+                    1.0,
+                    1.0,
+                    1.0,
+                    1.0
+                  ],
+                  "font": "sans-serif",
+                  "italic": false,
+                  "line_height": 1.2,
+                  "outline": 0.0,
+                  "outline_color": [
+                    0.0,
+                    0.0,
+                    0.0,
+                    1.0
+                  ],
+                  "padding": 0.3,
+                  "shadow": 0.0,
+                  "shadow_color": [
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.6
+                  ],
+                  "size": 0.05,
+                  "text": "Lower third: Jane Doe",
+                  "weight": 400,
+                  "width": 0.8
+                }
+              }
+            },
+            "active_media_reference_key": "DEFAULT_MEDIA"
+          }
+        ],
+        "kind": "Video"
+      },
+      {
+        "OTIO_SCHEMA": "Track.1",
+        "metadata": {
+          "ve": {
+            "track": {
+              "id": "trk_df8dbb"
+            }
+          }
+        },
+        "name": "A1",
+        "source_range": null,
+        "effects": [],
+        "markers": [],
+        "enabled": true,
+        "color": null,
+        "children": [
+          {
+            "OTIO_SCHEMA": "Clip.2",
+            "metadata": {
+              "ve": {
+                "clip": {
+                  "id": "clip_3cf1b3",
+                  "link": "lnk_a38589",
+                  "speed": [
+                    1,
+                    1
+                  ],
+                  "volume_db": 0.0
+                }
+              }
+            },
+            "name": "talk.mp4",
+            "source_range": {
+              "OTIO_SCHEMA": "TimeRange.1",
+              "start_time": {
+                "OTIO_SCHEMA": "RationalTime.1",
+                "value": 0.0,
+                "rate": 25.0
+              },
+              "duration": {
+                "OTIO_SCHEMA": "RationalTime.1",
+                "value": 150.0,
+                "rate": 25.0
+              }
+            },
+            "effects": [],
+            "markers": [],
+            "enabled": true,
+            "color": null,
+            "media_references": {
+              "DEFAULT_MEDIA": {
+                "OTIO_SCHEMA": "ExternalReference.1",
+                "metadata": {},
+                "name": "",
+                "available_range": {
+                  "OTIO_SCHEMA": "TimeRange.1",
+                  "start_time": {
+                    "OTIO_SCHEMA": "RationalTime.1",
+                    "value": 0.0,
+                    "rate": 25.0
+                  },
+                  "duration": {
+                    "OTIO_SCHEMA": "RationalTime.1",
+                    "value": 150.0,
+                    "rate": 25.0
+                  }
+                },
+                "available_image_bounds": null,
+                "target_url": "file:///media/talk.mp4"
+              }
+            },
+            "active_media_reference_key": "DEFAULT_MEDIA"
+          }
+        ],
+        "kind": "Audio"
+      }
+    ]
+  }
+}

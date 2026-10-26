@@ -588,11 +588,11 @@ chunk. Removing that wait for good needs two things:
 CapCut-class editor still needs from the core, beyond the sections above.
 Not ordered or decided yet.
 
-- [ ] **Text and titles in core.** No text rendering exists yet. Captions
-  are the main use case for talking heads and podcasts, and baking text
-  through a headless browser is too slow for live editing, so core likely
-  needs a basic text layer (for example `cosmic-text`, MIT/Apache).
-  Decide before building: it is a new dependency.
+- [x] **Text and titles in core** (Oct 26 2026): text clips as OTIO
+  `GeneratorReference` (`ve.text`), drawn with `cosmic-text`, and
+  burned-in captions from the transcript. Rich and animated titles
+  ("Text+") are generator plugins, not core. Next: word-by-word caption
+  highlight and animation presets (pop, typewriter).
 - [ ] **Speed ramps:** keyframed time remap on a clip, using the keyframe
   curves (`ve-model::curve`). Today `set_speed` is constant per clip. The
   hard part is audio (pitch-preserving stretch along a ramp).

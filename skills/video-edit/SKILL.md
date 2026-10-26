@@ -87,6 +87,9 @@ Exit codes: 0 ok, 2 bad arguments (the message says what), 3 stale revision,
 | Insert over existing material | `… --overwrite` |
 | Media moved or renamed ("missing" in renders) | `ve relink` lists missing files; `ve relink --folder D:/footage` finds them by content; `ve relink asset_… D:/new/take3.mp4` points one |
 | Image (logo, title card, photo) | `ve import logo.png`, then `ve insert asset_… --duration 3s` (default 5 s); PNG transparency is kept |
+| Title or label | `ve text add "Big news" --at 00:00:05:00 --duration 3s --style size=0.1 --style weight=700 --y -0.3` (goes on a free track, pushes nothing); change with `ve text set clip_… --text "…" --style color=[1,0.8,0]` |
+| Lower third | `ve text add "Jane Doe, CEO" --duration 5s --style size=0.05 --style "background=[0,0,0,0.6]" --style align=left --x -0.25 --y 0.35` |
+| Burned-in captions (needs a transcript) | `ve captions` (own `Captions` track, bold and outlined); after more cuts `ve captions --track Captions` remakes them. Caption files instead: `ve transcript --format srt > captions.srt` |
 | Logo in a corner for a stretch | `ve track add video`, `ve insert asset_logo --track V2 --at 00:00:05:00 --duration 20s --overwrite`, `ve transform clip_… --scale 0.2 --x 0.4 --y -0.4` |
 | Add a track (any number of each kind) | `ve track add video` (makes `V2`, drawn on top of `V1`), `ve track add audio --name Music` |
 | B-roll without its sound, over the main shot | `ve track add video`, then `ve insert asset_b --no-audio --track V2 --at 00:00:30:00 --overwrite` |

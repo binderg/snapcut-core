@@ -55,6 +55,13 @@ not final (the command is `ve`).
 
 ### Effects
 
+- Text clips: titles, labels and lower thirds drawn by the engine with
+  installed fonts (font, size, weight, color, alignment, wrapping, outline,
+  shadow, background box), as ordinary clips on a video track
+  (`text.add`, `text.set`, `ve text`). Stored as OTIO
+  `GeneratorReference` (`ve.text`). Burned-in captions from the transcript
+  on their own track (`text.captions`, `ve captions`). GPU only.
+
 - WGSL effect and transition runtime with a manifest, JSON Schema params,
   validation with errors on the author's line, and a GPU test render.
 - Built in: blur, desaturate, exposure, tint, vignette; dissolve, dip,

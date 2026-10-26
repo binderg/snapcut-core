@@ -132,7 +132,7 @@ pub fn find(tl: &Timeline, r: &str) -> Result<usize> {
 }
 
 /// A name must be non-empty and match no other track's name or ID.
-fn check_name(tl: &Timeline, name: &str, except: Option<usize>) -> Result<()> {
+pub(crate) fn check_name(tl: &Timeline, name: &str, except: Option<usize>) -> Result<()> {
     if name.trim().is_empty() {
         return Err(EditError::new("a track name cannot be empty"));
     }

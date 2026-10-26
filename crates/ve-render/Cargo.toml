@@ -22,6 +22,7 @@ semver.workspace = true
 indexmap.workspace = true
 image.workspace = true
 blake3.workspace = true
+cosmic-text.workspace = true
 
 [dev-dependencies]
 ve-media.workspace = true

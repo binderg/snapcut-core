@@ -334,6 +334,9 @@ pub enum MediaReference {
     External(ExternalReference),
     #[serde(rename = "MissingReference.1")]
     Missing(MissingReference),
+    /// Media made from parameters: text clips (`ve.text`), later plugin generators.
+    #[serde(rename = "GeneratorReference.1")]
+    Generator(crate::text::GeneratorReference),
 }
 
 /// OTIO `ExternalReference.1`. `target_url` is a URI (`file://` in Phase 1).

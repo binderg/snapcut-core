@@ -234,7 +234,22 @@ impl Fmt<'_> {
                     let _ = write!(out, " {}", file_name(&e.target_url));
                 }
             },
+            Some(MediaReference::Generator(g)) => match c.text() {
+                Some(Ok(t)) => {
+                    let mut shown: String = t.text.replace('\n', " / ").chars().take(40).collect();
+                    if t.text.chars().count() > 40 {
+                        shown.push('…');
+                    }
+                    let _ = write!(out, " text {shown:?}");
+                }
+                _ => {
+                    let _ = write!(out, " generated ({})", g.generator_kind);
+                }
+            },
             Some(MediaReference::Missing(_)) | None => out.push_str("  MEDIA MISSING"),
+        }
+        if let Some(t) = &meta.and_then(|m| m.transform.as_ref()).filter(|t| t.blend != "normal") {
+            let _ = write!(out, "  blend {}", t.blend);
         }
         if let Some(m) = meta {
             if m.speed != Q::from_integer(1) {

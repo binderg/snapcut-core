@@ -121,6 +121,9 @@ pub struct LayerInfo {
     pub clip: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub asset: Option<String>,
+    /// The words, for a text clip.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
     /// Link group: the clip's audio partner (an `audio` entry with the same `link`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub link: Option<String>,
@@ -273,6 +276,7 @@ pub fn layers(p: &Snapshot, a: LayersParams) -> Result<LayersResult, RpcError> {
         .layers
         .into_iter()
         .map(|l| LayerInfo {
+            text: l.text,
             track: l.track,
             track_index: l.track_index,
             clip: l.clip,

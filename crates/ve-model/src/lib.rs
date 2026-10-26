@@ -16,6 +16,7 @@ pub mod meta;
 pub mod migrate;
 pub mod otio;
 pub mod summary;
+pub mod text;
 pub mod time;
 pub mod timecode;
 pub mod transcript;

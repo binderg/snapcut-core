@@ -83,6 +83,8 @@ pub struct Layer {
     pub track_index: usize,
     pub clip: String,
     pub asset: Option<String>,
+    /// The words of a text clip.
+    pub text: Option<String>,
     /// The clip's link group: its audio partner shares it.
     pub link: Option<String>,
     /// Media seconds shown; `None` for a still.
@@ -324,12 +326,22 @@ fn frame(ctx: &Ctx<'_>, p: &Plan, at: Q, detail: bool) -> Result<Frame> {
 const SILENT_DB: f64 = -100.0;
 
 fn layer(ctx: &Ctx<'_>, track: &str, track_index: usize, seg: &Segment, at: Q, detail: bool) -> Result<Layer> {
-    let src = *ctx
-        .sources
-        .get(&seg.path)
-        .ok_or_else(|| RenderError::Media(format!("{}: {} has no probed video size", seg.clip, seg.path.display())))?;
-    let (rect, xf, _) = layout(seg, at, src, &ctx.canvas);
-    let (asset, alpha) = ctx.assets.get(&seg.path).cloned().map_or((None, Alpha::Unmeasured), |(id, a)| (Some(id), a));
+    let (rect, xf, asset, alpha) = match compose::text_picture(seg, &ctx.canvas)? {
+        // Text is always see-through around its letters.
+        Some((_, w, h)) => {
+            let (rect, xf) = compose::text_layout(seg, at, (w, h), &ctx.canvas);
+            (rect, xf, None, Alpha::Transparent)
+        }
+        None => {
+            let src = *ctx
+                .sources
+                .get(&seg.path)
+                .ok_or_else(|| RenderError::Media(format!("{}: {} has no probed video size", seg.clip, seg.path.display())))?;
+            let (rect, xf, _) = layout(seg, at, src, &ctx.canvas);
+            let (asset, alpha) = ctx.assets.get(&seg.path).cloned().map_or((None, Alpha::Unmeasured), |(id, a)| (Some(id), a));
+            (rect, xf, asset, alpha)
+        }
+    };
     let effects = if detail { effects_at(ctx, seg, at, Kind::Effect) } else { Vec::new() };
     let tf = if detail { transform_at(seg, at) } else { None };
     let quarter = (f64::from(xf.rotation).to_degrees() / 90.0).round() * 90.0;
@@ -339,6 +351,7 @@ fn layer(ctx: &Ctx<'_>, track: &str, track_index: usize, seg: &Segment, at: Q, d
         track_index,
         clip: seg.clip.clone(),
         asset,
+        text: seg.text.as_ref().map(|t| t.text.clone()),
         link: ctx.links.get(&seg.clip).cloned(),
         source_time: (!seg.still).then(|| seg.media_start + (at - seg.start) * seg.speed),
         still: seg.still,
