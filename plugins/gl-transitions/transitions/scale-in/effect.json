@@ -1,0 +1,13 @@
+{
+ "id": "gl.transition/scale-in",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Scale-In",
+ "description": "The incoming image scales in from the center while fading in (by haiyoucuv, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {}
+ }
+}

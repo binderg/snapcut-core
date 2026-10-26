@@ -1,0 +1,20 @@
+{
+ "id": "gl.transition/crosszoom",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Cross Zoom",
+ "description": "A crossfade through a strong zoom blur (by rectalogic, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "strength": {
+    "title": "strength",
+    "type": "number",
+    "default": 0.4,
+    "x-animatable": true
+   }
+  }
+ }
+}

@@ -1,0 +1,26 @@
+{
+ "id": "gl.transition/simplezoomout",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Simple Zoom Out",
+ "description": "The incoming image zooms out into place while fading in (by Tianshuo, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "zoom_quickness": {
+    "title": "zoom_quickness",
+    "type": "number",
+    "default": 0.8,
+    "x-animatable": true
+   },
+   "fade": {
+    "title": "fade",
+    "description": "Fade instead of cutting to the incoming image",
+    "type": "boolean",
+    "default": true
+   }
+  }
+ }
+}

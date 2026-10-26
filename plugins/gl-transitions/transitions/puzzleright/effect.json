@@ -1,0 +1,39 @@
+{
+ "id": "gl.transition/puzzleright",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Puzzle Right",
+ "description": "The image splits into a grid of tiles that flip one by one to the incoming image (by JustKirillS, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "size": {
+    "title": "size",
+    "type": "array",
+    "items": {
+     "type": "integer"
+    },
+    "minItems": 2,
+    "maxItems": 2,
+    "default": [
+     4,
+     4
+    ]
+   },
+   "pause": {
+    "title": "pause",
+    "type": "number",
+    "default": 0.1,
+    "x-animatable": true
+   },
+   "divider_width": {
+    "title": "dividerWidth",
+    "type": "number",
+    "default": 0.005,
+    "x-animatable": true
+   }
+  }
+ }
+}

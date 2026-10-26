@@ -1,0 +1,25 @@
+{
+ "id": "gl.transition/slides",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Slides",
+ "description": "The outgoing image slides out, or the incoming one slides in, toward an edge, a corner or the center (by Mark Craig, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "gl_type": {
+    "title": "type",
+    "type": "integer",
+    "default": 0
+   },
+   "in": {
+    "title": "In",
+    "description": "Slide the incoming image in instead of the outgoing one out",
+    "type": "boolean",
+    "default": false
+   }
+  }
+ }
+}

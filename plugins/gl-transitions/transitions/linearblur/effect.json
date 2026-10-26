@@ -1,0 +1,21 @@
+{
+ "id": "gl.transition/linearblur",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Linear Blur",
+ "description": "A crossfade through a blur (by gre, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "intensity": {
+    "title": "intensity",
+    "description": "Amount of blur",
+    "type": "number",
+    "default": 0.1,
+    "x-animatable": true
+   }
+  }
+ }
+}

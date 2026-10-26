@@ -1,0 +1,24 @@
+{
+ "id": "gl.transition/box",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Box",
+ "description": "The outgoing image shrinks into a box, toward the center or a corner, revealing the incoming one (by lql, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "rect_in": {
+    "title": "rectIn",
+    "type": "integer",
+    "default": 1
+   },
+   "location": {
+    "title": "location",
+    "type": "integer",
+    "default": 0
+   }
+  }
+ }
+}

@@ -1,0 +1,38 @@
+{
+ "id": "gl.transition/cube",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Cube",
+ "description": "The two images are faces of a rotating 3D cube, with a floor reflection (by gre, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "persp": {
+    "title": "persp",
+    "type": "number",
+    "default": 0.7,
+    "x-animatable": true
+   },
+   "unzoom": {
+    "title": "unzoom",
+    "type": "number",
+    "default": 0.3,
+    "x-animatable": true
+   },
+   "reflection": {
+    "title": "reflection",
+    "type": "number",
+    "default": 0.4,
+    "x-animatable": true
+   },
+   "floating": {
+    "title": "floating",
+    "type": "number",
+    "default": 3.0,
+    "x-animatable": true
+   }
+  }
+ }
+}

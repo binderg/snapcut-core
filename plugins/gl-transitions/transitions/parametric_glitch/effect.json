@@ -1,0 +1,28 @@
+{
+ "id": "gl.transition/parametric_glitch",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Parametric Glitch",
+ "description": "A crossfade with glitchy horizontal bands and color shifts (by Yoni Maltsman @friendlyspinach, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "ampx": {
+    "title": "ampx",
+    "description": "Horizontal amplitude of the glitch",
+    "type": "number",
+    "default": 1.0,
+    "x-animatable": true
+   },
+   "ampy": {
+    "title": "ampy",
+    "description": "Vertical amplitude of the glitch",
+    "type": "number",
+    "default": 1.0,
+    "x-animatable": true
+   }
+  }
+ }
+}

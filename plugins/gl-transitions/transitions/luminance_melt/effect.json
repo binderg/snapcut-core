@@ -1,0 +1,32 @@
+{
+ "id": "gl.transition/luminance_melt",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Luminance Melt",
+ "description": "The outgoing image melts away in noisy vertical streaks, depending on its brightness (by 0gust1, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "direction": {
+    "title": "direction",
+    "description": "Direction of the melt (false: up, true: down)",
+    "type": "boolean",
+    "default": true
+   },
+   "l_threshold": {
+    "title": "l_threshold",
+    "type": "number",
+    "default": 0.8,
+    "x-animatable": true
+   },
+   "above": {
+    "title": "above",
+    "description": "Melt the parts above the threshold instead of below",
+    "type": "boolean",
+    "default": false
+   }
+  }
+ }
+}

@@ -1,0 +1,35 @@
+{
+ "id": "gl.transition/perlin",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Perlin",
+ "description": "The incoming image appears through blobs of Perlin noise (by Rich Harris, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "scale": {
+    "title": "scale",
+    "description": "Scale of the noise; higher values make smaller blobs",
+    "type": "number",
+    "default": 4.0,
+    "x-animatable": true
+   },
+   "smoothness": {
+    "title": "smoothness",
+    "description": "Softness of the blob edges",
+    "type": "number",
+    "default": 0.01,
+    "x-animatable": true
+   },
+   "seed": {
+    "title": "seed",
+    "description": "Random seed",
+    "type": "number",
+    "default": 12.9898,
+    "x-animatable": true
+   }
+  }
+ }
+}

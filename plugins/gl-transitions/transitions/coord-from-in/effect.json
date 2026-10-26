@@ -1,0 +1,13 @@
+{
+ "id": "gl.transition/coord-from-in",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Coord-From-In",
+ "description": "A crossfade in which the colors of one image displace the other (by haiyoucuv, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {}
+ }
+}

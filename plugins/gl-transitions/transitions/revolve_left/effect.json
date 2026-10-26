@@ -1,0 +1,83 @@
+{
+ "id": "gl.transition/revolve_left",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Revolve Left",
+ "description": "The outgoing image swirls and zooms with motion blur into the incoming one (by bread, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "center": {
+    "title": "center",
+    "description": "Center of the swirl",
+    "type": "array",
+    "items": {
+     "type": "number"
+    },
+    "minItems": 2,
+    "maxItems": 2,
+    "default": [
+     0.46,
+     0.52
+    ],
+    "x-animatable": true
+   },
+   "direction": {
+    "title": "direction",
+    "type": "number",
+    "default": -1.0,
+    "x-animatable": true
+   },
+   "max_rotation": {
+    "title": "maxRotation",
+    "type": "number",
+    "default": 1.95,
+    "x-animatable": true
+   },
+   "peak_zoom": {
+    "title": "peakZoom",
+    "type": "number",
+    "default": 2.22,
+    "x-animatable": true
+   },
+   "swirl": {
+    "title": "swirl",
+    "type": "number",
+    "default": 2.85,
+    "x-animatable": true
+   },
+   "barrel": {
+    "title": "barrel",
+    "type": "number",
+    "default": 0.38,
+    "x-animatable": true
+   },
+   "motion_blur": {
+    "title": "motionBlur",
+    "type": "number",
+    "default": 1.0,
+    "x-animatable": true
+   },
+   "switch_start": {
+    "title": "switchStart",
+    "type": "number",
+    "default": 0.3,
+    "x-animatable": true
+   },
+   "switch_end": {
+    "title": "switchEnd",
+    "type": "number",
+    "default": 0.5,
+    "x-animatable": true
+   },
+   "shadow": {
+    "title": "shadow",
+    "type": "number",
+    "default": 0.16,
+    "x-animatable": true
+   }
+  }
+ }
+}

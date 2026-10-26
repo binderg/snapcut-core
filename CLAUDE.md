@@ -385,9 +385,10 @@ Not done yet, and what the gate still needs (suggested order, not decided):
   needed), found by `ve_plugin::discover`, listed by `fx.list` as `pack`,
   copied into the project's `effects/` on first use (`ve-daemon::fx`
   `resolve`/`with_fx`; not on dry runs or failed edits). Rendering never
-  reads packs. A project holds majors side by side (`id@1`, `id@2`). Next:
-  move the gl-transitions set (today shipped by the editor and added with
-  `fx.define`) into a pack. See ARCHITECTURE.md, "Importing
+  reads packs. A project holds majors side by side (`id@1`, `id@2`). The gl-transitions set is
+  the pack `plugins/gl-transitions` (125, ids `gl.transition/<name>`),
+  written by the editor's `scripts/import_gl_transitions.py` and installed by
+  the desktop editor on start. See ARCHITECTURE.md, "Importing
   gl-transitions". Transitions are not core and are never compiled in.
 
 ## Working style

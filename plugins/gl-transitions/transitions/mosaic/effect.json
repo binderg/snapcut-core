@@ -1,0 +1,24 @@
+{
+ "id": "gl.transition/mosaic",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Mosaic",
+ "description": "The view pans across a mosaic of rotated tiles from both images and settles on the incoming one (by Xaychru, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "endx": {
+    "title": "endx",
+    "type": "integer",
+    "default": 2
+   },
+   "endy": {
+    "title": "endy",
+    "type": "integer",
+    "default": -1
+   }
+  }
+ }
+}

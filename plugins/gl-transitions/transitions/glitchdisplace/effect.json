@@ -1,0 +1,13 @@
+{
+ "id": "gl.transition/glitchdisplace",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Glitch Displace",
+ "description": "Blocks of the image are displaced in a glitch that flashes into the incoming image (by Matt DesLauriers, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {}
+ }
+}

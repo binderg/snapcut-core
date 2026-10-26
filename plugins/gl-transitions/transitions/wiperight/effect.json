@@ -1,0 +1,13 @@
+{
+ "id": "gl.transition/wiperight",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Wipe Right",
+ "description": "A hard-edged wipe from left to right (by Jake Nelson, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {}
+ }
+}

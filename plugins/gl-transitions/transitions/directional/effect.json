@@ -1,0 +1,29 @@
+{
+ "id": "gl.transition/directional",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Directional",
+ "description": "The incoming image pushes the outgoing one out in a given direction (by Gaëtan Renaudeau, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "direction": {
+    "title": "direction",
+    "description": "Direction of the movement",
+    "type": "array",
+    "items": {
+     "type": "number"
+    },
+    "minItems": 2,
+    "maxItems": 2,
+    "default": [
+     0.0,
+     1.0
+    ],
+    "x-animatable": true
+   }
+  }
+ }
+}

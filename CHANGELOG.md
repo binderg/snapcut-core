@@ -90,6 +90,9 @@ not final (the command is `ve`).
   transitions with no process. `fx.list` shows them as `origin: "pack"`,
   and the first use in a project copies the effect into its `effects/`
   folder, so projects render without the pack installed.
+- `plugins/gl-transitions`: 125 transitions from gl-transitions.com as an
+  effect pack (ids `gl.transition/<name>`), each keeping its author's
+  license header. Install with `ve plugin install plugins/gl-transitions`.
 - A project may hold two majors of one effect id side by side
   (`id@1`, `id@2`); before, the second was refused as a duplicate.
 

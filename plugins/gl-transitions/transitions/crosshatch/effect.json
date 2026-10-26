@@ -1,0 +1,41 @@
+{
+ "id": "gl.transition/crosshatch",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Crosshatch",
+ "description": "The incoming image appears through a crosshatch of lines spreading from the center (by pthrasher, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "center": {
+    "title": "center",
+    "description": "Point the lines spread from",
+    "type": "array",
+    "items": {
+     "type": "number"
+    },
+    "minItems": 2,
+    "maxItems": 2,
+    "default": [
+     0.5,
+     0.5
+    ],
+    "x-animatable": true
+   },
+   "threshold": {
+    "title": "threshold",
+    "type": "number",
+    "default": 3.0,
+    "x-animatable": true
+   },
+   "fade_edge": {
+    "title": "fadeEdge",
+    "type": "number",
+    "default": 0.1,
+    "x-animatable": true
+   }
+  }
+ }
+}

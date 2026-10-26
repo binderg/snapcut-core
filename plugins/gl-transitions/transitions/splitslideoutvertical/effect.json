@@ -1,0 +1,20 @@
+{
+ "id": "gl.transition/splitslideoutvertical",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Split Slide Out Vertical",
+ "description": "The outgoing image slides out as two halves moving vertically in opposite directions (by OllyOllyOlly, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "reverse": {
+    "title": "reverse",
+    "description": "Swap the directions of the halves",
+    "type": "boolean",
+    "default": false
+   }
+  }
+ }
+}

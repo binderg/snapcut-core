@@ -1,0 +1,32 @@
+{
+ "id": "gl.transition/flyeye",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Flyeye",
+ "description": "The image breaks into a fly's-eye grid of lenses with color separation (by gre, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "size": {
+    "title": "size",
+    "type": "number",
+    "default": 0.04,
+    "x-animatable": true
+   },
+   "zoom": {
+    "title": "zoom",
+    "type": "number",
+    "default": 50.0,
+    "x-animatable": true
+   },
+   "color_separation": {
+    "title": "colorSeparation",
+    "type": "number",
+    "default": 0.3,
+    "x-animatable": true
+   }
+  }
+ }
+}

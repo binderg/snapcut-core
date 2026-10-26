@@ -1,0 +1,13 @@
+{
+ "id": "gl.transition/horizontalclose",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Horizontal Close",
+ "description": "The incoming image closes in from the top and bottom edges toward the middle (by martiniti, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {}
+ }
+}

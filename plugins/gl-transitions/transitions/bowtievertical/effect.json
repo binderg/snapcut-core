@@ -1,0 +1,13 @@
+{
+ "id": "gl.transition/bowtievertical",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Bow Tie Vertical",
+ "description": "Two triangles grow from the top and bottom edges into a bow tie that reveals the incoming image (by huynx, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {}
+ }
+}

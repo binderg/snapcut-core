@@ -1,0 +1,27 @@
+{
+ "id": "gl.transition/static_wipe",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Static Wipe",
+ "description": "A wipe from top to bottom with a band of TV static at its edge (by Ben Lucas, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "u_transition_up_to_down": {
+    "title": "u_transitionUpToDown",
+    "description": "Wipe from top to bottom; false wipes from bottom to top",
+    "type": "boolean",
+    "default": true
+   },
+   "u_max_static_span": {
+    "title": "u_max_static_span",
+    "description": "Maximum height of the static band",
+    "type": "number",
+    "default": 0.5,
+    "x-animatable": true
+   }
+  }
+ }
+}

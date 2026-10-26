@@ -1,0 +1,20 @@
+{
+ "id": "gl.transition/radial",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Radial",
+ "description": "A radial wipe that sweeps around the center like a clock hand (by Xaychru, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "smoothness": {
+    "title": "smoothness",
+    "type": "number",
+    "default": 1.0,
+    "x-animatable": true
+   }
+  }
+ }
+}

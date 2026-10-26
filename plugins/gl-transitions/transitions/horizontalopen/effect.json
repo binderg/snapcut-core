@@ -1,0 +1,13 @@
+{
+ "id": "gl.transition/horizontalopen",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Horizontal Open",
+ "description": "The incoming image opens from a line in the middle toward the top and bottom edges (by martiniti, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {}
+ }
+}

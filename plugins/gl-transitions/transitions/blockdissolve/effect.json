@@ -1,0 +1,20 @@
+{
+ "id": "gl.transition/blockdissolve",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Block Dissolve",
+ "description": "The incoming image appears in small random blocks (by nwoeanhinnogaehr, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "blocksize": {
+    "title": "blocksize",
+    "type": "number",
+    "default": 0.02,
+    "x-animatable": true
+   }
+  }
+ }
+}

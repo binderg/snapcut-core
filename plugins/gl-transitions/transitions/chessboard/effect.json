@@ -1,0 +1,21 @@
+{
+ "id": "gl.transition/chessboard",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Chessboard",
+ "description": "A chessboard pattern of squares reveals the incoming image (by lql, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "grid_num": {
+    "title": "grid_num",
+    "description": "Number of squares per row",
+    "type": "number",
+    "default": 10.0,
+    "x-animatable": true
+   }
+  }
+ }
+}

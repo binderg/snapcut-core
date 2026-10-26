@@ -1,0 +1,13 @@
+{
+ "id": "gl.transition/topbottom",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Top Bottom",
+ "description": "The outgoing image shrinks away upward while the incoming one slides in from the bottom (by zhmy, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {}
+ }
+}

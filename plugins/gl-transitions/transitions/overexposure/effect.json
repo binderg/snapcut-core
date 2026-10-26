@@ -1,0 +1,21 @@
+{
+ "id": "gl.transition/overexposure",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Overexposure",
+ "description": "A crossfade through a washed-out, overexposed white (by Ben Zhang, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "strength": {
+    "title": "strength",
+    "description": "Amount of overexposure",
+    "type": "number",
+    "default": 0.6,
+    "x-animatable": true
+   }
+  }
+ }
+}

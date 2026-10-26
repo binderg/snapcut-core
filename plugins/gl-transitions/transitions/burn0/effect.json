@@ -1,0 +1,29 @@
+{
+ "id": "gl.transition/burn0",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Burn0",
+ "description": "The outgoing image burns away in noisy, glowing patches (by liubailin2020@gmail.com, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "burn_color": {
+    "title": "burnColor",
+    "type": "array",
+    "items": {
+     "type": "number"
+    },
+    "minItems": 3,
+    "maxItems": 3,
+    "default": [
+     1.0,
+     0.5,
+     0.0
+    ],
+    "x-animatable": true
+   }
+  }
+ }
+}

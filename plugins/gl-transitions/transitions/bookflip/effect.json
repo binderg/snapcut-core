@@ -1,0 +1,13 @@
+{
+ "id": "gl.transition/bookflip",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Book Flip",
+ "description": "The outgoing image turns like a book page from right to left, revealing the incoming one (by hong, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {}
+ }
+}

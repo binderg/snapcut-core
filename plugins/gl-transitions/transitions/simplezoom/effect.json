@@ -1,0 +1,20 @@
+{
+ "id": "gl.transition/simplezoom",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Simple Zoom",
+ "description": "Zooms into the outgoing image, then fades to the incoming one (by 0gust1, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "zoom_quickness": {
+    "title": "zoom_quickness",
+    "type": "number",
+    "default": 0.8,
+    "x-animatable": true
+   }
+  }
+ }
+}

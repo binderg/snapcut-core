@@ -1,0 +1,50 @@
+{
+ "id": "gl.transition/drop_zone_flicker",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Drop Zone Flicker",
+ "description": "A flickering glitch with RGB offset, ghosting and scanlines that flashes back to the outgoing image (by bread, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "frame_rate": {
+    "title": "frameRate",
+    "type": "number",
+    "default": 24.0,
+    "x-animatable": true
+   },
+   "rgb_offset": {
+    "title": "rgbOffset",
+    "type": "number",
+    "default": 0.014,
+    "x-animatable": true
+   },
+   "block_amount": {
+    "title": "blockAmount",
+    "type": "number",
+    "default": 0.72,
+    "x-animatable": true
+   },
+   "ghost_amount": {
+    "title": "ghostAmount",
+    "type": "number",
+    "default": 0.62,
+    "x-animatable": true
+   },
+   "red_cyan": {
+    "title": "redCyan",
+    "type": "number",
+    "default": 0.58,
+    "x-animatable": true
+   },
+   "scanline": {
+    "title": "scanline",
+    "type": "number",
+    "default": 0.075,
+    "x-animatable": true
+   }
+  }
+ }
+}

@@ -1,0 +1,13 @@
+{
+ "id": "gl.transition/simpleflip",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Simple Flip",
+ "description": "The outgoing image flips around the vertical axis into the incoming one (by nwoeanhinnogaehr, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {}
+ }
+}

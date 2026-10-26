@@ -1,0 +1,20 @@
+{
+ "id": "gl.transition/luma",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Luma",
+ "description": "A wipe that follows the brightness of a grayscale mask (the luma texture) (by gre, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "luma": {
+    "title": "luma",
+    "type": "string",
+    "format": "image",
+    "default": "luma.png"
+   }
+  }
+ }
+}

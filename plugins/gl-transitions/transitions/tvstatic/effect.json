@@ -1,0 +1,21 @@
+{
+ "id": "gl.transition/tvstatic",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Tvstatic",
+ "description": "Cuts to full-screen TV static, then to the incoming image (by Brandon Anzaldi, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "offset": {
+    "title": "offset",
+    "description": "Part of the transition, at each end, that shows the images instead of static",
+    "type": "number",
+    "default": 0.05,
+    "x-animatable": true
+   }
+  }
+ }
+}

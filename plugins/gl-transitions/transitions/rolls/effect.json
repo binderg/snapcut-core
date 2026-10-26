@@ -1,0 +1,25 @@
+{
+ "id": "gl.transition/rolls",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Rolls",
+ "description": "The outgoing image rolls away around a corner, revealing the incoming one (by Mark Craig, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "gl_type": {
+    "title": "type",
+    "type": "integer",
+    "default": 0
+   },
+   "rot_down": {
+    "title": "RotDown",
+    "description": "Roll the outgoing image down instead of up",
+    "type": "boolean",
+    "default": false
+   }
+  }
+ }
+}

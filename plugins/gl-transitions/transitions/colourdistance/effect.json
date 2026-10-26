@@ -1,0 +1,20 @@
+{
+ "id": "gl.transition/colourdistance",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Colour Distance",
+ "description": "Pixels switch to the incoming image in order of how close their colors are (by P-Seebauer, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "power": {
+    "title": "power",
+    "type": "number",
+    "default": 5.0,
+    "x-animatable": true
+   }
+  }
+ }
+}

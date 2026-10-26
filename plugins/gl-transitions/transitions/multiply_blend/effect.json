@@ -1,0 +1,13 @@
+{
+ "id": "gl.transition/multiply_blend",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Multiply Blend",
+ "description": "A crossfade through the multiplied blend of both images (by Fernando Kuteken, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {}
+ }
+}

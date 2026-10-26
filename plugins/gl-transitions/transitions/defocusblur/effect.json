@@ -1,0 +1,21 @@
+{
+ "id": "gl.transition/defocusblur",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Defocus Blur",
+ "description": "A crossfade through an out-of-focus blur (by Sergey Kosarevsky, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "blur_size": {
+    "title": "blurSize",
+    "description": "Amount of blur",
+    "type": "number",
+    "default": 0.02,
+    "x-animatable": true
+   }
+  }
+ }
+}

@@ -1,0 +1,28 @@
+{
+ "id": "gl.transition/waterdrop",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Water Drop",
+ "description": "Ripples spread from the center like a drop falling into water, crossfading to the incoming image (by Paweł Płóciennik, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "amplitude": {
+    "title": "amplitude",
+    "description": "Frequency of the ripples",
+    "type": "number",
+    "default": 30.0,
+    "x-animatable": true
+   },
+   "speed": {
+    "title": "speed",
+    "description": "Speed of the ripples",
+    "type": "number",
+    "default": 30.0,
+    "x-animatable": true
+   }
+  }
+ }
+}

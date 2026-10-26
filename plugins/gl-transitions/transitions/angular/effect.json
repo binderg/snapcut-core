@@ -1,0 +1,20 @@
+{
+ "id": "gl.transition/angular",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Angular",
+ "description": "A wipe that sweeps around the center from a starting angle (by Fernando Kuteken, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "starting_angle": {
+    "title": "startingAngle",
+    "type": "number",
+    "default": 90.0,
+    "x-animatable": true
+   }
+  }
+ }
+}

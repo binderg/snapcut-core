@@ -1,0 +1,13 @@
+{
+ "id": "gl.transition/leftright",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Left Right",
+ "description": "The outgoing image shrinks away to the left while the incoming one slides in from the right (by zhmy, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {}
+ }
+}

@@ -1,0 +1,13 @@
+{
+ "id": "gl.transition/old_tv_lost_signal",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Old Tv Lost Signal",
+ "description": "A crossfade with drifting tracking lines and tearing, like a TV losing its signal (by mernking (gitlab.com/Godswork), license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {}
+ }
+}

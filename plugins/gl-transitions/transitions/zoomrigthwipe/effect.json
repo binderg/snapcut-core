@@ -1,0 +1,21 @@
+{
+ "id": "gl.transition/zoomrigthwipe",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Zoom Rigth Wipe",
+ "description": "Zooms into the outgoing image, then the incoming one wipes in from left to right (by Handk, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "zoom_quickness": {
+    "title": "zoom_quickness",
+    "description": "Part of the first half spent zooming (capped at 0.5)",
+    "type": "number",
+    "default": 0.8,
+    "x-animatable": true
+   }
+  }
+ }
+}

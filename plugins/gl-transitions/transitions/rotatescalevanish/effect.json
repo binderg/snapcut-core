@@ -1,0 +1,32 @@
+{
+ "id": "gl.transition/rotatescalevanish",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Rotate Scale Vanish",
+ "description": "The outgoing image spins and shrinks away over the incoming one (by Mark Craig, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "fade_in_second": {
+    "title": "FadeInSecond",
+    "description": "Fade in the incoming image",
+    "type": "boolean",
+    "default": true
+   },
+   "reverse_effect": {
+    "title": "ReverseEffect",
+    "description": "Run the effect in reverse",
+    "type": "boolean",
+    "default": false
+   },
+   "reverse_rotation": {
+    "title": "ReverseRotation",
+    "description": "Rotate the other way",
+    "type": "boolean",
+    "default": false
+   }
+  }
+ }
+}

@@ -1,0 +1,26 @@
+{
+ "id": "gl.transition/wind",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Wind",
+ "description": "A ragged left-to-right wipe, as if the image was blown away by the wind (by gre, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "size": {
+    "title": "size",
+    "type": "number",
+    "default": 0.2,
+    "x-animatable": true
+   },
+   "reversed": {
+    "title": "reversed",
+    "description": "Wipe from right to left instead",
+    "type": "boolean",
+    "default": false
+   }
+  }
+ }
+}

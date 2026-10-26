@@ -1,0 +1,21 @@
+{
+ "id": "gl.transition/squeeze",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Squeeze",
+ "description": "The outgoing image is squeezed into a line with color separation, revealing the incoming one (by gre, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "color_separation": {
+    "title": "colorSeparation",
+    "description": "Amount of color separation",
+    "type": "number",
+    "default": 0.04,
+    "x-animatable": true
+   }
+  }
+ }
+}

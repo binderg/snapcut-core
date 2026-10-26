@@ -1,0 +1,26 @@
+{
+ "id": "gl.transition/bowtiewithparameter",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Bow Tie With Parameter",
+ "description": "A bow-tie wipe with an adjustable shape that can run in reverse (by KMojek, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "adjust": {
+    "title": "adjust",
+    "type": "number",
+    "default": 0.5,
+    "x-animatable": true
+   },
+   "reverse": {
+    "title": "reverse",
+    "description": "Run the wipe in reverse",
+    "type": "boolean",
+    "default": false
+   }
+  }
+ }
+}

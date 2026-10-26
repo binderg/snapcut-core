@@ -1,0 +1,13 @@
+{
+ "id": "gl.transition/verticalclose",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Vertical Close",
+ "description": "The incoming image closes in from the left and right edges toward the middle (by martiniti, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {}
+ }
+}

@@ -137,3 +137,23 @@ async fn pack_effects_are_listed_and_copied_on_use() {
     assert_eq!(find(&list, "acme.looks/flash")[0]["origin"], "project");
     assert_eq!(find(&list, "acme.looks/invert").len(), 2, "{list}");
 }
+
+/// The gl-transitions pack shipped in `plugins/` loads with no problems.
+#[test]
+fn shipped_gl_transitions_pack_loads() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plugins/gl-transitions");
+    let m = ve_plugin::Manifest::load(&dir).unwrap();
+    assert!(m.run.is_none() && m.contributes.commands.is_empty());
+    let dirs = m.effect_dirs(&dir);
+    let t = std::time::Instant::now();
+    let r = ve_render::fx::Registry::packs(&dirs);
+    eprintln!("{} gl-transitions validated in {:?}", r.list.len(), t.elapsed());
+    assert!(r.problems.is_empty(), "{:?}", r.problems);
+    assert_eq!(r.list.len(), dirs.len());
+    assert!(r.list.len() >= 100);
+    for fx in &r.list {
+        assert!(fx.manifest.id.starts_with("gl.transition/"), "{}", fx.manifest.id);
+        assert_eq!(ve_render::fx::kind_word(fx.kind()), "transition");
+        assert!(fx.source.contains("License"), "{} lost its license header", fx.manifest.id);
+    }
+}

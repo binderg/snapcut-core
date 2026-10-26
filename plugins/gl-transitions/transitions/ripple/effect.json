@@ -1,0 +1,28 @@
+{
+ "id": "gl.transition/ripple",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Ripple",
+ "description": "Ripples spread from the center while crossfading (by gre, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "amplitude": {
+    "title": "amplitude",
+    "description": "Frequency of the ripples",
+    "type": "number",
+    "default": 100.0,
+    "x-animatable": true
+   },
+   "speed": {
+    "title": "speed",
+    "description": "Speed of the ripples",
+    "type": "number",
+    "default": 50.0,
+    "x-animatable": true
+   }
+  }
+ }
+}

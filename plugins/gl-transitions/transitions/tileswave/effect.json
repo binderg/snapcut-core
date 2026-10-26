@@ -1,0 +1,38 @@
+{
+ "id": "gl.transition/tileswave",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Tiles Wave",
+ "description": "The incoming image is revealed tile by tile in a diagonal wave (by numb3r23, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "tile_count": {
+    "title": "tileCount",
+    "description": "Number of tiles (columns, rows)",
+    "type": "array",
+    "items": {
+     "type": "integer"
+    },
+    "minItems": 2,
+    "maxItems": 2,
+    "default": [
+     8,
+     8
+    ]
+   },
+   "flip_x": {
+    "title": "flipX",
+    "type": "boolean",
+    "default": true
+   },
+   "flip_y": {
+    "title": "flipY",
+    "type": "boolean",
+    "default": false
+   }
+  }
+ }
+}

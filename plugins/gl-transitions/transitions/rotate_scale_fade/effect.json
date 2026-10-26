@@ -1,0 +1,59 @@
+{
+ "id": "gl.transition/rotate_scale_fade",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Rotate Scale Fade",
+ "description": "The outgoing image spins and zooms while fading to the incoming one, over a background color (by Fernando Kuteken, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "center": {
+    "title": "center",
+    "description": "Center of the rotation",
+    "type": "array",
+    "items": {
+     "type": "number"
+    },
+    "minItems": 2,
+    "maxItems": 2,
+    "default": [
+     0.5,
+     0.5
+    ],
+    "x-animatable": true
+   },
+   "rotations": {
+    "title": "rotations",
+    "description": "Number of turns",
+    "type": "number",
+    "default": 1.0,
+    "x-animatable": true
+   },
+   "scale": {
+    "title": "scale",
+    "description": "Maximum zoom",
+    "type": "number",
+    "default": 8.0,
+    "x-animatable": true
+   },
+   "back_color": {
+    "title": "backColor",
+    "type": "array",
+    "items": {
+     "type": "number"
+    },
+    "minItems": 4,
+    "maxItems": 4,
+    "default": [
+     0.15,
+     0.15,
+     0.15,
+     1.0
+    ],
+    "x-animatable": true
+   }
+  }
+ }
+}

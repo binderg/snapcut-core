@@ -1,0 +1,26 @@
+{
+ "id": "gl.transition/dreamyzoom",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Dreamy Zoom",
+ "description": "Zooms and rotates into a bright flash, then out to the incoming image (by Zeh Fernando, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "rotation": {
+    "title": "rotation",
+    "type": "number",
+    "default": 6.0,
+    "x-animatable": true
+   },
+   "scale": {
+    "title": "scale",
+    "type": "number",
+    "default": 1.2,
+    "x-animatable": true
+   }
+  }
+ }
+}

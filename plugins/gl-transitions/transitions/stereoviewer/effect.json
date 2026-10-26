@@ -1,0 +1,26 @@
+{
+ "id": "gl.transition/stereoviewer",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Stereo Viewer",
+ "description": "Both images shrink into rounded cards that swap, like a stereo viewer toy (by Ted Schundler, license BSD 2 Clause, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "zoom": {
+    "title": "zoom",
+    "type": "number",
+    "default": 0.88,
+    "x-animatable": true
+   },
+   "corner_radius": {
+    "title": "corner_radius",
+    "type": "number",
+    "default": 0.22,
+    "x-animatable": true
+   }
+  }
+ }
+}

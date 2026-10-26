@@ -1,0 +1,26 @@
+{
+ "id": "gl.transition/staticfade",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Static Fade",
+ "description": "Cuts to the incoming image halfway, hidden behind a burst of TV static (by Ben Lucas, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "n_noise_pixels": {
+    "title": "n_noise_pixels",
+    "type": "number",
+    "default": 200.0,
+    "x-animatable": true
+   },
+   "static_luminosity": {
+    "title": "static_luminosity",
+    "type": "number",
+    "default": 0.8,
+    "x-animatable": true
+   }
+  }
+ }
+}

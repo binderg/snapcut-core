@@ -1,0 +1,35 @@
+{
+ "id": "gl.transition/polkadotscurtain",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Polka Dots Curtain",
+ "description": "The incoming image appears through growing polka dots (by bobylito, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "dots": {
+    "title": "dots",
+    "description": "Number of dots across the image",
+    "type": "number",
+    "default": 20.0,
+    "x-animatable": true
+   },
+   "center": {
+    "title": "center",
+    "type": "array",
+    "items": {
+     "type": "number"
+    },
+    "minItems": 2,
+    "maxItems": 2,
+    "default": [
+     0.0,
+     0.0
+    ],
+    "x-animatable": true
+   }
+  }
+ }
+}

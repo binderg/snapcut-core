@@ -1,0 +1,21 @@
+{
+ "id": "gl.transition/filmburn",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Film Burn",
+ "description": "Glowing film-burn light leaks wash over the image and reveal the incoming one (by Anastasia Dunbar, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "seed": {
+    "title": "Seed",
+    "description": "Random seed",
+    "type": "number",
+    "default": 2.31,
+    "x-animatable": true
+   }
+  }
+ }
+}

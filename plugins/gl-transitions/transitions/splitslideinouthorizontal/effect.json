@@ -1,0 +1,20 @@
+{
+ "id": "gl.transition/splitslideinouthorizontal",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Split Slide In Out Horizontal",
+ "description": "The halves of both images slide horizontally in opposite directions, out and in at once (by OllyOllyOlly, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "reverse": {
+    "title": "reverse",
+    "description": "Swap the directions of the halves",
+    "type": "boolean",
+    "default": false
+   }
+  }
+ }
+}

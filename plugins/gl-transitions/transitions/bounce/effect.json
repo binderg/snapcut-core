@@ -1,0 +1,42 @@
+{
+ "id": "gl.transition/bounce",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Bounce",
+ "description": "The outgoing image drops out of the frame with a few bounces, revealing the incoming one (by Adrian Purser, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "shadow_colour": {
+    "title": "shadow_colour",
+    "type": "array",
+    "items": {
+     "type": "number"
+    },
+    "minItems": 4,
+    "maxItems": 4,
+    "default": [
+     0.0,
+     0.0,
+     0.0,
+     0.6
+    ],
+    "x-animatable": true
+   },
+   "shadow_height": {
+    "title": "shadow_height",
+    "type": "number",
+    "default": 0.075,
+    "x-animatable": true
+   },
+   "bounces": {
+    "title": "bounces",
+    "type": "number",
+    "default": 3.0,
+    "x-animatable": true
+   }
+  }
+ }
+}

@@ -1,0 +1,13 @@
+{
+ "id": "gl.transition/zoomincircles",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Zoom In Circles",
+ "description": "Concentric rings of the outgoing image zoom at different speeds before revealing the incoming one (by dycm8009, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {}
+ }
+}

@@ -1,0 +1,43 @@
+{
+ "id": "gl.transition/doomscreentransition",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Doom Screen Transition",
+ "description": "The outgoing image melts down in uneven columns, like the Doom screen wipe (by Zeh Fernando, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "bars": {
+    "title": "bars",
+    "type": "integer",
+    "default": 30
+   },
+   "amplitude": {
+    "title": "amplitude",
+    "type": "number",
+    "default": 2.0,
+    "x-animatable": true
+   },
+   "noise": {
+    "title": "noise",
+    "type": "number",
+    "default": 0.1,
+    "x-animatable": true
+   },
+   "frequency": {
+    "title": "frequency",
+    "type": "number",
+    "default": 0.5,
+    "x-animatable": true
+   },
+   "drip_scale": {
+    "title": "dripScale",
+    "type": "number",
+    "default": 0.5,
+    "x-animatable": true
+   }
+  }
+ }
+}

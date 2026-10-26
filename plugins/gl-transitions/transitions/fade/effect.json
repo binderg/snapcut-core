@@ -1,0 +1,13 @@
+{
+ "id": "gl.transition/fade",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Fade",
+ "description": "A linear crossfade between the two images (by gre, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {}
+ }
+}

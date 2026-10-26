@@ -1,0 +1,32 @@
+{
+ "id": "gl.transition/powerkaleido",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Power Kaleido",
+ "description": "The image folds into an animated kaleidoscope before revealing the incoming one (by Boundless, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "scale": {
+    "title": "scale",
+    "type": "number",
+    "default": 2.0,
+    "x-animatable": true
+   },
+   "z": {
+    "title": "z",
+    "type": "number",
+    "default": 1.5,
+    "x-animatable": true
+   },
+   "speed": {
+    "title": "speed",
+    "type": "number",
+    "default": 5.0,
+    "x-animatable": true
+   }
+  }
+ }
+}

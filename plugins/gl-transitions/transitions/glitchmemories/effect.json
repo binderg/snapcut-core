@@ -1,0 +1,13 @@
+{
+ "id": "gl.transition/glitchmemories",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Glitch Memories",
+ "description": "A crossfade with glitchy, color-shifted blocks (by Gunnar Roth, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {}
+ }
+}

@@ -1,0 +1,13 @@
+{
+ "id": "gl.transition/invertedpagecurl",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Inverted Page Curl",
+ "description": "The outgoing image curls away like a page, revealing the incoming one (by Hewlett-Packard, license BSD 3 Clause, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {}
+ }
+}

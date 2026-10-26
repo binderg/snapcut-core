@@ -1,0 +1,21 @@
+{
+ "id": "gl.transition/morph",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Morph",
+ "description": "A crossfade in which each image is displaced by the other's colors, like a morph (by paniq, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "strength": {
+    "title": "strength",
+    "description": "Strength of the displacement",
+    "type": "number",
+    "default": 0.1,
+    "x-animatable": true
+   }
+  }
+ }
+}

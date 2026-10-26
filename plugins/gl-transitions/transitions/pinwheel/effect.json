@@ -1,0 +1,21 @@
+{
+ "id": "gl.transition/pinwheel",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Pinwheel",
+ "description": "A spinning pinwheel reveals the incoming image (by Mr Speaker, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "speed": {
+    "title": "speed",
+    "description": "Rotation speed",
+    "type": "number",
+    "default": 2.0,
+    "x-animatable": true
+   }
+  }
+ }
+}

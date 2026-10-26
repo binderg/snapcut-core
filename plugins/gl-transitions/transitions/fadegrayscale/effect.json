@@ -1,0 +1,20 @@
+{
+ "id": "gl.transition/fadegrayscale",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Fadegrayscale",
+ "description": "A crossfade through grayscale (by gre, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "intensity": {
+    "title": "intensity",
+    "type": "number",
+    "default": 0.3,
+    "x-animatable": true
+   }
+  }
+ }
+}

@@ -1,0 +1,27 @@
+{
+ "id": "gl.transition/displacement",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Displacement",
+ "description": "A crossfade in which a displacement map (an extra grayscale texture) warps both images (by Travis Fischer, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "displacement_map": {
+    "title": "displacementMap",
+    "type": "string",
+    "format": "image",
+    "default": "displacement.png"
+   },
+   "strength": {
+    "title": "strength",
+    "description": "Strength of the displacement",
+    "type": "number",
+    "default": 0.5,
+    "x-animatable": true
+   }
+  }
+ }
+}

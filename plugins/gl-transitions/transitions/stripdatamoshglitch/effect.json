@@ -1,0 +1,68 @@
+{
+ "id": "gl.transition/stripdatamoshglitch",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Strip Datamosh Glitch",
+ "description": "A datamosh glitch: torn strips, chroma shifts and scan noise drag the outgoing image into the incoming one (by bread, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "strength": {
+    "title": "strength",
+    "type": "number",
+    "default": 1.0,
+    "x-animatable": true
+   },
+   "horizontal_bars": {
+    "title": "horizontalBars",
+    "type": "number",
+    "default": 42.0,
+    "x-animatable": true
+   },
+   "vertical_slits": {
+    "title": "verticalSlits",
+    "type": "number",
+    "default": 18.0,
+    "x-animatable": true
+   },
+   "tear": {
+    "title": "tear",
+    "type": "number",
+    "default": 0.18,
+    "x-animatable": true
+   },
+   "chroma": {
+    "title": "chroma",
+    "type": "number",
+    "default": 0.032,
+    "x-animatable": true
+   },
+   "residue": {
+    "title": "residue",
+    "type": "number",
+    "default": 0.62,
+    "x-animatable": true
+   },
+   "noise_amount": {
+    "title": "noiseAmount",
+    "type": "number",
+    "default": 0.16,
+    "x-animatable": true
+   },
+   "scan_amount": {
+    "title": "scanAmount",
+    "type": "number",
+    "default": 0.13,
+    "x-animatable": true
+   },
+   "flash_amount": {
+    "title": "flashAmount",
+    "type": "number",
+    "default": 0.2,
+    "x-animatable": true
+   }
+  }
+ }
+}

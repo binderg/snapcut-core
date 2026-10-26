@@ -1,0 +1,35 @@
+{
+ "id": "gl.transition/directionalscaled",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Directional Scaled",
+ "description": "Like Directional, with both images scaled down while they slide (by Thibaut Foussard, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "direction": {
+    "title": "direction",
+    "description": "Direction of the movement",
+    "type": "array",
+    "items": {
+     "type": "number"
+    },
+    "minItems": 2,
+    "maxItems": 2,
+    "default": [
+     0.0,
+     1.0
+    ],
+    "x-animatable": true
+   },
+   "scale": {
+    "title": "scale",
+    "type": "number",
+    "default": 0.7,
+    "x-animatable": true
+   }
+  }
+ }
+}

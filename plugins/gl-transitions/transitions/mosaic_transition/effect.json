@@ -1,0 +1,21 @@
+{
+ "id": "gl.transition/mosaic_transition",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Mosaic Transition",
+ "description": "Both images break into mosaic blocks that blend, then sharpen into the incoming image (by YueDev, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "mosaic_num": {
+    "title": "mosaicNum",
+    "description": "Number of mosaic blocks",
+    "type": "number",
+    "default": 10.0,
+    "x-animatable": true
+   }
+  }
+ }
+}

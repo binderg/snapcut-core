@@ -1,0 +1,32 @@
+{
+ "id": "gl.transition/butterflywavescrawler",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Butterfly Wave Scrawler",
+ "description": "Wavy, color-separated ripples scramble the outgoing image into the incoming one (by mandubian, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "amplitude": {
+    "title": "amplitude",
+    "type": "number",
+    "default": 1.0,
+    "x-animatable": true
+   },
+   "waves": {
+    "title": "waves",
+    "type": "number",
+    "default": 30.0,
+    "x-animatable": true
+   },
+   "color_separation": {
+    "title": "colorSeparation",
+    "type": "number",
+    "default": 0.3,
+    "x-animatable": true
+   }
+  }
+ }
+}

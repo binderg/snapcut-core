@@ -1,0 +1,28 @@
+{
+ "id": "gl.transition/windowslice",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Windowslice",
+ "description": "The incoming image appears through vertical slices that widen (by gre, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "count": {
+    "title": "count",
+    "description": "Number of slices",
+    "type": "number",
+    "default": 10.0,
+    "x-animatable": true
+   },
+   "smoothness": {
+    "title": "smoothness",
+    "description": "Softness of the slices' edges",
+    "type": "number",
+    "default": 0.5,
+    "x-animatable": true
+   }
+  }
+ }
+}

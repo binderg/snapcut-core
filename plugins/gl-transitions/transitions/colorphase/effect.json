@@ -1,0 +1,46 @@
+{
+ "id": "gl.transition/colorphase",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Colorphase",
+ "description": "A crossfade in which each color channel changes at a different time (by gre, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "from_step": {
+    "title": "fromStep",
+    "type": "array",
+    "items": {
+     "type": "number"
+    },
+    "minItems": 4,
+    "maxItems": 4,
+    "default": [
+     0.0,
+     0.2,
+     0.4,
+     0.0
+    ],
+    "x-animatable": true
+   },
+   "to_step": {
+    "title": "toStep",
+    "type": "array",
+    "items": {
+     "type": "number"
+    },
+    "minItems": 4,
+    "maxItems": 4,
+    "default": [
+     0.6,
+     0.8,
+     1.0,
+     1.0
+    ],
+    "x-animatable": true
+   }
+  }
+ }
+}

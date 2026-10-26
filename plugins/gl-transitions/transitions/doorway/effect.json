@@ -1,0 +1,34 @@
+{
+ "id": "gl.transition/doorway",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Doorway",
+ "description": "The outgoing image opens like double doors as the incoming one comes forward, with a floor reflection (by gre, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "reflection": {
+    "title": "reflection",
+    "description": "Strength of the reflection",
+    "type": "number",
+    "default": 0.4,
+    "x-animatable": true
+   },
+   "perspective": {
+    "title": "perspective",
+    "description": "Amount of perspective",
+    "type": "number",
+    "default": 0.4,
+    "x-animatable": true
+   },
+   "depth": {
+    "title": "depth",
+    "type": "number",
+    "default": 3.0,
+    "x-animatable": true
+   }
+  }
+ }
+}

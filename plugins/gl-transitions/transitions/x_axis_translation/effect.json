@@ -1,0 +1,13 @@
+{
+ "id": "gl.transition/x_axis_translation",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "X Axis Translation",
+ "description": "The outgoing image slides to the right, uncovering a crossfade to the incoming one (by lizhongjian, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {}
+ }
+}

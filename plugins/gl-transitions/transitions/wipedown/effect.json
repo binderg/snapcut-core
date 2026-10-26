@@ -1,0 +1,13 @@
+{
+ "id": "gl.transition/wipedown",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Wipe Down",
+ "description": "A hard-edged wipe from top to bottom (by Jake Nelson, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {}
+ }
+}

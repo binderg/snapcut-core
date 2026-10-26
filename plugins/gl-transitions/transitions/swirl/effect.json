@@ -1,0 +1,13 @@
+{
+ "id": "gl.transition/swirl",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Swirl",
+ "description": "Both images swirl around the center while crossfading (by Sergey Kosarevsky, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {}
+ }
+}

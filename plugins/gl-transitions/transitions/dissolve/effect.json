@@ -1,0 +1,62 @@
+{
+ "id": "gl.transition/dissolve",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Dissolve",
+ "description": "The incoming image spreads over the outgoing one with a hot, glowing edge (by hjm1fb, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "u_line_width": {
+    "title": "uLineWidth",
+    "type": "number",
+    "default": 0.1,
+    "x-animatable": true
+   },
+   "u_spread_clr": {
+    "title": "uSpreadClr",
+    "type": "array",
+    "items": {
+     "type": "number"
+    },
+    "minItems": 3,
+    "maxItems": 3,
+    "default": [
+     1.0,
+     0.0,
+     0.0
+    ],
+    "x-animatable": true
+   },
+   "u_hot_clr": {
+    "title": "uHotClr",
+    "type": "array",
+    "items": {
+     "type": "number"
+    },
+    "minItems": 3,
+    "maxItems": 3,
+    "default": [
+     0.9,
+     0.9,
+     0.2
+    ],
+    "x-animatable": true
+   },
+   "u_pow": {
+    "title": "uPow",
+    "type": "number",
+    "default": 5.0,
+    "x-animatable": true
+   },
+   "u_intensity": {
+    "title": "uIntensity",
+    "type": "number",
+    "default": 1.0,
+    "x-animatable": true
+   }
+  }
+ }
+}

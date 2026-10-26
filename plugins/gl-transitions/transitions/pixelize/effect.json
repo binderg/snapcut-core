@@ -1,0 +1,34 @@
+{
+ "id": "gl.transition/pixelize",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Pixelize",
+ "description": "Both images pixelate, crossfade, then sharpen again (by gre, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "squares_min": {
+    "title": "squaresMin",
+    "description": "Number of squares at the strongest pixelation",
+    "type": "array",
+    "items": {
+     "type": "integer"
+    },
+    "minItems": 2,
+    "maxItems": 2,
+    "default": [
+     20,
+     20
+    ]
+   },
+   "steps": {
+    "title": "steps",
+    "description": "Number of pixelation steps; 0 for a continuous effect",
+    "type": "integer",
+    "default": 50
+   }
+  }
+ }
+}

@@ -1,0 +1,30 @@
+{
+ "id": "gl.transition/rectanglecrop",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Rectangle Crop",
+ "description": "The outgoing image shrinks into a small rectangle over a background color, then the incoming one grows from it (by martiniti, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "bgcolor": {
+    "title": "bgcolor",
+    "type": "array",
+    "items": {
+     "type": "number"
+    },
+    "minItems": 4,
+    "maxItems": 4,
+    "default": [
+     0.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    "x-animatable": true
+   }
+  }
+ }
+}

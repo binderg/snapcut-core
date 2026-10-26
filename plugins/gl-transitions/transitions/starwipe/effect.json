@@ -1,0 +1,58 @@
+{
+ "id": "gl.transition/starwipe",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Star Wipe",
+ "description": "A growing star reveals the incoming image (by Ben Lucas, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "border_thickness": {
+    "title": "border_thickness",
+    "description": "Thickness of the star's border",
+    "type": "number",
+    "default": 0.01,
+    "x-animatable": true
+   },
+   "star_rotation": {
+    "title": "star_rotation",
+    "type": "number",
+    "default": 0.75,
+    "x-animatable": true
+   },
+   "border_color": {
+    "title": "border_color",
+    "type": "array",
+    "items": {
+     "type": "number"
+    },
+    "minItems": 4,
+    "maxItems": 4,
+    "default": [
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    "x-animatable": true
+   },
+   "star_center": {
+    "title": "star_center",
+    "description": "Center of the star",
+    "type": "array",
+    "items": {
+     "type": "number"
+    },
+    "minItems": 2,
+    "maxItems": 2,
+    "default": [
+     0.5,
+     0.5
+    ],
+    "x-animatable": true
+   }
+  }
+ }
+}

@@ -1,0 +1,29 @@
+{
+ "id": "gl.transition/burn",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Burn",
+ "description": "A crossfade that brightens toward a color in the middle (by gre, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "color": {
+    "title": "color",
+    "type": "array",
+    "items": {
+     "type": "number"
+    },
+    "minItems": 3,
+    "maxItems": 3,
+    "default": [
+     0.9,
+     0.4,
+     0.2
+    ],
+    "x-animatable": true
+   }
+  }
+ }
+}

@@ -1,0 +1,36 @@
+{
+ "id": "gl.transition/directionalwipe",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Directionalwipe",
+ "description": "A soft-edged diagonal wipe (by gre, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "direction": {
+    "title": "direction",
+    "description": "Direction of the wipe",
+    "type": "array",
+    "items": {
+     "type": "number"
+    },
+    "minItems": 2,
+    "maxItems": 2,
+    "default": [
+     1.0,
+     -1.0
+    ],
+    "x-animatable": true
+   },
+   "smoothness": {
+    "title": "smoothness",
+    "description": "Softness of the edge",
+    "type": "number",
+    "default": 0.5,
+    "x-animatable": true
+   }
+  }
+ }
+}

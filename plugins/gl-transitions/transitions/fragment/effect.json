@@ -1,0 +1,13 @@
+{
+ "id": "gl.transition/fragment",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Fragment",
+ "description": "The outgoing image shatters into fragments that fly away (by lbl, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {}
+ }
+}

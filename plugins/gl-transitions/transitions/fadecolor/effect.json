@@ -1,0 +1,35 @@
+{
+ "id": "gl.transition/fadecolor",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Fadecolor",
+ "description": "A fade through a solid color, black by default (by gre, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "color": {
+    "title": "color",
+    "type": "array",
+    "items": {
+     "type": "number"
+    },
+    "minItems": 3,
+    "maxItems": 3,
+    "default": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "x-animatable": true
+   },
+   "color_phase": {
+    "title": "colorPhase",
+    "type": "number",
+    "default": 0.4,
+    "x-animatable": true
+   }
+  }
+ }
+}

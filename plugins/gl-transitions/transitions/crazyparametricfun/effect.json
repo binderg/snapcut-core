@@ -1,0 +1,38 @@
+{
+ "id": "gl.transition/crazyparametricfun",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Crazy Parametric Fun",
+ "description": "The outgoing image is pulled along a parametric curve into a psychedelic swirl (by mandubian, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "a": {
+    "title": "a",
+    "type": "number",
+    "default": 4.0,
+    "x-animatable": true
+   },
+   "b": {
+    "title": "b",
+    "type": "number",
+    "default": 1.0,
+    "x-animatable": true
+   },
+   "amplitude": {
+    "title": "amplitude",
+    "type": "number",
+    "default": 120.0,
+    "x-animatable": true
+   },
+   "smoothness": {
+    "title": "smoothness",
+    "type": "number",
+    "default": 0.1,
+    "x-animatable": true
+   }
+  }
+ }
+}

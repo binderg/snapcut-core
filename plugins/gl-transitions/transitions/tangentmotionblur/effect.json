@@ -1,0 +1,13 @@
+{
+ "id": "gl.transition/tangentmotionblur",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Tangent Motion Blur",
+ "description": "The outgoing image is flung away along a curve with motion blur (by chenkai, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {}
+ }
+}

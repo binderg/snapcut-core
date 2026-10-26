@@ -1,0 +1,13 @@
+{
+ "id": "gl.transition/bowtiehorizontal",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Bow Tie Horizontal",
+ "description": "Two triangles grow from the left and right edges into a bow tie that reveals the incoming image (by huynx, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {}
+ }
+}

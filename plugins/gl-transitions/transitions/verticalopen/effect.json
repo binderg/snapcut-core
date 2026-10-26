@@ -1,0 +1,13 @@
+{
+ "id": "gl.transition/verticalopen",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Vertical Open",
+ "description": "The incoming image opens from a line in the middle toward the left and right edges (by martiniti, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {}
+ }
+}

@@ -1,0 +1,27 @@
+{
+ "id": "gl.transition/circleopen",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Circleopen",
+ "description": "A soft-edged circle opens from the center to reveal the incoming image (by gre, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "smoothness": {
+    "title": "smoothness",
+    "description": "Softness of the circle's edge",
+    "type": "number",
+    "default": 0.3,
+    "x-animatable": true
+   },
+   "opening": {
+    "title": "opening",
+    "description": "Open the circle; false closes it instead",
+    "type": "boolean",
+    "default": true
+   }
+  }
+ }
+}

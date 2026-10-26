@@ -1,0 +1,13 @@
+{
+ "id": "gl.transition/heart",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Heart",
+ "description": "A heart shape grows from the center to reveal the incoming image (by gre, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {}
+ }
+}

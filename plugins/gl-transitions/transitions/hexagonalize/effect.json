@@ -1,0 +1,26 @@
+{
+ "id": "gl.transition/hexagonalize",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Hexagonalize",
+ "description": "Both images turn into hexagons, crossfade, then sharpen again (by Fernando Kuteken, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "steps": {
+    "title": "steps",
+    "type": "integer",
+    "default": 50
+   },
+   "horizontal_hexagons": {
+    "title": "horizontalHexagons",
+    "description": "Number of hexagons across",
+    "type": "number",
+    "default": 20.0,
+    "x-animatable": true
+   }
+  }
+ }
+}

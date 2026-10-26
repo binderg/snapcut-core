@@ -1,0 +1,20 @@
+{
+ "id": "gl.transition/advancedmosaic",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Advanced Mosaic",
+ "description": "Both images break into large blocks that blend, then sharpen into the incoming image (by Sergey Kosarevsky, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "pixel_size": {
+    "title": "pixelSize",
+    "type": "number",
+    "default": 50.0,
+    "x-animatable": true
+   }
+  }
+ }
+}

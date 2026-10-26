@@ -1,0 +1,13 @@
+{
+  "id": "gl-transitions",
+  "version": "1.0.0",
+  "engine": ">=0.1.0-rc.1",
+  "protocol": "1",
+  "name": "GL Transitions",
+  "description": "125 transitions from gl-transitions.com, converted to WGSL. Each keeps its author's license.",
+  "contributes": {
+    "effects": [
+      "transitions"
+    ]
+  }
+}

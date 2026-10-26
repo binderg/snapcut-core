@@ -1,0 +1,35 @@
+{
+ "id": "gl.transition/randomsquares",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Randomsquares",
+ "description": "The incoming image appears in random squares (by gre, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "size": {
+    "title": "size",
+    "description": "Number of squares (columns, rows)",
+    "type": "array",
+    "items": {
+     "type": "integer"
+    },
+    "minItems": 2,
+    "maxItems": 2,
+    "default": [
+     10,
+     10
+    ]
+   },
+   "smoothness": {
+    "title": "smoothness",
+    "description": "Softness of each square's switch",
+    "type": "number",
+    "default": 0.5,
+    "x-animatable": true
+   }
+  }
+ }
+}

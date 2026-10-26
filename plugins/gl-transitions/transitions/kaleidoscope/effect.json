@@ -1,0 +1,32 @@
+{
+ "id": "gl.transition/kaleidoscope",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Kaleidoscope",
+ "description": "A crossfade through a spinning kaleidoscope (by nwoeanhinnogaehr, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "speed": {
+    "title": "speed",
+    "type": "number",
+    "default": 1.0,
+    "x-animatable": true
+   },
+   "angle": {
+    "title": "angle",
+    "type": "number",
+    "default": 1.0,
+    "x-animatable": true
+   },
+   "power": {
+    "title": "power",
+    "type": "number",
+    "default": 1.5,
+    "x-animatable": true
+   }
+  }
+ }
+}

@@ -1,0 +1,13 @@
+{
+ "id": "gl.transition/fold",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Fold",
+ "description": "The incoming image unfolds from the left while the outgoing one folds away to the right (by nwoeanhinnogaehr, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {}
+ }
+}

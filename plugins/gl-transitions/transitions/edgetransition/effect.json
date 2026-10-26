@@ -1,0 +1,26 @@
+{
+ "id": "gl.transition/edgetransition",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Edge Transition",
+ "description": "Both images fade through black with their edges glowing (by Woohyun Kim, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "edge_thickness": {
+    "title": "edge_thickness",
+    "type": "number",
+    "default": 0.001,
+    "x-animatable": true
+   },
+   "edge_brightness": {
+    "title": "edge_brightness",
+    "type": "number",
+    "default": 8.0,
+    "x-animatable": true
+   }
+  }
+ }
+}

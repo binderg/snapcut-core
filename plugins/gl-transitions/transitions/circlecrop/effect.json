@@ -1,0 +1,30 @@
+{
+ "id": "gl.transition/circlecrop",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Circle Crop",
+ "description": "The outgoing image closes into a circle over a background color, then the incoming one opens from it (by fkuteken, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "bgcolor": {
+    "title": "bgcolor",
+    "type": "array",
+    "items": {
+     "type": "number"
+    },
+    "minItems": 4,
+    "maxItems": 4,
+    "default": [
+     0.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    "x-animatable": true
+   }
+  }
+ }
+}

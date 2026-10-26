@@ -1,0 +1,62 @@
+{
+ "id": "gl.transition/gridflip",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Grid Flip",
+ "description": "The image splits into a grid of tiles that flip one by one to the incoming image (by TimDonselaar, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "size": {
+    "title": "size",
+    "description": "Number of tiles (columns, rows)",
+    "type": "array",
+    "items": {
+     "type": "integer"
+    },
+    "minItems": 2,
+    "maxItems": 2,
+    "default": [
+     4,
+     4
+    ]
+   },
+   "pause": {
+    "title": "pause",
+    "type": "number",
+    "default": 0.1,
+    "x-animatable": true
+   },
+   "divider_width": {
+    "title": "dividerWidth",
+    "type": "number",
+    "default": 0.05,
+    "x-animatable": true
+   },
+   "bgcolor": {
+    "title": "bgcolor",
+    "type": "array",
+    "items": {
+     "type": "number"
+    },
+    "minItems": 4,
+    "maxItems": 4,
+    "default": [
+     0.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    "x-animatable": true
+   },
+   "randomness": {
+    "title": "randomness",
+    "type": "number",
+    "default": 0.1,
+    "x-animatable": true
+   }
+  }
+ }
+}

@@ -1,0 +1,13 @@
+{
+ "id": "gl.transition/crosswarp",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Crosswarp",
+ "description": "The outgoing image zooms in while the incoming one zooms out into place, sweeping from right to left (by Eke Péter <peterekepeter@gmail.com>, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {}
+ }
+}

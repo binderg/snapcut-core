@@ -1,0 +1,51 @@
+{
+ "id": "gl.transition/undulatingburnout",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Undulating Burn Out",
+ "description": "A circle with a wavy edge burns out from the center to reveal the incoming image (by pthrasher, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "smoothness": {
+    "title": "smoothness",
+    "description": "Softness of the edge",
+    "type": "number",
+    "default": 0.03,
+    "x-animatable": true
+   },
+   "center": {
+    "title": "center",
+    "description": "Center of the circle",
+    "type": "array",
+    "items": {
+     "type": "number"
+    },
+    "minItems": 2,
+    "maxItems": 2,
+    "default": [
+     0.5,
+     0.5
+    ],
+    "x-animatable": true
+   },
+   "color": {
+    "title": "color",
+    "type": "array",
+    "items": {
+     "type": "number"
+    },
+    "minItems": 3,
+    "maxItems": 3,
+    "default": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "x-animatable": true
+   }
+  }
+ }
+}

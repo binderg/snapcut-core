@@ -1,0 +1,13 @@
+{
+ "id": "gl.transition/zoominout",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Zoom In Out",
+ "description": "Zooms into the outgoing image until it blurs into a flat color, then out to the incoming one (by OllyOllyOlly, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {}
+ }
+}

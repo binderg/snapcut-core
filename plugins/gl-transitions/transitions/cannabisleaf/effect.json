@@ -1,0 +1,13 @@
+{
+ "id": "gl.transition/cannabisleaf",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Cannabisleaf",
+ "description": "A cannabis-leaf shape grows from the center to reveal the incoming image (by @Flexi23, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {}
+ }
+}

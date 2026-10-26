@@ -1,0 +1,13 @@
+{
+ "id": "gl.transition/windowblinds",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Windowblinds",
+ "description": "A crossfade through horizontal window blinds (by Fabien Benetou, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {}
+ }
+}

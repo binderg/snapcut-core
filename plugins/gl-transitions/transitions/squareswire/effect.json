@@ -1,0 +1,50 @@
+{
+ "id": "gl.transition/squareswire",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Squareswire",
+ "description": "Squares grow along a diagonal sweep to reveal the incoming image (by gre, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "squares": {
+    "title": "squares",
+    "description": "Number of squares (columns, rows)",
+    "type": "array",
+    "items": {
+     "type": "integer"
+    },
+    "minItems": 2,
+    "maxItems": 2,
+    "default": [
+     10,
+     10
+    ]
+   },
+   "direction": {
+    "title": "direction",
+    "description": "Direction of the sweep",
+    "type": "array",
+    "items": {
+     "type": "number"
+    },
+    "minItems": 2,
+    "maxItems": 2,
+    "default": [
+     1.0,
+     -0.5
+    ],
+    "x-animatable": true
+   },
+   "smoothness": {
+    "title": "smoothness",
+    "description": "Softness of the sweep",
+    "type": "number",
+    "default": 1.6,
+    "x-animatable": true
+   }
+  }
+ }
+}

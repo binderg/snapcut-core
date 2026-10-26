@@ -1,0 +1,20 @@
+{
+ "id": "gl.transition/polar_function",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Polar Function",
+ "description": "A flower shape with several petals grows to reveal the incoming image (by Fernando Kuteken, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {
+   "segments": {
+    "title": "segments",
+    "description": "Number of petals",
+    "type": "integer",
+    "default": 5
+   }
+  }
+ }
+}

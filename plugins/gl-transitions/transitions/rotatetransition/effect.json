@@ -1,0 +1,13 @@
+{
+ "id": "gl.transition/rotatetransition",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Rotate Transition",
+ "description": "The images spin around the center while crossfading (by haiyoucuv, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {}
+ }
+}

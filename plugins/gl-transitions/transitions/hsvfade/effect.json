@@ -1,0 +1,13 @@
+{
+ "id": "gl.transition/hsvfade",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Hsvfade",
+ "description": "A crossfade through the HSV color space that cycles through hues (by nwoeanhinnogaehr, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {}
+ }
+}

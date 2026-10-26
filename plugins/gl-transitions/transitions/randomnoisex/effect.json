@@ -1,0 +1,13 @@
+{
+ "id": "gl.transition/randomnoisex",
+ "version": "1.0.0",
+ "kind": "transition",
+ "runtime": "wgsl",
+ "name": "Random Noisex",
+ "description": "The incoming image appears pixel by pixel in random noise (by towrabbit, license MIT, GL Transitions)",
+ "shader": "transition.wgsl",
+ "params": {
+  "type": "object",
+  "properties": {}
+ }
+}
