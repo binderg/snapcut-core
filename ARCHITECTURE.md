@@ -204,7 +204,7 @@ FFmpeg handles decode and encode; a wgpu compositor handles everything between. 
 
 ## Effects and transitions
 
-Effects, transitions and generators share one manifest format: an id, a `kind` (`effect`, `transition` or `generator`), params as JSON Schema (with `x-animatable` on params that take keyframes), and a `runtime` that says how the code runs. The compositor stays in the core; effects plug into it.
+Effects, transitions and generators share one manifest format: an id, a `kind` (`effect`, `transition`, `audio` or `generator`; audio effects are under "Audio effects" below), params as JSON Schema (with `x-animatable` on params that take keyframes), and a `runtime` that says how the code runs. The compositor stays in the core; effects plug into it.
 
 **Runtimes live in the core; effects are plugins.** The core ships four runtimes, each wired into how frames move (GPU textures, the frame cache, the determinism rule, sandboxing, timeouts). Runtimes are not pluggable: a fifth way to run code would gain little and could break every effect at once. A plugin package can hold any mix of manifests; the core hands each to the runtime it names.
 
@@ -289,6 +289,22 @@ fn transition(uv: vec2<f32>) -> vec4<f32> {
 5. A user can promote a project effect into an installed plugin with one command.
 
 **Out of scope for v1:** multi-pass effects (blur pyramids, temporal effects that read neighboring frames). Design the manifest so a `passes` array can be added later without breaking single-pass effects.
+
+### Audio effects (decided Oct 25 2026)
+
+Audio effects use the same manifest, registry, packs, `effect.*` methods and keyframes as video effects, with `kind: "audio"`. They go on clips on audio tracks (`metadata.ve.effects`, the same list video clips use), in order, after the clip's speed change and before its gain and the crossfades and fades at its edges, so a cut still crossfades the processed sound. A video clip's sound is its linked audio clip: `effect.add` of an audio effect on a video clip is refused with the ID of that partner. `render.layers` lists each audio clip's effects with their values at the frame, like video layers. Renders that only differ in audio effects never need the GPU.
+
+| `runtime` | Author writes | Runs | Safety | For |
+| --- | --- | --- | --- | --- |
+| `ffmpeg` (first, built) | a filter chain template in the manifest: `"filter": "equalizer=f={freq}:t=q:w={q}:g={gain}"` | inside the audio graph every render already builds (export, preview, measurements, analyzers); no new dependency | only filters on an allow list (EQ, filters, dynamics, noise reduction, de-essing, modulation, echo), one linear chain, no quotes, labels or `;`, so a template cannot read or write files or add inputs | EQ, compression, gate, limiter, de-esser, noise reduction: most of what a talking head needs |
+| `wasm` (second) | Rust, C++ or anything compiled to WebAssembly: `process(block, params)` over f32 samples | CPU, in the same `wasmtime` runtime as video `wasm`, called per block of samples | sandboxed, like video `wasm` | custom DSP nobody shipped as an ffmpeg filter |
+| `clap` (later) | an existing CLAP plugin (the open audio plugin standard) | native, in-process, through its own crate `ve-clap` (an approved `unsafe` exception, like `ve-ofx`) | none: installed plugins the user trusts only, never project-local | running existing third-party audio plugins |
+
+**The `ffmpeg` contract.** `{name}` in the template is replaced by the param's value at render time (numbers and integers as decimals, booleans as 0 or 1). Params are `number`, `integer` or `boolean`. A param with `x-animatable: true` must fill a whole `key={name}` option, and that option must be one the filter can change while running (ffmpeg's `T` flag); keyframes are then sent with `asendcmd` at every keyframe and every 10 ms between them (ease curves included), so automation is smooth and sample-timed. The engine names each filter instance per clip so commands reach the right one.
+
+**Validation** (`fx.define`, and the tests for built-ins): the template parses, every placeholder is a param, every filter is on the allow list, animatable params map to runtime options, and a test run of half a second of tone through the chain at the defaults (and with a command for each animatable param) succeeds and produces finite samples.
+
+**Built-ins** in `plugins/core/effects/` (compiled in, like the video ones): `core.audio/eq`, `core.audio/highpass`, `core.audio/compressor`, `core.audio/noise_reduction`, `core.audio/deesser`.
 
 ## Plugin system
 

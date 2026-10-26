@@ -423,7 +423,7 @@ fn gpu_export_keeps_colors() {
         tl = edit::insert(&tl, &insert("asset_bars", None, None, None, false)).unwrap().0;
         let (a, b) = (work.join(format!("{name}-ffmpeg.mp4")), work.join(format!("{name}-gpu.mp4")));
         let s = settings(&tl);
-        ve_render::encode(&tl, span_all(&tl), &s, &a, &work).unwrap();
+        ve_render::encode(&tl, span_all(&tl), &s, &a, &work, &fx()).unwrap();
         ve_render::compose::encode(&tl, span_all(&tl), &s, &b, &work, &fx()).unwrap();
         assert_eq!(matrix_tag(&b), "bt709", "{name}: the GPU export says what it is");
         // Decoded by their tags (untagged: BT.601, ffmpeg's default and the engine's).
@@ -456,7 +456,7 @@ fn gpu_export_matches_the_ffmpeg_export() {
     assert!(!ve_render::needs_gpu(&tl, span_all(&tl)).unwrap(), "a plain project stays on ffmpeg");
     let (a, b) = (work.join("ffmpeg.mp4"), work.join("gpu.mp4"));
     let s = settings(&tl);
-    let ea = ve_render::encode(&tl, span_all(&tl), &s, &a, &work).unwrap();
+    let ea = ve_render::encode(&tl, span_all(&tl), &s, &a, &work, &fx()).unwrap();
     let eb = ve_render::compose::encode(&tl, span_all(&tl), &s, &b, &work, &fx()).unwrap();
     assert_eq!(ea.frames, eb.frames);
     let (fa, fb) = (decode_all(&a), decode_all(&b));
@@ -482,7 +482,7 @@ fn gpu_export_shows_effects_and_transitions() {
     assert!(ve_render::needs_gpu(&tl, span_all(&tl)).unwrap(), "effects and transitions pick the GPU");
     let (plain, fancy) = (work.join("plain.mp4"), work.join("fancy.mp4"));
     let s = settings(&tl);
-    ve_render::encode(&tl, span_all(&tl), &s, &plain, &work).unwrap();
+    ve_render::encode(&tl, span_all(&tl), &s, &plain, &work, &fx()).unwrap();
     ve_render::compose::encode(&tl, span_all(&tl), &s, &fancy, &work, &fx()).unwrap();
     let (fp, ff) = (decode_all(&plain), decode_all(&fancy));
     assert_eq!(fp.len(), ff.len());
@@ -583,7 +583,7 @@ fn bench_export() {
     };
     let o1 = work.join("ffmpeg.mp4");
     let t = Instant::now();
-    ve_render::encode(&tl, span, &s, &o1, &work).unwrap();
+    ve_render::encode(&tl, span, &s, &o1, &work, &fx()).unwrap();
     report("ffmpeg export", t, &o1);
     let o2 = work.join("gpu.mp4");
     let t = Instant::now();
@@ -745,7 +745,7 @@ fn still_images_render_with_transparency_on_both_paths() {
     assert!(f.get_pixel(8, 32).0[0] > 200, "red on the left");
     assert!(f.get_pixel(56, 32).0.iter().all(|&c| c < 20), "black where the image is clear");
     let out = work.join("solo.mp4");
-    let enc = ve_render::encode(&solo, span_all(&solo), &settings(&solo), &out, &work).unwrap();
+    let enc = ve_render::encode(&solo, span_all(&solo), &settings(&solo), &out, &work, &fx()).unwrap();
     assert_eq!(enc.frames, 30);
     assert_eq!(decode_all(&out).len(), 30);
 }

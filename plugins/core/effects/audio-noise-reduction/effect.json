@@ -1,0 +1,30 @@
+{
+  "id": "core.audio/noise_reduction",
+  "version": "1.0.0",
+  "kind": "audio",
+  "runtime": "ffmpeg",
+  "name": "Noise reduction",
+  "description": "Reduce steady background noise (hiss, fans, air conditioning) with an FFT denoiser. Too much makes voices sound watery.",
+  "filter": "afftdn=nr={amount}:nf={floor}",
+  "params": {
+    "type": "object",
+    "properties": {
+      "amount": {
+        "type": "number",
+        "minimum": 0.01,
+        "maximum": 97,
+        "default": 12,
+        "description": "How much to reduce the noise, dB. 6 to 15 is gentle to firm.",
+        "x-animatable": true
+      },
+      "floor": {
+        "type": "number",
+        "minimum": -80,
+        "maximum": -20,
+        "default": -50,
+        "description": "Level of the noise to remove, dB.",
+        "x-animatable": true
+      }
+    }
+  }
+}

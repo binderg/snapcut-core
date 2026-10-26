@@ -170,7 +170,10 @@ pub fn plan(tl: &Timeline, span: Span) -> Result<Plan, RenderError> {
             let (s, e) = (start.max(span.start), end.min(span.end));
             let head = if s > start { Edge::RangeEdge } else if head_is_cut { Edge::Cut } else { Edge::Open };
             let tail = if e < end { Edge::RangeEdge } else if next_is_clip_at_end { Edge::Cut } else { Edge::Open };
-            effects += clip.metadata.ve.effects.len();
+            // Audio effects render in the ffmpeg audio graph; only video ones need the GPU.
+            if track.kind == TrackKind::Video {
+                effects += clip.metadata.ve.effects.len();
+            }
             if let Some(seg) = segment(tl, track, clip, (start, end), (s, e), (head, tail), &mut out.warnings)? {
                 transforms += usize::from(track.kind == TrackKind::Video && seg.transform.is_some());
                 segs.push(seg);

@@ -733,10 +733,12 @@ fn effects_stack_on_video_clips_and_undo() {
     assert!(effects::get(&tl5, &blur).is_none());
     let applied = ve_ops::commit_patches(&tl, &tl5).unwrap();
     assert_eq!(ve_ops::apply_patch(&tl5, &applied.inverse).unwrap(), tl);
-    // Audio clips are refused.
+    // Audio clips take effects too (audio ones; the daemon checks the kind).
     let Composable::Track(a1) = &tl.tracks.children[1] else { panic!() };
     let Composable::Clip(ac) = &a1.children[0] else { panic!() };
-    assert!(effects::add(&tl, clip_id(ac).unwrap(), "core.color/desaturate", params(json!({})), None).is_err());
+    let (tl6, r) = effects::add(&tl, clip_id(ac).unwrap(), "core.audio/eq@1", params(json!({"gain": -6})), None).unwrap();
+    assert_eq!(&r.clip, clip_id(ac).unwrap());
+    assert_eq!(effects::get(&tl6, &r.effect).unwrap().effect, "core.audio/eq@1");
 }
 
 #[test]

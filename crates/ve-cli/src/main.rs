@@ -293,6 +293,9 @@ enum Command {
         at: Option<String>,
         #[command(flatten)]
         span: Span,
+        /// Only the picture (`video`) or only the sound (`audio`).
+        #[arg(long, value_parser = ["video", "audio"])]
+        only: Option<String>,
     },
     /// Grid of evenly spaced frames: `ve sheet --from 00:01:00:00 --to 00:01:30:00 --count 12 -o sheet.jpg`.
     Sheet {
@@ -446,7 +449,9 @@ enum FxCmd {
     /// Every effect and transition with its params.
     List,
     /// `ve fx define my_glow/`: validate a folder with effect.json and its
-    /// .wgsl (naga, then a GPU test render) and save it to the project.
+    /// .wgsl (naga, then a GPU test render) and save it to the project. An
+    /// audio effect (`"kind": "audio"`) is the manifest alone, with its ffmpeg
+    /// chain in `filter`; it is test-run through ffmpeg.
     Define {
         folder: PathBuf,
         #[arg(long)]
@@ -903,9 +908,14 @@ fn plan(cmd: &Command, json_output: bool) -> Plan {
             let mp = folder.join("effect.json");
             let text = std::fs::read_to_string(&mp).unwrap_or_else(|e| usage_error(format!("{}: {e}", mp.display()), json_output));
             let manifest: Value = serde_json::from_str(&text).unwrap_or_else(|e| usage_error(format!("{}: {e}", mp.display()), json_output));
-            let shader = manifest["shader"].as_str().unwrap_or("effect.wgsl").to_owned();
-            let sp = folder.join(&shader);
-            let source = std::fs::read_to_string(&sp).unwrap_or_else(|e| usage_error(format!("{}: {e}", sp.display()), json_output));
+            // Audio effects carry their code (the filter chain) in the manifest.
+            let source = if manifest["kind"] == "audio" {
+                String::new()
+            } else {
+                let shader = manifest["shader"].as_str().unwrap_or("effect.wgsl").to_owned();
+                let sp = folder.join(&shader);
+                std::fs::read_to_string(&sp).unwrap_or_else(|e| usage_error(format!("{}: {e}", sp.display()), json_output))
+            };
             // Images for image params travel with the shader.
             let mut files = serde_json::Map::new();
             for e in std::fs::read_dir(folder).into_iter().flatten().flatten() {
@@ -961,8 +971,12 @@ fn plan(cmd: &Command, json_output: bool) -> Plan {
             let format = if ext(output) == "png" { "png" } else { "jpeg" };
             q("render.frame", json!({ "at": at, "width": width, "format": format }))
         }
-        Command::Layers { at: Some(at), .. } => q("render.layers", json!({ "at": at })),
-        Command::Layers { span, .. } => q("render.layers", span_params(span)),
+        Command::Layers { at: Some(at), only, .. } => q("render.layers", json!({ "at": at, "only": only })),
+        Command::Layers { span, only, .. } => {
+            let mut p = span_params(span);
+            p["only"] = json!(only);
+            q("render.layers", p)
+        }
         Command::Sheet { span, count, columns, width, output } => {
             let mut p = span_params(span);
             p["count"] = json!(count);
@@ -1229,17 +1243,38 @@ fn num(v: &Value, unit: &str) -> String {
 fn print_layers(r: &Value) {
     let s = |v: &Value| v.as_str().unwrap_or("?").to_owned();
     let list = |v: &Value| v.as_array().into_iter().flatten().filter_map(Value::as_str).collect::<Vec<_>>().join(", ");
-    let Some(layers) = r["layers"].as_array() else {
+    let effect_lines = |fx: &Value| {
+        for e in fx.as_array().into_iter().flatten() {
+            let params: Vec<String> = e["params"].as_object().into_iter().flatten().map(|(k, v)| format!("{k}={v}")).collect();
+            let missing = if e["missing"].as_bool() == Some(true) { " (not installed)" } else { "" };
+            println!("       effect {} {}{missing}  {}", s(&e["id"]), s(&e["effect"]), params.join(" "));
+        }
+    };
+    if !r["at"].is_string() {
         for sp in r["spans"].as_array().into_iter().flatten() {
             let hidden = if sp["hidden"].is_array() { format!("  (hidden: {})", list(&sp["hidden"])) } else { String::new() };
-            let pic = if sp["visible"].as_array().is_some_and(|v| !v.is_empty()) { list(&sp["visible"]) } else { "no picture".into() };
-            let snd = if sp["audible"].as_array().is_some_and(|v| !v.is_empty()) { list(&sp["audible"]) } else { "silent".into() };
-            println!("{}-{}  {pic}{hidden}  |  {snd}", s(&sp["from"]), s(&sp["to"]));
+            let pic = match sp["visible"].as_array() {
+                Some(v) if !v.is_empty() => format!("  {}{hidden}", list(&sp["visible"])),
+                Some(_) => "  no picture".to_owned(),
+                None => String::new(),
+            };
+            let snd = match sp["audible"].as_array() {
+                Some(v) if !v.is_empty() => list(&sp["audible"]),
+                Some(_) => "silent".to_owned(),
+                None => String::new(),
+            };
+            let sep = if pic.is_empty() || snd.is_empty() { "  " } else { "  |  " };
+            println!("{}-{}{pic}{sep}{snd}", s(&sp["from"]), s(&sp["to"]));
         }
         return;
-    };
-    let disabled = if r["disabled"].is_array() { format!("  (off: {})", list(&r["disabled"])) } else { String::new() };
-    println!("at {}  visible: {}{disabled}", s(&r["at"]), list(&r["visible"]));
+    }
+    let layers = r["layers"].as_array().cloned().unwrap_or_default();
+    if r["layers"].is_array() {
+        let disabled = if r["disabled"].is_array() { format!("  (off: {})", list(&r["disabled"])) } else { String::new() };
+        println!("at {}  visible: {}{disabled}", s(&r["at"]), list(&r["visible"]));
+    } else {
+        println!("at {}", s(&r["at"]));
+    }
     for l in layers.iter().rev() {
         let mut what = s(&l["visibility"]);
         if what == "partial" {
@@ -1268,11 +1303,10 @@ fn print_layers(r: &Value) {
         if let Some(t) = l["transition"].as_object() {
             println!("       transition {} {} ({} with {}, {:.0}%)", s(&t["id"]), s(&t["transition"]), s(&t["role"]), s(&t["with"]), t["progress"].as_f64().unwrap_or(0.0) * 100.0);
         }
-        for e in l["effects"].as_array().into_iter().flatten() {
-            let params: Vec<String> = e["params"].as_object().into_iter().flatten().map(|(k, v)| format!("{k}={v}")).collect();
-            let missing = if e["missing"].as_bool() == Some(true) { " (not installed)" } else { "" };
-            println!("       effect {} {}{missing}  {}", s(&e["id"]), s(&e["effect"]), params.join(" "));
-        }
+        effect_lines(&l["effects"]);
+    }
+    if !r["audio"].is_array() {
+        return;
     }
     let muted = if r["muted"].is_array() { format!("  (off: {})", list(&r["muted"])) } else { String::new() };
     let heard = if r["audible"].as_array().is_some_and(|v| !v.is_empty()) { list(&r["audible"]) } else { "nothing".into() };
@@ -1290,6 +1324,7 @@ fn print_layers(r: &Value) {
             }
         }
         println!("{:4} {}  {} at {}  {what}", s(&a["track"]), s(&a["clip"]), a["asset"].as_str().unwrap_or("-"), s(&a["source_time"]));
+        effect_lines(&a["effects"]);
     }
 }
 

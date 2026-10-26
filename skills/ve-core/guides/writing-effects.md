@@ -1,8 +1,10 @@
 # Writing an effect or transition
 
 An effect or transition is a folder with a manifest and one WGSL function.
-This guide is the whole contract for the `wgsl` runtime. (Other runtimes,
-`wasm` and `ofx`, are planned; see ARCHITECTURE.md.)
+This guide is the whole contract for the `wgsl` runtime. Audio effects are a
+manifest alone, with an ffmpeg filter chain in place of code: see
+[Audio effects](#audio-effects) at the end. (Other runtimes, `wasm`, `ofx`
+and `clap`, are planned; see ARCHITECTURE.md.)
 
 ```
 effects/invert/
@@ -123,3 +125,42 @@ Or over the protocol: `fx.define {manifest, source, dry_run}`
 
 Built-in effects in `plugins/core/effects/` follow exactly this contract
 and are good examples.
+
+## Audio effects
+
+An audio effect is a folder with only `effect.json`: `"kind": "audio"`,
+`"runtime": "ffmpeg"`, and a `filter` (an ffmpeg audio filter chain with
+`{param}` placeholders) instead of `shader`.
+
+```
+effects/radio/
+  effect.json
+```
+
+```json
+{
+  "id": "project.radio",
+  "version": "1.0.0",
+  "kind": "audio",
+  "runtime": "ffmpeg",
+  "name": "Radio voice",
+  "filter": "highpass=f={low},lowpass=f={high}",
+  "params": {
+    "type": "object",
+    "properties": {
+      "low": {"type": "number", "minimum": 100, "maximum": 1000, "default": 400},
+      "high": {"type": "number", "minimum": 1000, "maximum": 8000, "default": 3000, "x-animatable": true}
+    }
+  }
+}
+```
+
+The allowed filters, and the rules for keyframeable params, are in
+[../methods/effects.md](../methods/effects.md#audio-effects). Try it the same way:
+
+```bash
+ve fx define effects-src/radio --dry-run    # check it and run tone through it
+ve fx define effects-src/radio
+ve effect add clip_7f3b project.radio       # the audio clip (A1)
+ve layers --at 00:00:06:00 --only audio     # shows the effect and its values
+```

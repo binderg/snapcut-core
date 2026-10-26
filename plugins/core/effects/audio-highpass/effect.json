@@ -1,0 +1,22 @@
+{
+  "id": "core.audio/highpass",
+  "version": "1.0.0",
+  "kind": "audio",
+  "runtime": "ffmpeg",
+  "name": "High-pass",
+  "description": "Remove rumble below a frequency: handling noise, wind, traffic, mic stand bumps. 80 Hz suits most voices.",
+  "filter": "highpass=f={frequency}:p=2",
+  "params": {
+    "type": "object",
+    "properties": {
+      "frequency": {
+        "type": "number",
+        "minimum": 20,
+        "maximum": 1000,
+        "default": 80,
+        "description": "Cut below this, Hz (12 dB per octave).",
+        "x-animatable": true
+      }
+    }
+  }
+}

@@ -827,7 +827,8 @@ mod tests {
     #[test]
     fn every_builtin_passes_its_test_render() {
         let gpu = Gpu::shared().unwrap();
-        for fx in &Registry::for_project(None).list {
+        // Audio effects are ffmpeg chains, tested in `fx::tests`.
+        for fx in Registry::for_project(None).list.iter().filter(|f| f.kind() != Kind::Audio) {
             gpu.test_fx(fx).unwrap_or_else(|e| panic!("{}: {e}", fx.manifest.id));
         }
     }
@@ -843,6 +844,7 @@ mod tests {
             name: "NaN".into(),
             description: String::new(),
             shader: "effect.wgsl".into(),
+            filter: None,
             params: serde_json::json!({"properties": {}}),
             skill: None,
         };

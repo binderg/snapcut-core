@@ -95,6 +95,7 @@ Exit codes: 0 ok, 2 bad arguments (the message says what), 3 stale revision,
 | Fade a layer in, move, rotate, crop | `ve transform clip_9c1e --key opacity@0s=0:ease-out --key opacity@0.5s=1` (eases: `ease-in`, `ease-out`, `ease-in-out`, `hold`, `cubic-bezier(x1,y1,x2,y2)`), `--rotation 90`, `--crop-left 0.2`; `--reset` puts it back |
 | Effects available | `ve fx list` |
 | Effect on a clip | `ve effect add clip_7f3a core.color/exposure --param stops=0.5`; change with `ve effect set fx_1a2b --param stops=1`, animate with `--key stops@0s=0 --key stops@2s=1`; `ve effect rm fx_1a2b` |
+| Audio effect on a clip's sound | `ve effect add clip_7f3b core.audio/highpass` on the audio clip (A1), not the video clip; `ve fx list` shows `audio` ones (EQ, compressor, noise reduction, de-esser) |
 | Transition on a cut | `ve transition add --at 00:00:42:10 [--type core.transition/wipe] [--duration 15f]`; `ve transition rm tr_1a2b` |
 | Markers | `ve marker add --at 00:01:00:00 --name chapter`, `ve marker rm --name silence` |
 | Undo / redo / what happened | `ve undo`, `ve redo`, `ve history` |
@@ -204,6 +205,7 @@ ve sheet --from 00:01:00:00 --to 00:01:30:00 --count 12 -o sheet.jpg
 ve frame --at 00:01:12:12 --width 640 -o cut.jpg   # exact frame at a cut
 ve layers --at 00:01:12:12                         # what is on screen and heard there, as text
 ve layers --from 00:01:00:00 --to 00:01:30:00      # which tracks show and are heard, span by span
+ve layers --at 00:01:12:12 --only audio            # just the sound: clips, gain, audio effects
 ve preview --from 00:01:05:00 --to 00:01:20:00 -o check.mp4   # if you can watch video
 ```
 

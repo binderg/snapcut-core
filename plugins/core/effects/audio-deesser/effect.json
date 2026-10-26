@@ -1,0 +1,35 @@
+{
+  "id": "core.audio/deesser",
+  "version": "1.0.0",
+  "kind": "audio",
+  "runtime": "ffmpeg",
+  "name": "De-esser",
+  "description": "Tame harsh s and sh sounds in speech.",
+  "filter": "deesser=i={intensity}:m={max_reduction}:f={frequency}",
+  "params": {
+    "type": "object",
+    "properties": {
+      "intensity": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1,
+        "default": 0.5,
+        "description": "How strongly it reacts to sibilance."
+      },
+      "max_reduction": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1,
+        "default": 0.5,
+        "description": "The most it may turn the s sounds down (0 to 1)."
+      },
+      "frequency": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1,
+        "default": 0.5,
+        "description": "How much of the high frequencies to keep (0 to 1)."
+      }
+    }
+  }
+}

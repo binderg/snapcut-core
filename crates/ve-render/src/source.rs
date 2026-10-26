@@ -13,8 +13,8 @@ use crate::{RenderError, default_crossfade, project_canvas};
 type Result<T> = std::result::Result<T, RenderError>;
 
 pub enum AudioSource<'a> {
-    /// The mixed timeline audio over `span`.
-    Timeline { tl: &'a Timeline, span: Span },
+    /// The mixed timeline audio over `span`, with audio effects from `fx`.
+    Timeline { tl: &'a Timeline, span: Span, fx: &'a crate::fx::Registry },
     /// A media file's first audio stream, whole.
     File { path: &'a Path },
 }
@@ -23,11 +23,11 @@ pub enum AudioSource<'a> {
 /// `filter` (if any) is applied before the output. Returns the plan's warnings.
 fn inputs(src: &AudioSource<'_>, filter: Option<&str>) -> Result<(Inputs<'static>, Vec<String>, Option<Graph>)> {
     match src {
-        AudioSource::Timeline { tl, span } => {
+        AudioSource::Timeline { tl, span, fx } => {
             let p = plan(tl, *span)?;
             let c = project_canvas(tl);
             let mut g = Graph::new();
-            let a = g.audio(&p, &c, default_crossfade());
+            let a = g.audio(&p, &c, default_crossfade(), fx)?;
             g.chain(format!("[{a}]{}[measure]", filter.unwrap_or("anull")));
             Ok((Inputs::Args(Vec::new()), p.warnings, Some(g)))
         }

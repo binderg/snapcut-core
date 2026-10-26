@@ -15,6 +15,7 @@
 //! Determinism rule: a frame is a pure function of (project, t). That is what
 //! makes the frame cache safe.
 
+pub mod afx;
 pub mod control;
 pub mod ffmpeg;
 pub mod fx;
@@ -210,13 +211,13 @@ pub struct Encoded {
     pub warnings: Vec<String>,
 }
 
-/// Render `span` to an MP4 at `out`.
-pub fn encode(tl: &Timeline, span: Span, s: &EncodeSettings, out: &Path, work: &Path) -> Result<Encoded> {
+/// Render `span` to an MP4 at `out`, with audio effects from `fx`.
+pub fn encode(tl: &Timeline, span: Span, s: &EncodeSettings, out: &Path, work: &Path, fx: &fx::Registry) -> Result<Encoded> {
     let p = plan(tl, span)?;
     let c = &s.canvas;
     let mut g = Graph::new();
     let v = g.video(&p, c);
-    let a = g.audio(&p, c, s.crossfade);
+    let a = g.audio(&p, c, s.crossfade, fx)?;
     let encoder = match &s.encoder {
         Some(e) => e.clone(),
         None => ffmpeg::h264_encoder()?.to_owned(),
@@ -237,6 +238,7 @@ pub fn encode_frames(
     s: &EncodeSettings,
     out: &Path,
     work: &Path,
+    fx: &fx::Registry,
     frame: &mut dyn FnMut(Q) -> Result<Vec<u8>>,
 ) -> Result<Encoded> {
     let p = plan(tl, span)?;
@@ -248,7 +250,7 @@ pub fn encode_frames(
         None => ffmpeg::h264_encoder()?.to_owned(),
     };
     let mut g = Graph::new();
-    let a = g.audio(&p, c, s.crossfade);
+    let a = g.audio(&p, c, s.crossfade, fx)?;
     let pipe_index = g.input_count();
     g.chain(format!(
         "[{pipe_index}:v]scale={}:{}:out_color_matrix=bt709:out_range=tv,format=yuv420p,setsar=1[gv]",
@@ -278,7 +280,7 @@ pub fn encode_frames(
 /// frame's [`compose::frame_key`], the audio plan and the encode settings.
 /// Equal keys mean an earlier preview file can be played again as is.
 pub fn preview_key(tl: &Timeline, span: Span, s: &EncodeSettings, fx: &fx::Registry) -> Result<String> {
-    preview_key_from(tl, span, s, &preview_frame_keys(tl, span, s, fx)?)
+    preview_key_from(tl, span, s, &preview_frame_keys(tl, span, s, fx)?, fx)
 }
 
 /// The [`compose::frame_key`] of every frame of a preview of `span`, in order.
@@ -295,7 +297,7 @@ pub fn preview_frame_keys(tl: &Timeline, span: Span, s: &EncodeSettings, fx: &fx
 }
 
 /// [`preview_key`] from frame keys already computed ([`preview_frame_keys`]).
-pub fn preview_key_from(tl: &Timeline, span: Span, s: &EncodeSettings, frame_keys: &[String]) -> Result<String> {
+pub fn preview_key_from(tl: &Timeline, span: Span, s: &EncodeSettings, frame_keys: &[String], fx: &fx::Registry) -> Result<String> {
     let c = &s.canvas;
     let mut h = blake3::Hasher::new();
     h.update(format!("preview v{} {:?} {} {} {} {} {}", compose::FRAME_KEY_VERSION, c, s.crf, s.x264_preset, s.audio_kbps, s.crossfade, span.start).as_bytes());
@@ -310,6 +312,11 @@ pub fn preview_key_from(tl: &Timeline, span: Span, s: &EncodeSettings, frame_key
                 format!("{} {} {} {} {} {} {:?} {:?}", seg.path.display(), seg.start - span.start, seg.end - span.start, seg.media_start, seg.speed, seg.volume_db, seg.head, seg.tail)
                     .as_bytes(),
             );
+            // Audio effects: which code (by hash) with which values; times are clip-relative.
+            for e in &seg.effects {
+                let code = fx.get(&e.effect).map_or(0, |f| f.hash);
+                h.update(format!("fx {} {code:x} {} {}", e.effect, seg.clip_start - span.start, serde_json::to_string(e).unwrap_or_default()).as_bytes());
+            }
         }
         h.update(b"|");
     }
@@ -359,11 +366,11 @@ pub fn needs_gpu(tl: &Timeline, span: Span) -> Result<bool> {
 /// Run the timeline's mixed audio over `span` through `filter` (e.g.
 /// `silencedetect=...`) and return ffmpeg's log, where analyzers report.
 /// Times in the log are seconds from the span start.
-pub fn audio_log(tl: &Timeline, span: Span, filter: &str, work: &Path) -> Result<(String, Vec<String>)> {
+pub fn audio_log(tl: &Timeline, span: Span, filter: &str, work: &Path, fx: &fx::Registry) -> Result<(String, Vec<String>)> {
     let p = plan(tl, span)?;
     let c = project_canvas(tl);
     let mut g = Graph::new();
-    let a = g.audio(&p, &c, default_crossfade());
+    let a = g.audio(&p, &c, default_crossfade(), fx)?;
     g.chain(format!("[{a}]{filter}[analysis]"));
     let o = ffmpeg::run(&g, &strings(&["-map", "[analysis]", "-f", "null", "-"]), work, true)?;
     Ok((o.stderr, p.warnings))

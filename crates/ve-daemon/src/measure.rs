@@ -236,10 +236,10 @@ struct Resolved {
 }
 
 impl Resolved {
-    fn source<'a>(&'a self, tl: &'a Timeline) -> AudioSource<'a> {
+    fn source<'a>(&'a self, tl: &'a Timeline, fx: &'a ve_render::fx::Registry) -> AudioSource<'a> {
         match &self.target {
             Target::File { path, .. } => AudioSource::File { path },
-            Target::Timeline(span) => AudioSource::Timeline { tl, span: *span },
+            Target::Timeline(span) => AudioSource::Timeline { tl, span: *span, fx },
         }
     }
 
@@ -369,7 +369,7 @@ pub fn loudness(p: &Snapshot, a: MeasureParams) -> Result<LoudnessResult, RpcErr
     let steps = steps(tl, a.resolution.as_ref(), r.length())?;
     let key = json!({ "step": steps.map(|s| s.0.to_string()) });
     let (mut out, hit) = cached(r.hash(), "loudness", &key, || {
-        let (l, warnings) = measure_loudness(&r.source(tl), &work)?;
+        let (l, warnings) = measure_loudness(&r.source(tl, &ve_render::fx::Registry::for_project(Some(p.root()))), &work)?;
         Ok(LoudnessResult {
             source: r.info(tl),
             integrated_lufs: l.integrated,
@@ -393,7 +393,7 @@ pub fn levels(p: &Snapshot, a: MeasureParams) -> Result<LevelsResult, RpcError> 
     let (mut out, hit) = cached(r.hash(), "levels", &key, || {
         let mut meter = LevelMeter::new(r.channels, r.sample_rate, steps.map(|s| s.0));
         let warnings =
-            ve_render::decode_audio(&r.source(tl), r.sample_rate, r.channels, &work, &mut |s| meter.push(s)).map_err(render_error)?;
+            ve_render::decode_audio(&r.source(tl, &ve_render::fx::Registry::for_project(Some(p.root()))), r.sample_rate, r.channels, &work, &mut |s| meter.push(s)).map_err(render_error)?;
         let l = meter.finish();
         let series = steps.map(|(step, n)| {
             let fit = |mut v: Vec<Option<f64>>| {
@@ -433,7 +433,7 @@ pub fn waveform(p: &Snapshot, a: WaveformParams) -> Result<WaveformResult, RpcEr
     let (mut out, hit) = cached(r.hash(), "waveform", &key, || {
         let mut w = WaveformBuilder::new(r.channels);
         let warnings =
-            ve_render::decode_audio(&r.source(tl), r.sample_rate, r.channels, &work, &mut |s| w.push(s)).map_err(render_error)?;
+            ve_render::decode_audio(&r.source(tl, &ve_render::fx::Registry::for_project(Some(p.root()))), r.sample_rate, r.channels, &work, &mut |s| w.push(s)).map_err(render_error)?;
         let w = w.finish(a.buckets);
         Ok(WaveformResult {
             source: r.info(tl),
@@ -458,7 +458,7 @@ pub fn pitch(p: &Snapshot, a: MeasureParams) -> Result<PitchResult, RpcError> {
     let key = json!({ "step": steps.map(|s| s.0.to_string()) });
     let (mut out, hit) = cached(r.hash(), "pitch", &key, || {
         let mut t = PitchTracker::default();
-        let warnings = ve_render::decode_audio(&r.source(tl), pitch::SAMPLE_RATE, 1, &work, &mut |s| t.push(s)).map_err(render_error)?;
+        let warnings = ve_render::decode_audio(&r.source(tl, &ve_render::fx::Registry::for_project(Some(p.root()))), pitch::SAMPLE_RATE, 1, &work, &mut |s| t.push(s)).map_err(render_error)?;
         let s = pitch::summarize(&t.frames);
         Ok(PitchResult {
             source: r.info(tl),
@@ -551,7 +551,8 @@ pub fn normalize(s: &Session, snap: &Snapshot, a: NormalizeParams) -> Result<Com
     let work = work_dir(snap);
     let tl = &snap.timeline;
     let sp = span(tl, a.from.as_ref(), a.to.as_ref())?;
-    let (l, mut warnings) = measure_loudness(&AudioSource::Timeline { tl, span: sp }, &work)?;
+    let fx = ve_render::fx::Registry::for_project(Some(snap.root()));
+    let (l, mut warnings) = measure_loudness(&AudioSource::Timeline { tl, span: sp, fx: &fx }, &work)?;
     let measured = l
         .integrated
         .ok_or_else(|| RpcError::invalid_params("nothing loud enough to measure there (all below -70 LUFS)"))?;

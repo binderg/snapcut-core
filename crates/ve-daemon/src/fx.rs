@@ -70,6 +70,64 @@ fn resolve(p: &OpenProject, reference: &str, kind: Kind) -> Result<Arc<Fx>, RpcE
     all.require(reference, kind).map_err(invalid)
 }
 
+/// The effect `effect.add` names: a video effect or an audio effect (not a transition).
+fn resolve_clip_fx(p: &OpenProject, reference: &str) -> Result<Arc<Fx>, RpcError> {
+    match resolve(p, reference, Kind::Effect) {
+        Ok(fx) => Ok(fx),
+        Err(e) => resolve(p, reference, Kind::Audio).map_err(|_| e),
+    }
+}
+
+/// The kind of track a clip is on, and its link group.
+fn clip_place(tl: &ve_model::Timeline, clip: &Id) -> Option<(ve_model::otio::TrackKind, Option<Id>)> {
+    use ve_model::otio::Composable;
+    tl.tracks.children.iter().find_map(|c| match c {
+        Composable::Track(t) => t.children.iter().find_map(|item| match item {
+            Composable::Clip(c) if ve_ops::lane::clip_id(c) == Some(clip) => Some((t.kind, c.metadata.ve.clip.as_ref().and_then(|m| m.link.clone()))),
+            _ => None,
+        }),
+        _ => None,
+    })
+}
+
+/// Clips on tracks of `kind` in a link group, as `clip_x (A1)`.
+fn partners(tl: &ve_model::Timeline, link: &Id, kind: ve_model::otio::TrackKind) -> Vec<String> {
+    use ve_model::otio::Composable;
+    let mut out = Vec::new();
+    for c in &tl.tracks.children {
+        let Composable::Track(t) = c else { continue };
+        if t.kind != kind {
+            continue;
+        }
+        for item in &t.children {
+            if let Composable::Clip(c) = item
+                && c.metadata.ve.clip.as_ref().and_then(|m| m.link.as_ref()) == Some(link)
+                && let Some(id) = ve_ops::lane::clip_id(c)
+            {
+                out.push(format!("{id} ({})", t.name));
+            }
+        }
+    }
+    out
+}
+
+/// Video effects go on video clips, audio effects on audio clips. A
+/// mismatch names the clip's linked partner, which is usually what was meant.
+fn check_target(p: &OpenProject, clip: &Id, fx: &Fx) -> Result<(), RpcError> {
+    use ve_model::otio::TrackKind;
+    let Some((kind, link)) = clip_place(&p.timeline, clip) else { return Ok(()) };
+    let want = if fx.kind() == Kind::Audio { TrackKind::Audio } else { TrackKind::Video };
+    if kind == want {
+        return Ok(());
+    }
+    let (what, is, other) = match want {
+        TrackKind::Audio => ("an audio effect", "a video clip", "its sound"),
+        TrackKind::Video => ("a video effect", "an audio clip", "its picture"),
+    };
+    let hint = link.map(|l| partners(&p.timeline, &l, want)).filter(|v| !v.is_empty()).map_or_else(String::new, |v| format!("; {other} is {}", v.join(", ")));
+    Err(invalid(format!("{} is {what}, and {clip} is {is}{hint}", fx.manifest.id)))
+}
+
 /// Copy a pack effect into `<project>/effects/`, so the project renders
 /// without the pack installed. Returns the new folder.
 fn copy_in(p: &OpenProject, fx: &Fx) -> Result<PathBuf, RpcError> {
@@ -137,7 +195,7 @@ pub struct FxInfo {
     /// What clips store: `id@major`.
     pub reference: String,
     pub version: String,
-    /// `effect` or `transition`.
+    /// `effect` (video), `transition` or `audio` (an audio effect).
     pub kind: String,
     pub runtime: String,
     pub name: String,
@@ -165,7 +223,10 @@ fn info(f: &Fx, plugin: Option<String>) -> FxInfo {
         id: f.manifest.id.clone(),
         reference: f.reference(),
         version: f.manifest.version.clone(),
-        kind: ve_render::fx::kind_word(f.kind()).into(),
+        kind: match f.kind() {
+            Kind::Audio => "audio".into(),
+            k => ve_render::fx::kind_word(k).into(),
+        },
         runtime: f.manifest.runtime.clone(),
         name: f.manifest.name.clone(),
         description: f.manifest.description.clone(),
@@ -194,9 +255,13 @@ pub fn list(p: &OpenProject) -> FxList {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DefineParams {
-    /// The `effect.json` manifest. `id` must start with `project.`; `runtime` must be `wgsl`.
+    /// The `effect.json` manifest. `id` must start with `project.`. `runtime`
+    /// is `wgsl` for video effects and transitions, `ffmpeg` for audio effects
+    /// (`kind: audio`, with the chain in the manifest's `filter`).
     pub manifest: Value,
-    /// The WGSL source: `fn effect(uv: vec2<f32>) -> vec4<f32>` or `fn transition(uv: vec2<f32>) -> vec4<f32>`.
+    /// The WGSL source: `fn effect(uv: vec2<f32>) -> vec4<f32>` or `fn
+    /// transition(uv: vec2<f32>) -> vec4<f32>`. Not used by audio effects.
+    #[serde(default)]
     pub source: String,
     /// Images for `"format": "image"` params: file name (PNG or JPEG) to base64 bytes.
     /// Saved next to the shader.
@@ -213,7 +278,7 @@ pub struct Defined {
     /// Folder written (absent on a dry run).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
-    /// GPU adapter the test render ran on.
+    /// GPU adapter the test render ran on (`ffmpeg` for audio effects).
     pub tested_on: String,
 }
 
@@ -237,21 +302,29 @@ pub fn define(p: &mut OpenProject, a: DefineParams) -> Result<Defined, RpcError>
         raw.push((name.clone(), bytes));
     }
     let fx = Fx::with_images(m, a.source, Origin::Project, None, images).map_err(invalid)?;
-    let gpu = ve_render::gpu::Gpu::shared().map_err(|e| RpcError::new(ve_protocol::ErrorCode::RenderFailure, e.to_string()))?;
-    gpu.test_fx(&fx).map_err(invalid)?;
+    let tested_on = if fx.kind() == Kind::Audio {
+        ve_render::afx::test(&fx).map_err(invalid)?;
+        "ffmpeg".to_owned()
+    } else {
+        let gpu = ve_render::gpu::Gpu::shared().map_err(|e| RpcError::new(ve_protocol::ErrorCode::RenderFailure, e.to_string()))?;
+        gpu.test_fx(&fx).map_err(invalid)?;
+        gpu.adapter.clone()
+    };
     let name = fx.manifest.id.trim_start_matches("project.").replace(['/', '.'], "_");
     let dir = p.root().join("effects").join(&name);
     if !a.dry_run {
         std::fs::create_dir_all(&dir).map_err(|e| internal(format!("{}: {e}", dir.display())))?;
         let json = serde_json::to_string_pretty(&fx.manifest).unwrap_or_default() + "\n";
         std::fs::write(dir.join("effect.json"), json).map_err(|e| internal(e.to_string()))?;
-        std::fs::write(dir.join(&fx.manifest.shader), &fx.source).map_err(|e| internal(e.to_string()))?;
+        if fx.kind() != Kind::Audio {
+            std::fs::write(dir.join(&fx.manifest.shader), &fx.source).map_err(|e| internal(e.to_string()))?;
+        }
         for (name, bytes) in &raw {
             std::fs::write(dir.join(name), bytes).map_err(|e| internal(e.to_string()))?;
         }
         Registry::forget(p.root());
     }
-    Ok(Defined { effect: info(&fx, None), path: (!a.dry_run).then(|| dir.display().to_string()), tested_on: gpu.adapter.clone() })
+    Ok(Defined { effect: info(&fx, None), path: (!a.dry_run).then(|| dir.display().to_string()), tested_on })
 }
 
 // --- effect.* ---
@@ -298,7 +371,7 @@ pub(crate) fn keyframes(p: &OpenProject, keys: &std::collections::BTreeMap<Strin
 }
 
 mutation_params! {
-    /// `effect.add`: put an effect on a video clip.
+    /// `effect.add`: put a video effect on a video clip, or an audio effect on an audio clip.
     pub struct EffectAddParams {
         pub clip: Id,
         /// Effect id (`core.color/exposure`) or `id@major`. `fx.list` lists them.
@@ -313,8 +386,9 @@ mutation_params! {
 }
 
 pub fn effect_add(p: &mut OpenProject, a: EffectAddParams) -> Result<Committed<EffectReport>, RpcError> {
-    let fx = resolve(p, &a.effect, Kind::Effect)?;
+    let fx = resolve_clip_fx(p, &a.effect)?;
     fx.check_params(&a.params).map_err(invalid)?;
+    check_target(p, &a.clip, &fx)?;
     with_fx(p, &fx, a.dry_run, |p| {
         commit(p, a.mutation(), "effect.add", |tl| effects::add(tl, &a.clip, &fx.reference(), a.params.clone(), a.index).map_err(invalid))
     })
@@ -339,7 +413,8 @@ mutation_params! {
 
 pub fn effect_set(p: &mut OpenProject, a: EffectSetParams) -> Result<Committed<EffectReport>, RpcError> {
     let inst = effects::get(&p.timeline, &a.id).ok_or_else(|| invalid(format!("no effect `{}` on any clip", a.id)))?.clone();
-    let fx = registry(p).require(&inst.effect, Kind::Effect).map_err(invalid)?;
+    let r = registry(p);
+    let fx = r.require(&inst.effect, Kind::Effect).or_else(|e| r.require(&inst.effect, Kind::Audio).map_err(|_| e)).map_err(invalid)?;
     if let Some(params) = &a.params {
         let set: Map<String, Value> = params.iter().filter(|(_, v)| !v.is_null()).map(|(k, v)| (k.clone(), v.clone())).collect();
         fx.check_params(&set).map_err(invalid)?;

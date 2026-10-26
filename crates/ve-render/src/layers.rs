@@ -63,6 +63,8 @@ pub struct AudioLayer {
     /// The clip's gain (`edit.set_volume`, plus what `edit.normalize` added).
     pub gain_db: f64,
     pub speed: Q,
+    /// Audio effects, in order, with their values at this frame.
+    pub effects: Vec<EffectAt>,
     /// False when the gain is at the -100 dB floor (silenced).
     pub audible: bool,
 }
@@ -304,6 +306,7 @@ fn frame(ctx: &Ctx<'_>, p: &Plan, at: Q, detail: bool) -> Result<Frame> {
                 source_time: seg.media_start + (at - seg.start) * seg.speed,
                 gain_db: seg.volume_db,
                 speed: seg.speed,
+                effects: if detail { effects_at(ctx, seg, at, Kind::Audio) } else { Vec::new() },
                 audible: seg.volume_db > SILENT_DB,
             });
         }
@@ -327,24 +330,7 @@ fn layer(ctx: &Ctx<'_>, track: &str, track_index: usize, seg: &Segment, at: Q, d
         .ok_or_else(|| RenderError::Media(format!("{}: {} has no probed video size", seg.clip, seg.path.display())))?;
     let (rect, xf, _) = layout(seg, at, src, &ctx.canvas);
     let (asset, alpha) = ctx.assets.get(&seg.path).cloned().map_or((None, Alpha::Unmeasured), |(id, a)| (Some(id), a));
-    let local = at - seg.clip_start;
-    let effects = if detail {
-        seg.effects
-            .iter()
-            .map(|e| {
-                let f = ctx.fx.require(&e.effect, Kind::Effect).ok();
-                EffectAt {
-                    id: e.id.to_string(),
-                    effect: e.effect.clone(),
-                    name: f.as_ref().map(|f| f.manifest.name.clone()),
-                    params: values(f.as_deref(), &e.params, &e.keyframes, local),
-                    missing: f.is_none(),
-                }
-            })
-            .collect()
-    } else {
-        Vec::new()
-    };
+    let effects = if detail { effects_at(ctx, seg, at, Kind::Effect) } else { Vec::new() };
     let tf = if detail { transform_at(seg, at) } else { None };
     let quarter = (f64::from(xf.rotation).to_degrees() / 90.0).round() * 90.0;
     let square = (f64::from(xf.rotation).to_degrees() - quarter).abs() < 1e-3;
@@ -371,6 +357,24 @@ fn layer(ctx: &Ctx<'_>, track: &str, track_index: usize, seg: &Segment, at: Q, d
         note: None,
         bbox: quad_box(rect, xf),
     })
+}
+
+/// A segment's effects with every param's value at `at`.
+fn effects_at(ctx: &Ctx<'_>, seg: &Segment, at: Q, kind: Kind) -> Vec<EffectAt> {
+    let local = at - seg.clip_start;
+    seg.effects
+        .iter()
+        .map(|e| {
+            let f = ctx.fx.require(&e.effect, kind).ok();
+            EffectAt {
+                id: e.id.to_string(),
+                effect: e.effect.clone(),
+                name: f.as_ref().map(|f| f.manifest.name.clone()),
+                params: values(f.as_deref(), &e.params, &e.keyframes, local),
+                missing: f.is_none(),
+            }
+        })
+        .collect()
 }
 
 fn round3(v: f64) -> f64 {

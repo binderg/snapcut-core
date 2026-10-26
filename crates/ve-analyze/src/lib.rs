@@ -90,11 +90,18 @@ fn secs(q: Q) -> String {
     format!("{}.{:06}", us / 1_000_000, us % 1_000_000)
 }
 
-/// Quiet stretches of the timeline's mixed audio over `span`: below
-/// `threshold_db` for at least `min_duration`.
-pub fn silence(tl: &Timeline, span: Span, threshold_db: f64, min_duration: Q, work: &Path) -> Result<(Vec<Silence>, Vec<String>), RenderError> {
+/// Quiet stretches of the timeline's mixed audio over `span` (audio
+/// effects from `fx` applied): below `threshold_db` for at least `min_duration`.
+pub fn silence(
+    tl: &Timeline,
+    span: Span,
+    threshold_db: f64,
+    min_duration: Q,
+    work: &Path,
+    fx: &ve_render::fx::Registry,
+) -> Result<(Vec<Silence>, Vec<String>), RenderError> {
     let filter = format!("silencedetect=noise={threshold_db}dB:duration={}", secs(min_duration));
-    let (log, warnings) = ve_render::audio_log(tl, span, &filter, work)?;
+    let (log, warnings) = ve_render::audio_log(tl, span, &filter, work, fx)?;
     Ok((parse_silence(&log, span), warnings))
 }
 

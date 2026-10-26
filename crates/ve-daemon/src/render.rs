@@ -332,11 +332,11 @@ fn encode(p: &Snapshot, sp: Span, settings: ve_render::EncodeSettings, kind: &st
         Some(forced) => forced,
         None => ve_render::needs_gpu(tl, sp).map_err(render_error)?,
     };
+    let fx = ve_render::fx::Registry::for_project(Some(p.root()));
     let e = if gpu {
-        let fx = ve_render::fx::Registry::for_project(Some(p.root()));
         ve_render::compose::encode(tl, sp, &settings, &path, &work, &fx)
     } else {
-        ve_render::encode(tl, sp, &settings, &path, &work)
+        ve_render::encode(tl, sp, &settings, &path, &work, &fx)
     }
     .map_err(render_error)?;
     let size_bytes = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
@@ -377,7 +377,7 @@ pub fn range_preview(s: &crate::Session, p: &Snapshot, a: PreviewParams) -> Resu
     let t0 = std::time::Instant::now();
     let fx = ve_render::fx::Registry::for_project(Some(p.root()));
     let frame_keys = ve_render::preview_frame_keys(tl, sp, &settings, &fx).map_err(render_error)?;
-    let key = ve_render::preview_key_from(tl, sp, &settings, &frame_keys).map_err(render_error)?;
+    let key = ve_render::preview_key_from(tl, sp, &settings, &frame_keys, &fx).map_err(render_error)?;
     let dir = p.cache_dir().join("previews");
     let path = dir.join(format!("{key}.mp4"));
     let meta = dir.join(format!("{key}.json"));
@@ -413,9 +413,9 @@ pub fn range_preview(s: &crate::Session, p: &Snapshot, a: PreviewParams) -> Resu
             let pool = have_gpu.then_some(&mut pool);
             cached_frame(s, p, t, c.width, Format::Jpeg, pool).map(|(f, _)| f.bytes.as_ref().clone()).map_err(|e| RenderError::Invalid(e.message))
         };
-        ve_render::encode_frames(tl, sp, &settings, &tmp, &work, &mut frame)
+        ve_render::encode_frames(tl, sp, &settings, &tmp, &work, &fx, &mut frame)
     } else {
-        ve_render::encode(tl, sp, &settings, &tmp, &work)
+        ve_render::encode(tl, sp, &settings, &tmp, &work, &fx)
     }
     .map_err(render_error)?;
     tracing::info!(

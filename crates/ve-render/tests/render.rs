@@ -109,7 +109,7 @@ fn render(tl: &Timeline, span: Span, xfade: Q, out: &Path) -> Vec<String> {
     let p = ve_render::plan(tl, span).unwrap();
     let mut g = Graph::new();
     let v = g.video(&p, &canvas());
-    let a = g.audio(&p, &canvas(), xfade);
+    let a = g.audio(&p, &canvas(), xfade, &ve_render::fx::Registry::for_project(None)).unwrap();
     let args: Vec<String> = ["-map", &format!("[{v}]"), "-map", &format!("[{a}]"), "-c:v", "ffv1", "-c:a", "pcm_s16le", "-f", "matroska"]
         .iter()
         .map(|s| (*s).to_owned())
@@ -245,7 +245,7 @@ fn frame_sheet_and_mp4_export() {
         crossfade: ve_render::default_crossfade(),
     };
     let mp4 = d.join("out.mp4");
-    let e = ve_render::encode(&tl, Span::new(Q::from_integer(0), fr(60)), &settings, &mp4, &d).unwrap();
+    let e = ve_render::encode(&tl, Span::new(Q::from_integer(0), fr(60)), &settings, &mp4, &d, &ve_render::fx::Registry::for_project(None)).unwrap();
     assert_eq!(e.frames, 60);
     let probe = Command::new("ffprobe")
         .args(["-v", "error", "-count_frames", "-select_streams", "v:0", "-show_entries", "stream=nb_read_frames", "-of", "csv=p=0"])

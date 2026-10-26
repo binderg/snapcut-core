@@ -28,6 +28,16 @@ pub struct LayersParams {
     /// Range end (exclusive); default the timeline end.
     #[serde(default)]
     pub to: Option<String>,
+    /// `video` or `audio`: answer for that side only. Default both.
+    #[serde(default)]
+    pub only: Option<Only>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum Only {
+    Video,
+    Audio,
 }
 
 /// `{at}` answers with the frame's layers; a range answers with `spans`.
@@ -50,20 +60,24 @@ pub struct FrameLayers {
     pub at: String,
     /// The project canvas; `rect`s are in its pixels.
     pub canvas: CanvasSize,
-    /// Video tracks that show at least partly, bottom to top.
-    pub visible: Vec<String>,
+    /// Video tracks that show at least partly, bottom to top (absent with `only: audio`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub visible: Option<Vec<String>>,
     /// Video tracks turned off (never drawn).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub disabled: Vec<String>,
-    /// Bottom to top. A track mid-transition has two layers.
-    pub layers: Vec<LayerInfo>,
-    /// Audio tracks with a clip that is heard.
-    pub audible: Vec<String>,
+    /// Bottom to top. A track mid-transition has two layers (absent with `only: audio`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub layers: Option<Vec<LayerInfo>>,
+    /// Audio tracks with a clip that is heard (absent with `only: video`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub audible: Option<Vec<String>>,
     /// Audio tracks turned off (never mixed).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub muted: Vec<String>,
-    /// Audio clips playing, first audio track first.
-    pub audio: Vec<AudioInfo>,
+    /// Audio clips playing, first audio track first (absent with `only: video`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub audio: Option<Vec<AudioInfo>>,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
@@ -84,6 +98,9 @@ pub struct AudioInfo {
     /// Playback speed, when not 1.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub speed: Option<f64>,
+    /// Audio effects, in order, with every param's value at this frame.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub effects: Vec<EffectAt>,
     /// False when the gain is at the -100 dB floor (silenced).
     pub audible: bool,
 }
@@ -193,13 +210,15 @@ pub struct RangeLayers {
 pub struct VisibleSpan {
     pub from: String,
     pub to: String,
-    /// Tracks that show, bottom to top.
-    pub visible: Vec<String>,
+    /// Tracks that show, bottom to top (absent with `only: audio`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub visible: Option<Vec<String>>,
     /// Tracks with a clip there that is entirely hidden.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub hidden: Vec<String>,
-    /// Audio tracks heard.
-    pub audible: Vec<String>,
+    /// Audio tracks heard (absent with `only: video`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub audible: Option<Vec<String>>,
 }
 
 pub fn layers(p: &Snapshot, a: LayersParams) -> Result<LayersResult, RpcError> {
@@ -208,13 +227,40 @@ pub fn layers(p: &Snapshot, a: LayersParams) -> Result<LayersResult, RpcError> {
     let fx = ve_render::fx::Registry::for_project(Some(p.root()));
     let Some(at) = &a.at else {
         let sp = span(tl, a.from.as_ref(), a.to.as_ref())?;
-        let spans = ve_render::layers::spans(tl, sp, &fx).map_err(render_error)?;
+        let mut spans = ve_render::layers::spans(tl, sp, &fx).map_err(render_error)?;
+        // One side only: drop the other side, then join stretches that now read the same.
+        if let Some(only) = a.only {
+            let mut joined: Vec<ve_render::layers::VisibleSpan> = Vec::new();
+            for mut s in spans {
+                match only {
+                    Only::Video => s.audible.clear(),
+                    Only::Audio => {
+                        s.visible.clear();
+                        s.hidden.clear();
+                    }
+                }
+                let empty = s.visible.is_empty() && s.hidden.is_empty() && s.audible.is_empty();
+                match joined.last_mut() {
+                    Some(l) if l.end == s.start && l.visible == s.visible && l.hidden == s.hidden && l.audible == s.audible => l.end = s.end,
+                    _ if empty => {}
+                    _ => joined.push(s),
+                }
+            }
+            spans = joined;
+        }
+        let (video, audio) = (a.only != Some(Only::Audio), a.only != Some(Only::Video));
         return Ok(LayersResult::Range(RangeLayers {
             from: tc(sp.start, rate),
             to: tc(sp.end, rate),
             spans: spans
                 .into_iter()
-                .map(|s| VisibleSpan { from: tc(s.start, rate), to: tc(s.end, rate), visible: s.visible, hidden: s.hidden, audible: s.audible })
+                .map(|s| VisibleSpan {
+                    from: tc(s.start, rate),
+                    to: tc(s.end, rate),
+                    visible: video.then_some(s.visible),
+                    hidden: s.hidden,
+                    audible: audio.then_some(s.audible),
+                })
                 .collect(),
         }));
     };
@@ -270,15 +316,17 @@ pub fn layers(p: &Snapshot, a: LayersParams) -> Result<LayersResult, RpcError> {
             note: l.note,
         })
         .collect();
+    let (video, audio) = (a.only != Some(Only::Audio), a.only != Some(Only::Video));
     Ok(LayersResult::Frame(FrameLayers {
         at: tc(f.at, rate),
         canvas: CanvasSize { width: f.canvas.0, height: f.canvas.1 },
-        visible: f.visible,
-        disabled: f.disabled,
-        layers,
-        audible: f.audible,
-        muted: f.muted,
-        audio: f
+        visible: video.then_some(f.visible),
+        disabled: if video { f.disabled } else { Vec::new() },
+        layers: video.then_some(layers),
+        audible: audio.then_some(f.audible),
+        muted: if audio { f.muted } else { Vec::new() },
+        audio: audio.then(|| {
+            f
             .audio
             .into_iter()
             .map(|a| AudioInfo {
@@ -290,8 +338,10 @@ pub fn layers(p: &Snapshot, a: LayersParams) -> Result<LayersResult, RpcError> {
                 source_time: ve_ops::lane::seconds_text(a.source_time),
                 gain_db: a.gain_db,
                 speed: (a.speed != ve_model::time::Q::from_integer(1)).then(|| *a.speed.numer() as f64 / *a.speed.denom() as f64),
+                effects: a.effects.into_iter().map(|e| EffectAt { id: e.id, effect: e.effect, name: e.name, params: e.params, missing: e.missing }).collect(),
                 audible: a.audible,
             })
-            .collect(),
+            .collect()
+        }),
     }))
 }

@@ -54,6 +54,8 @@ fn err(m: impl Into<String>) -> FxError {
 pub enum Kind {
     Effect,
     Transition,
+    /// An audio effect: an ffmpeg filter chain on audio clips ([`crate::afx`]).
+    Audio,
 }
 
 /// `effect.json`.
@@ -65,14 +67,19 @@ pub struct Manifest {
     /// Semver. Clips may pin the major version: `core.color/desaturate@1`.
     pub version: String,
     pub kind: Kind,
-    /// `wgsl` (the only runtime so far; `wasm`, `ofx` and `process` come later).
+    /// `wgsl` for video effects and transitions, `ffmpeg` for audio effects
+    /// (`wasm`, `ofx`, `clap` and `process` come later).
     #[serde(default = "wgsl")]
     pub runtime: String,
     pub name: String,
     #[serde(default)]
     pub description: String,
-    /// The code file next to the manifest.
+    /// The code file next to the manifest (`wgsl`).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub shader: String,
+    /// The ffmpeg filter chain template (`ffmpeg` runtime, audio effects).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filter: Option<String>,
     /// JSON Schema object whose `properties` are the params.
     #[serde(default = "empty_schema")]
     pub params: Value,
@@ -230,11 +237,17 @@ impl Fx {
         dir: Option<PathBuf>,
         images: BTreeMap<String, Arc<FxImage>>,
     ) -> Result<Self, FxError> {
-        if manifest.runtime != "wgsl" {
-            return Err(err(format!(
-                "runtime `{}` is not supported yet; only `wgsl` runs today (wasm, ofx and process come later)",
-                manifest.runtime
-            )));
+        match (manifest.runtime.as_str(), manifest.kind) {
+            ("wgsl", Kind::Audio) => {
+                return Err(err("audio effects run on the `ffmpeg` runtime: set \"runtime\": \"ffmpeg\" and give a \"filter\" chain"));
+            }
+            ("ffmpeg", Kind::Audio) | ("wgsl", _) => {}
+            ("ffmpeg", _) => return Err(err("the `ffmpeg` runtime is for audio effects (\"kind\": \"audio\")")),
+            (other, _) => {
+                return Err(err(format!(
+                    "runtime `{other}` is not supported yet; `wgsl` (video) and `ffmpeg` (audio) run today (wasm, ofx, clap and process come later)"
+                )));
+            }
         }
         let id_ok = !manifest.id.is_empty()
             && manifest.id.split(['.', '/']).all(|part| !part.is_empty() && part.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-'));
@@ -243,6 +256,16 @@ impl Fx {
         }
         semver::Version::parse(&manifest.version).map_err(|e| err(format!("version `{}`: {e}", manifest.version)))?;
         let params = parse_params(&manifest.params)?;
+        let source = if manifest.kind == Kind::Audio {
+            let filter = manifest.filter.clone().ok_or_else(|| err("an audio effect needs a \"filter\": an ffmpeg audio filter chain with {param} placeholders"))?;
+            crate::afx::check(&crate::afx::parse(&filter)?, &params)?;
+            filter
+        } else {
+            if manifest.shader.is_empty() {
+                return Err(err("a wgsl effect needs a \"shader\" file"));
+            }
+            source
+        };
         let mut h = DefaultHasher::new();
         serde_json::to_string(&manifest).unwrap_or_default().hash(&mut h);
         source.hash(&mut h);
@@ -250,6 +273,9 @@ impl Fx {
             img.hash.hash(&mut h);
         }
         let fx = Self { manifest, params, source, origin, dir, hash: h.finish(), images };
+        if fx.kind() == Kind::Audio {
+            return Ok(fx);
+        }
         for p in fx.image_params() {
             fx.check_image(p, &p.default).map_err(|e| err(format!("default: {e}")))?;
         }
@@ -347,6 +373,7 @@ impl Fx {
             Kind::Effect => {
                 s.push_str("fn src(uv: vec2<f32>) -> vec4<f32> { return textureSampleLevel(ve_a, ve_s, uv, 0.0); }\n");
             }
+            Kind::Audio => {}
             Kind::Transition => {
                 s.push_str("@group(0) @binding(4) var ve_b: texture_2d<f32>;\n");
                 s.push_str("fn outgoing(uv: vec2<f32>) -> vec4<f32> { return textureSampleLevel(ve_a, ve_s, uv, 0.0); }\n");
@@ -364,7 +391,7 @@ impl Fx {
         s.push_str("    var o: VeOut;\n    o.pos = vec4<f32>(xy * 2.0 - 1.0, 0.0, 1.0);\n");
         s.push_str("    o.uv = vec2<f32>(xy.x, 1.0 - xy.y);\n    return o;\n}\n");
         let call = match self.kind() {
-            Kind::Effect => "effect",
+            Kind::Effect | Kind::Audio => "effect",
             Kind::Transition => "transition",
         };
         s.push_str(&format!("@fragment fn ve_fs(i: VeOut) -> @location(0) vec4<f32> {{ return {call}(i.uv); }}\n"));
@@ -379,7 +406,7 @@ impl Fx {
         let (src, prelude) = self.wrapped();
         let file = &self.manifest.shader;
         let call = match self.kind() {
-            Kind::Effect => "fn effect(uv: vec2<f32>) -> vec4<f32>",
+            Kind::Effect | Kind::Audio => "fn effect(uv: vec2<f32>) -> vec4<f32>",
             Kind::Transition => "fn transition(uv: vec2<f32>) -> vec4<f32>",
         };
         let place = |line: u32, col: u32| -> String {
@@ -627,6 +654,15 @@ const BUILTINS: &[(&str, &str)] = &[
     builtin!("slide"),
 ];
 
+/// Built-in audio effects: a manifest only (the code is its `filter`).
+const AUDIO_BUILTINS: &[&str] = &[
+    include_str!("../../../plugins/core/effects/audio-eq/effect.json"),
+    include_str!("../../../plugins/core/effects/audio-highpass/effect.json"),
+    include_str!("../../../plugins/core/effects/audio-compressor/effect.json"),
+    include_str!("../../../plugins/core/effects/audio-noise-reduction/effect.json"),
+    include_str!("../../../plugins/core/effects/audio-deesser/effect.json"),
+];
+
 /// The effects and transitions a project can use.
 #[derive(Debug, Clone, Default)]
 pub struct Registry {
@@ -644,6 +680,10 @@ fn builtins() -> &'static [Arc<Fx>] {
                 let m: Manifest = serde_json::from_str(json).expect("built-in manifest parses");
                 Arc::new(Fx::new(m, (*wgsl).to_owned(), Origin::Builtin, None).expect("built-in effect validates"))
             })
+            .chain(AUDIO_BUILTINS.iter().map(|json| {
+                let m: Manifest = serde_json::from_str(json).expect("built-in manifest parses");
+                Arc::new(Fx::new(m, String::new(), Origin::Builtin, None).expect("built-in audio effect checks"))
+            }))
             .collect()
     })
 }
@@ -693,6 +733,10 @@ pub fn load_dir(dir: &Path, origin: Origin) -> Result<Fx, FxError> {
     let mp = dir.join("effect.json");
     let text = std::fs::read_to_string(&mp).map_err(|e| err(format!("{}: {e}", mp.display())))?;
     let m: Manifest = serde_json::from_str(&text).map_err(|e| err(format!("{}: {e}", mp.display())))?;
+    if m.kind == Kind::Audio {
+        // The code is the manifest's `filter`.
+        return Fx::new(m, String::new(), origin, Some(dir.to_path_buf()));
+    }
     let sp = dir.join(&m.shader);
     let source = std::fs::read_to_string(&sp).map_err(|e| err(format!("{}: {e}", sp.display())))?;
     Fx::with_images(m, source, origin, Some(dir.to_path_buf()), read_images(dir)?)
@@ -846,6 +890,7 @@ pub fn kind_word(k: Kind) -> &'static str {
     match k {
         Kind::Effect => "effect",
         Kind::Transition => "transition",
+        Kind::Audio => "audio effect",
     }
 }
 
@@ -863,6 +908,7 @@ mod tests {
             name: "Test".into(),
             description: String::new(),
             shader: "effect.wgsl".into(),
+            filter: None,
             params,
             skill: None,
         }
@@ -871,10 +917,15 @@ mod tests {
     #[test]
     fn builtins_load_and_validate() {
         let r = Registry::for_project(None);
-        assert_eq!(r.list.len(), 9);
+        assert_eq!(r.list.len(), 14);
         assert!(r.get("core.color/desaturate@1").is_some());
         assert!(r.get("core.color/desaturate@2").is_none());
         assert!(r.require("core.transition/wipe", Kind::Effect).is_err());
+        assert!(r.require("core.audio/eq", Kind::Effect).is_err(), "an audio effect is not a video effect");
+        // Every built-in audio effect runs through ffmpeg (on PATH for these tests), keyframes included.
+        for fx in r.list.iter().filter(|f| f.kind() == Kind::Audio) {
+            crate::afx::test(fx).unwrap_or_else(|e| panic!("{}: {e}", fx.manifest.id));
+        }
     }
 
     #[test]
@@ -882,7 +933,7 @@ mod tests {
         let root = std::env::temp_dir().join(format!("ve-fx-reuse-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("effects")).unwrap();
-        assert_eq!(Registry::for_project(Some(&root)).list.len(), 9);
+        assert_eq!(Registry::for_project(Some(&root)).list.len(), 14);
         // A new effect folder shows up once the recheck window has passed, or at once after `forget`.
         let dir = root.join("effects").join("tint2");
         std::fs::create_dir_all(&dir).unwrap();

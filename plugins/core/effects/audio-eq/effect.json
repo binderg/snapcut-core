@@ -1,0 +1,38 @@
+{
+  "id": "core.audio/eq",
+  "version": "1.0.0",
+  "kind": "audio",
+  "runtime": "ffmpeg",
+  "name": "EQ band",
+  "description": "Boost or cut one band of frequencies (a peaking equalizer). Stack several for a multi-band EQ.",
+  "filter": "equalizer=f={frequency}:t=q:w={q}:g={gain}",
+  "params": {
+    "type": "object",
+    "properties": {
+      "frequency": {
+        "type": "number",
+        "minimum": 20,
+        "maximum": 20000,
+        "default": 1000,
+        "description": "Center of the band, Hz.",
+        "x-animatable": true
+      },
+      "gain": {
+        "type": "number",
+        "minimum": -24,
+        "maximum": 24,
+        "default": 0,
+        "description": "Boost (+) or cut (-) at the center, dB.",
+        "x-animatable": true
+      },
+      "q": {
+        "type": "number",
+        "minimum": 0.1,
+        "maximum": 20,
+        "default": 1,
+        "description": "Sharpness: 0.7 is broad, 5 is narrow (to notch out a hum).",
+        "x-animatable": true
+      }
+    }
+  }
+}

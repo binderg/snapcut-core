@@ -43,6 +43,7 @@ whole timeline.
 | --- | --- | --- |
 | `at` | | One frame (snapped down to its frame): every layer and audio clip in detail |
 | `from`, `to` | whole timeline | Instead of `at`: which tracks show and are heard, as spans |
+| `only` | both | `video` or `audio`: answer for that side only. The other side's fields are left out, and range spans join where only the other side changed |
 
 **One frame** (`{"at": "00:00:42:00"}`). `visible` and `audible` are the
 short answers; `layers` (bottom to top) and `audio` are the detail:
@@ -92,6 +93,7 @@ dB down.
 | `disabled` (top level) | Video tracks turned off with `track.set`; never drawn |
 | `audio[].gain_db` | The clip's gain: `edit.set_volume`, plus what `edit.normalize` added. 0 is unity |
 | `audio[].speed` | Playback speed, when not 1 |
+| `audio[].effects` | Audio effects in stack order, each with every param's value at this frame, like `effects` on video layers ([effects.md](effects.md#audio-effects)) |
 | `audio[].audible` | False when the gain is at the -100 dB floor (silenced); the clip is still listed |
 | `muted` (top level) | Audio tracks turned off with `track.set`; never mixed |
 

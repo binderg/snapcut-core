@@ -396,7 +396,7 @@ pub fn encode(tl: &Timeline, span: Span, s: &EncodeSettings, out: &Path, work: &
     let mut pool = DecoderPool::default();
 
     let mut g = Graph::new();
-    let a = g.audio(&p, c, s.crossfade);
+    let a = g.audio(&p, c, s.crossfade, fx)?;
     let pipe_index = g.input_count();
     g.chain(format!("[{pipe_index}:v]scale=out_color_matrix={OUTPUT_MATRIX}:out_range=tv,format=yuv420p,setsar=1[gv]"));
     let pipe = ["-f", "rawvideo", "-pix_fmt", "rgba", "-s", &format!("{}x{}", c.width, c.height), "-framerate", &c.rate.to_string(), "-i", "-"]

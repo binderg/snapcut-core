@@ -92,14 +92,13 @@ fn report(c: &Clip, fx: Id) -> EffectReport {
     }
 }
 
-/// Add effect `reference` to a video clip, at `index` in its stack (default: last).
+/// Add effect `reference` to a clip, at `index` in its stack (default:
+/// last). Video effects belong on video clips and audio effects on audio
+/// clips; the caller, which knows the effect's kind, checks that.
 pub fn add(tl: &Timeline, clip: &Id, reference: &str, params: Map<String, Value>, index: Option<usize>) -> Result<(Timeline, EffectReport)> {
     let mut next = tl.clone();
     let id = Ids::new(tl.ids()).fresh("fx");
-    let (kind, c) = clip_mut(&mut next, clip)?;
-    if kind != TrackKind::Video {
-        return Err(EditError::new(format!("{clip} is an audio clip; effects apply to video clips (audio effects come later)")));
-    }
+    let (_, c) = clip_mut(&mut next, clip)?;
     let n = c.metadata.ve.effects.len();
     let at = index.unwrap_or(n);
     if at > n {

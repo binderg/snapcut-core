@@ -25,6 +25,9 @@ use std::path::PathBuf;
 
 use ve_model::time::{Q, Rate};
 
+use crate::RenderError;
+use crate::afx;
+use crate::fx::{Kind as FxKind, Registry};
 use crate::plan::{Edge, Plan, Segment};
 
 /// How a source fills the output frame when the aspect ratios differ.
@@ -337,8 +340,9 @@ impl Graph {
 
     /// The mixed audio of `plan`, stereo at the canvas sample rate, exactly
     /// as many samples as the range covers. `xfade` is the crossfade length
-    /// at cuts (0 for hard cuts).
-    pub fn audio(&mut self, plan: &Plan, c: &Canvas, xfade: Q) -> String {
+    /// at cuts (0 for hard cuts). Audio clips' effects come from `fx`; one
+    /// that is missing, or is not an audio effect, is an error.
+    pub fn audio(&mut self, plan: &Plan, c: &Canvas, xfade: Q, fx: &Registry) -> Result<String, RenderError> {
         let sr = Q::from_integer(i64::from(c.sample_rate));
         let start = plan.span.start;
         let total = index(plan.span.end - start, sr);
@@ -392,7 +396,7 @@ impl Graph {
                 lane_ends[l] = p.p1;
                 lane_of.push(l);
             }
-            let labels = self.audio_pieces(&pieces, c);
+            let labels = self.audio_pieces(&pieces, c, start, fx)?;
             for lane in 0..lane_ends.len() {
                 let mut parts = Vec::new();
                 let mut cursor = 0;
@@ -418,7 +422,7 @@ impl Graph {
         };
         let l = self.label("aout");
         self.chain(format!("[{mixed}]apad=whole_len={total},atrim=end_sample={total},asetpts=N/SR/TB[{l}]"));
-        l
+        Ok(l)
     }
 
     fn silence(&mut self, c: &Canvas, samples: i64) -> String {
@@ -430,7 +434,7 @@ impl Graph {
         l
     }
 
-    fn audio_pieces(&mut self, pieces: &[AudioPiece<'_>], c: &Canvas) -> Vec<String> {
+    fn audio_pieces(&mut self, pieces: &[AudioPiece<'_>], c: &Canvas, span_start: Q, fx: &Registry) -> Result<Vec<String>, RenderError> {
         let sr = Q::from_integer(i64::from(c.sample_rate));
         let mut out = Vec::with_capacity(pieces.len());
         let media: Vec<(Q, Q)> = pieces.iter().map(|p| (p.media_at_p0, p.media_at_p0 + Q::from_integer(p.p1 - p.p0) / sr * p.seg.speed)).collect();
@@ -478,6 +482,14 @@ impl Graph {
                     }
                     ch.push_str(",asetpts=N/SR/TB");
                 }
+                // Effects: after speed (they hear timeline-rate sound), before gain and edge fades.
+                let local = span_start + Q::from_integer(p.p0) / sr - p.seg.clip_start;
+                let len = Q::from_integer(n) / sr;
+                for e in &p.seg.effects {
+                    let f = fx.require(&e.effect, FxKind::Audio).map_err(|err| RenderError::Invalid(format!("{} on {}: {err}", e.id, p.seg.clip)))?;
+                    let name = self.label("fx");
+                    let _ = write!(ch, ",{}", afx::chain(&f, &e.params, &e.keyframes, local, len, &name));
+                }
                 if p.seg.volume_db != 0.0 {
                     let _ = write!(ch, ",volume={}dB", p.seg.volume_db);
                 }
@@ -495,7 +507,7 @@ impl Graph {
             }
             i = j;
         }
-        out
+        Ok(out)
     }
 }
 

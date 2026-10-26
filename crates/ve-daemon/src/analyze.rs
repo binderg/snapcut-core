@@ -107,7 +107,7 @@ pub fn silence(s: &Session, snap: &Snapshot, a: SilenceParams) -> Result<Committ
     if min <= Q::from_integer(0) || pad < Q::from_integer(0) {
         return Err(RpcError::invalid_params("min_duration must be positive and pad 0 or more"));
     }
-    let (found, warnings) = ve_analyze::silence(tl, sp, threshold, min, &work).map_err(render_error)?;
+    let (found, warnings) = ve_analyze::silence(tl, sp, threshold, min, &work, &ve_render::fx::Registry::for_project(Some(snap.root()))).map_err(render_error)?;
     let mut ranges = Vec::new();
     let mut new = Vec::new();
     for s in found {
