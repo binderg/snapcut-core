@@ -18,7 +18,12 @@ use serde::{Deserialize, Serialize};
 
 pub use error::{ErrorCode, RpcError};
 
-/// Protocol major version. Breaking changes only in a new major.
+/// Protocol major version. Within a major, changes are additive: new
+/// methods, new optional params, new result fields. Removing or renaming a
+/// method, param or result field, or making a param required, waits for the
+/// next major; until then the old form stays, marked with
+/// [`Registry::deprecate`]. `ve-daemon/tests/protocol.rs` fails on a
+/// breaking change against the snapshot of this major.
 pub const PROTOCOL_VERSION: u32 = 1;
 
 /// Who made a call. Recorded in history so edits can be shown and undone by actor.
@@ -51,6 +56,9 @@ pub struct MethodSpec {
     pub mutates: bool,
     pub params: schemars::Schema,
     pub result: schemars::Schema,
+    /// Set by [`Registry::deprecate`]: what to use instead. Still works
+    /// until the next protocol major.
+    pub deprecated: Option<&'static str>,
 }
 
 /// A method that exists only at run time (a plugin's), as `describe` shows it.
@@ -108,6 +116,7 @@ impl Registry {
             mutates,
             params: openrpc::schema_for::<P>(),
             result: openrpc::schema_for::<R>(),
+            deprecated: None,
         });
         self.module
             .register_method(name, move |params: Params<'_>, _, _| -> Result<R, ErrorObjectOwned> {
@@ -115,6 +124,15 @@ impl Registry {
                 f(p).map_err(Into::into)
             })
             .unwrap_or_else(|e| panic!("duplicate method {name}: {e}"));
+    }
+
+    /// Mark a registered method deprecated, with what to use instead. It
+    /// keeps working until the next protocol major; `describe` shows
+    /// `deprecated: true` and the note.
+    pub fn deprecate(&mut self, name: &str, instead: &'static str) {
+        assert!(!self.sealed, "registry is sealed; deprecate methods before seal()");
+        let spec = self.specs.iter_mut().find(|s| s.name == name).unwrap_or_else(|| panic!("no method {name} to deprecate"));
+        spec.deprecated = Some(instead);
     }
 
     /// Register `system.describe` (which needs the full method list) and freeze the registry.
@@ -245,6 +263,23 @@ mod tests {
         let resp = r.dispatch(r#"{"jsonrpc":"2.0","id":1,"method":"system.version"}"#).await;
         let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
         assert_eq!(v["result"]["protocol"], 1);
+    }
+
+    #[tokio::test]
+    async fn deprecated_methods_still_work_and_say_so() {
+        let mut r = Registry::new();
+        r.method("old.thing", "Old way", false, |_: NoParams| Ok(1u32));
+        r.method("new.thing", "New way", false, |_: NoParams| Ok(2u32));
+        r.deprecate("old.thing", "use new.thing");
+        let r = r.seal("test engine", "0.1.0");
+        let resp = r.dispatch(r#"{"jsonrpc":"2.0","id":1,"method":"old.thing"}"#).await;
+        assert!(resp.contains("\"result\":1"), "{resp}");
+        let doc: serde_json::Value = serde_json::from_str(&r.dispatch(r#"{"jsonrpc":"2.0","id":1,"method":"system.describe"}"#).await).unwrap();
+        let methods = doc["result"]["methods"].as_array().unwrap();
+        let old = methods.iter().find(|m| m["name"] == "old.thing").unwrap();
+        assert_eq!(old["deprecated"], true);
+        assert!(old["description"].as_str().unwrap().contains("use new.thing"));
+        assert!(methods.iter().find(|m| m["name"] == "new.thing").unwrap().get("deprecated").is_none());
     }
 
     #[tokio::test]

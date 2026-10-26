@@ -208,3 +208,91 @@ async fn keyframe_curves() {
     let doc = fs::read_to_string(dir.join("edit/project.otio")).unwrap();
     assert!(doc.contains("\"ease\": \"ease-in\"") && doc.contains("\"out\""), "saved");
 }
+
+/// Blend modes: a multiplied V2 does not hide V1 (`render.layers` says it is
+/// drawn over), the frame renders on the GPU, and unknown modes are refused.
+#[tokio::test]
+async fn blend_modes() {
+    let dir = scratch("blend");
+    make_talk(&dir.join("talk.mp4"));
+    let r = ve_daemon::build_registry();
+    ok(&r, "project.init", json!({"path": dir.join("edit"), "fps": "25", "width": 160, "height": 120})).await;
+    let asset = ok(&r, "media.import", json!({"paths": [dir.join("talk.mp4")], "base_rev": 0})).await["assets"][0]["id"].clone();
+    ok(&r, "edit.insert", json!({"asset": asset, "base_rev": 1})).await;
+    ok(&r, "track.add", json!({"kind": "video", "base_rev": 2})).await;
+    let ins = ok(&r, "edit.insert", json!({"asset": asset, "at": "0s", "track": "V2", "overwrite": true, "base_rev": 3})).await;
+    let top = ins["created"].as_array().unwrap().iter().find(|c| c["track"] == "V2").unwrap()["id"].clone();
+    let frame = ok(&r, "render.layers", json!({"at": "1s"})).await;
+    assert_eq!(frame["visible"], json!(["V2"]), "normal V2 hides V1: {frame}");
+
+    let t = ok(&r, "edit.set_transform", json!({"clip": top, "blend": "multiply", "base_rev": 4})).await;
+    assert_eq!(t["blend"], "multiply", "{t}");
+    let frame = ok(&r, "render.layers", json!({"at": "1s"})).await;
+    assert_eq!(frame["visible"], json!(["V1", "V2"]), "multiplied V2 shows V1 through: {frame}");
+    assert_eq!(frame["layers"][1]["transform"]["blend"], "multiply", "{frame}");
+    let f = ok(&r, "render.frame", json!({"at": "1s", "width": 160, "format": "png"})).await;
+    assert!(f["data"].as_str().is_some_and(|d| !d.is_empty()));
+
+    let resp = call(&r, "edit.set_transform", json!({"clip": top, "blend": "burnt", "base_rev": 5})).await;
+    assert!(resp["error"]["message"].as_str().unwrap().contains("color-burn"), "{resp}");
+    // null puts it back to normal, which drops the transform from the document.
+    ok(&r, "edit.set_transform", json!({"clip": top, "blend": null, "base_rev": 5})).await;
+    let frame = ok(&r, "render.layers", json!({"at": "1s"})).await;
+    assert_eq!(frame["visible"], json!(["V2"]), "{frame}");
+}
+
+/// Codec and container of each stream, from ffprobe.
+fn streams(path: &Path) -> Vec<(String, String)> {
+    let out = Command::new("ffprobe").args(["-v", "error", "-show_entries", "stream=codec_type,codec_name", "-of", "csv=p=0"]).arg(path).output().unwrap();
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|l| l.split_once(',').map(|(codec, kind)| (kind.trim().to_owned(), codec.trim().to_owned())))
+        .collect()
+}
+
+/// Every export format writes the codecs it names; ProRes 4444 keeps
+/// transparency where no clip draws; audio formats have no picture.
+#[tokio::test]
+async fn export_formats() {
+    let dir = scratch("formats");
+    make_talk(&dir.join("talk.mp4"));
+    let r = ve_daemon::build_registry();
+    ok(&r, "project.init", json!({"path": dir.join("edit"), "fps": "25", "width": 160, "height": 120})).await;
+    let asset = ok(&r, "media.import", json!({"paths": [dir.join("talk.mp4")], "base_rev": 0})).await["assets"][0]["id"].clone();
+    let ins = ok(&r, "edit.insert", json!({"asset": asset, "base_rev": 1})).await;
+    let video = ins["created"].as_array().unwrap().iter().find(|c| c["track"] == "V1").unwrap()["id"].clone();
+    // Half size in the middle: the corners are empty.
+    ok(&r, "edit.set_transform", json!({"clip": video, "scale": 0.5, "base_rev": 2})).await;
+
+    let listed = ok(&r, "render.presets", json!({})).await;
+    assert_eq!(listed["formats"].as_array().unwrap().len(), 9, "{listed}");
+
+    let cases = [
+        ("mp4", "mp4", "video/mp4", Some("h264"), "aac"),
+        ("hevc", "mp4", "video/mp4", Some("hevc"), "aac"),
+        ("prores", "mov", "video/quicktime", Some("prores"), "pcm_s24le"),
+        ("prores-4444", "mov", "video/quicktime", Some("prores"), "pcm_s24le"),
+        ("webm", "webm", "video/webm", Some("vp9"), "opus"),
+        ("wav", "wav", "audio/wav", None, "pcm_s24le"),
+        ("m4a", "m4a", "audio/mp4", None, "aac"),
+        ("mp3", "mp3", "audio/mpeg", None, "mp3"),
+        ("flac", "flac", "audio/flac", None, "flac"),
+    ];
+    for (format, ext, mime, vcodec, acodec) in cases {
+        let ex = ok(&r, "render.export", json!({"preset": "master", "format": format, "from": "0s", "to": "1s"})).await;
+        let path = PathBuf::from(ex["path"].as_str().unwrap());
+        assert_eq!(path.extension().unwrap(), ext, "{format}");
+        assert_eq!(ex["mime"], mime, "{format}");
+        let s = streams(&path);
+        assert_eq!(s.iter().find(|(t, _)| t == "video").map(|(_, c)| c.as_str()), vcodec, "{format}: {s:?}");
+        assert_eq!(s.iter().find(|(t, _)| t == "audio").map(|(_, c)| c.as_str()), Some(acodec), "{format}: {s:?}");
+        if format == "prores-4444" {
+            let out = Command::new("ffmpeg").args(["-v", "error", "-i"]).arg(&path).args(["-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgba", "-"]).output().unwrap();
+            let px = |x: usize, y: usize| out.stdout[(y * 160 + x) * 4 + 3];
+            assert_eq!(px(2, 2), 0, "corner is transparent");
+            assert_eq!(px(80, 60), 255, "the clip is opaque");
+        }
+    }
+    let resp = call(&r, "render.export", json!({"format": "avi"})).await;
+    assert!(resp["error"]["message"].as_str().unwrap().contains("formats are"), "{resp}");
+}

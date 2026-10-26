@@ -92,6 +92,7 @@ Edit results also give you each touched clip's `start` and `end` directly
 | `metadata.ve.clip.link` | Clips sharing a link (a file's picture and sound) are edited together unless a call says `linked: false` |
 | `metadata.ve.clip.speed` | Exact ratio `[num, den]`; `[3, 2]` is 1.5x. OTIO's `LinearTimeWarp` effect is written too, for other tools |
 | `metadata.ve.clip.volume_db` | Audio gain in dB (audio clips) |
+| `metadata.ve.clip.transform` | Picture placement (x, y, scale, rotation, opacity, crop), `blend` mode and keyframes ([../methods/edit.md](../methods/edit.md)) |
 | `metadata.ve.effects[]` | Effect stack, applied in order: `{id, effect: "core.color/exposure@1", params, keyframes}` ([../methods/effects.md](../methods/effects.md)). Rendered by the GPU compositor (frames, previews, exports) |
 
 A clip whose file is missing still loads; renders fail with
@@ -155,3 +156,10 @@ produce by default (`master` preset).
 `grp_` (undo groups), `fx_`, `kf_`. IDs are stable across edits and saves.
 A split keeps the ID on the left half and gives the right half a new one.
 Files from other tools get IDs on open (`ids_added` in the result).
+
+## Versions
+
+`schema_version` is the format of `metadata.ve`. An engine reads its own
+version, upgrades older ones on open (`upgraded_from` in the `project.open`
+result) and refuses newer ones. Before 1.0 a different minor version
+(0.2 vs 0.1) is a different format; from 1.0, a different major.

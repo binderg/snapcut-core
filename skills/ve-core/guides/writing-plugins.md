@@ -24,7 +24,10 @@ my-plugin/
 
 Put it in a project's `plugins/` folder to try it (the engine rescans on
 `plugin.list` and on a call to a method it does not know), or install it for
-every project with `ve plugin install my-plugin/`.
+every project with `ve plugin install my-plugin/`. Install refuses a plugin
+whose `engine` range or `protocol` does not match the engine (`--force`
+copies it anyway, but the engine still skips it on load and `ve plugin list`
+says why).
 
 ## `plugin.json`
 

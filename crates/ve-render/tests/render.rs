@@ -50,6 +50,7 @@ fn project(src: &Path) -> Timeline {
         kind: AssetKind::Source,
         hash: None,
         provenance: None,
+        rel: None,
         media: Some(probe.media),
     });
     let ins = Insert {
@@ -237,6 +238,7 @@ fn frame_sheet_and_mp4_export() {
 
     let settings = EncodeSettings {
         canvas: canvas(),
+        format: ve_render::Format::Mp4,
         encoder: None,
         crf: 20,
         x264_preset: "veryfast".into(),

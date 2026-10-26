@@ -268,12 +268,7 @@ fn check(found: &[Plugin], dir: &Path, engine: &semver::Version) -> Result<Manif
     if let Some(other) = found.iter().find(|p| p.manifest.id == m.id) {
         return Err(format!("plugin {} is also in {}, which takes priority", m.id, other.dir.display()));
     }
-    if !m.supports(engine) {
-        return Err(format!("plugin {} {} wants engine {}, this is {engine}", m.id, m.version, m.engine));
-    }
-    if m.protocol.split('.').next() != Some(PROTOCOL_VERSION.to_string().as_str()) {
-        return Err(format!("plugin {} speaks protocol {}, this engine speaks {PROTOCOL_VERSION}", m.id, m.protocol));
-    }
+    m.compatible(engine)?;
     Ok(m)
 }
 

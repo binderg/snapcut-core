@@ -17,6 +17,12 @@ not final (the command is `ve`).
 - A project is a folder holding `project.otio` (OpenTimelineIO JSON, read
   and written field for field like Python `opentimelineio` 0.18) plus
   `effects/`. Caches live in the OS cache folder, never in the project.
+- Moved media: assets also store their path relative to the project
+  folder, so a project folder moved with its media relinks itself on open.
+  `media.relink` (`ve relink`) points an asset at a new file or searches a
+  folder for every missing asset by content; `media.assets` lists `missing`.
+- Project format versions: an engine upgrades older project files on open
+  (`upgraded_from` in the `project.open` result) and refuses newer ones.
 - Exclusive project lock, atomic saves, stable IDs (`clip_7f3a`) for every
   clip, track, marker, asset and effect.
 - `ve probe`, `ve import` (deduplicated by content hash), `media.remove`.
@@ -38,6 +44,11 @@ not final (the command is `ve`).
   any length, with transparency kept: logos, title cards, photos.
 - Per-clip transforms (position, scale, rotation, opacity, crop) with
   keyframes.
+- Blend modes per clip (`blend` on `edit.set_transform`, `ve transform
+  --blend`): the W3C set (multiply, screen, overlay, darken, lighten,
+  color dodge/burn, hard/soft light, difference, exclusion, hue,
+  saturation, color, luminosity) plus add, subtract and linear burn, mixed
+  in sRGB values as Photoshop does. GPU only.
 - Every edit: optimistic concurrency (`base_rev`), dry runs, an actor, and
   a JSON Patch result. Undo and redo per actor, undo groups, history that
   survives restarts.
@@ -62,6 +73,11 @@ not final (the command is `ve`).
   presets: master, youtube-1080p, youtube-720p, vertical-1080x1920,
   draft-540p. Encoder: libx264 when available, else hardware, openh264 or
   mpeg4.
+- Export formats (`format` on `render.export`, `ve export --format`, or
+  from the `-o` extension): MP4 H.264, MP4 HEVC, ProRes 422 HQ, ProRes 4444
+  with alpha, WebM VP9/Opus, and audio only as WAV, M4A, MP3 or FLAC.
+- Captions: `transcript.get` with `format: srt` or `vtt` (`ve transcript
+  --format srt`), timed to the edited timeline.
 - Content-keyed frame and preview caches with background render-ahead.
 - `ve cache` shows and `ve cache clear` deletes the rebuildable caches
   (frames, previews, renders, measurements, extracted audio).
@@ -100,6 +116,12 @@ not final (the command is `ve`).
   (`id@1`, `id@2`); before, the second was refused as a duplicate.
 
 ### Protocol and tools
+
+- Protocol stability: within a protocol major, changes are additive; a
+  snapshot test fails the build on a breaking change. Deprecated methods are
+  marked in `describe` and keep working until the next major.
+- `ve plugin install` refuses plugins whose `engine` range or `protocol`
+  does not match (`--force` to copy anyway).
 
 - JSON-RPC 2.0 over a local socket and a WebSocket (token, loopback only),
   one daemon per project started on demand, `project.changed` events.

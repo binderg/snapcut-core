@@ -92,6 +92,19 @@ enum Command {
         #[arg(required = true)]
         paths: Vec<PathBuf>,
     },
+    /// Fix media that moved: `ve relink --folder D:/footage` finds every missing
+    /// asset there (by content); `ve relink asset_3f2a D:/new/take3.mp4` points one asset.
+    /// With no arguments, lists missing assets.
+    Relink {
+        asset: Option<String>,
+        path: Option<PathBuf>,
+        /// Search this folder and its subfolders for every missing asset.
+        #[arg(long)]
+        folder: Option<PathBuf>,
+        /// Use the file even if its content differs from the asset's.
+        #[arg(long)]
+        force: bool,
+    },
 
     /// Put an asset on the timeline: `ve insert asset_3f2a --at 00:00:10:00`.
     Insert {
@@ -243,6 +256,11 @@ enum Command {
         /// Remove a field's keyframes: `--clear-keys opacity`.
         #[arg(long = "clear-keys")]
         clear: Vec<String>,
+        /// How it mixes with the tracks below: normal, multiply, screen, overlay, darken, lighten,
+        /// color-dodge, color-burn, hard-light, soft-light, difference, exclusion, hue,
+        /// saturation, color, luminosity, add, subtract, linear-burn.
+        #[arg(long)]
+        blend: Option<String>,
         /// Start from the default before applying the rest.
         #[arg(long)]
         reset: bool,
@@ -325,6 +343,10 @@ enum Command {
         /// `ve export --list-presets` shows them. Default: `master` (project settings).
         #[arg(long)]
         preset: Option<String>,
+        /// mp4 (H.264), hevc, prores, prores-4444 (alpha), webm, or audio only: wav, m4a, mp3, flac.
+        /// Default: from the `-o` extension (.mov is prores), else mp4.
+        #[arg(long)]
+        format: Option<String>,
         #[arg(long)]
         list_presets: bool,
         #[command(flatten)]
@@ -357,6 +379,9 @@ enum Command {
         /// One asset's whole transcript, in its own media time.
         #[arg(long)]
         asset: Option<String>,
+        /// `text` (default), or captions: `srt` or `vtt` (`ve transcript --format srt > captions.srt`).
+        #[arg(long)]
+        format: Option<String>,
         #[command(flatten)]
         span: Span,
     },
@@ -394,7 +419,13 @@ enum PluginCmd {
     /// Installed plugins, their commands, and whether their secrets are set.
     List,
     /// Copy a plugin folder into your plugin folder (replacing an older copy of it).
-    Install { folder: PathBuf },
+    /// Refused when its `engine` range or `protocol` does not match this engine.
+    Install {
+        folder: PathBuf,
+        /// Install even if it does not match this engine.
+        #[arg(long)]
+        force: bool,
+    },
     /// API keys plugins need, kept in the OS keychain (never in the project).
     #[command(subcommand)]
     Secret(SecretCmd),
@@ -827,6 +858,10 @@ fn plan(cmd: &Command, json_output: bool) -> Plan {
             let paths: Vec<PathBuf> = paths.iter().map(|p| absolute(p)).collect();
             m("media.import", json!({ "paths": paths }))
         }
+        Command::Relink { asset: None, path: None, folder: None, .. } => q("media.assets", json!({})),
+        Command::Relink { asset, path, folder, force } => {
+            m("media.relink", json!({ "asset": asset, "path": path.as_deref().map(absolute), "folder": folder.as_deref().map(absolute), "force": force }))
+        }
         Command::Insert { asset, track, audio_track, at, source_in, source_out, duration, overwrite, no_video, no_audio } => m(
             "edit.insert",
             json!({
@@ -868,8 +903,11 @@ fn plan(cmd: &Command, json_output: bool) -> Plan {
         }
         Command::Volume { clip, db, unlinked } => m("edit.set_volume", json!({ "clip": clip, "db": db, "linked": !unlinked })),
         Command::Unlink { clip } => m("edit.unlink", json!({ "clip": clip })),
-        Command::Transform { clip, x, y, scale, rotation, opacity, crop_left, crop_right, crop_top, crop_bottom, keys, clear, reset } => {
+        Command::Transform { clip, x, y, scale, rotation, opacity, crop_left, crop_right, crop_top, crop_bottom, keys, clear, blend, reset } => {
             let mut p = json!({ "clip": clip, "reset": reset });
+            if let Some(b) = blend {
+                p["blend"] = json!(b);
+            }
             for (k, v) in [
                 ("x", x),
                 ("y", y),
@@ -991,9 +1029,16 @@ fn plan(cmd: &Command, json_output: bool) -> Plan {
             q("render.range_preview", p)
         }
         Command::Export { list_presets: true, .. } => q("render.presets", json!({})),
-        Command::Export { preset, span, .. } => {
+        Command::Export { preset, format, span, output, .. } => {
             let mut p = span_params(span);
             p["preset"] = json!(preset);
+            let ext = output.as_deref().and_then(|o| o.extension()).map(|e| e.to_string_lossy().to_lowercase());
+            let from_ext = match ext.as_deref() {
+                Some("mov") => Some("prores"),
+                Some(e @ ("mp4" | "webm" | "wav" | "m4a" | "mp3" | "flac")) => Some(e),
+                _ => None,
+            };
+            p["format"] = json!(format.as_deref().or(from_ext));
             q("render.export", p)
         }
         Command::Analyze(AnalyzeCmd::Silence { span, threshold, min, pad, no_markers }) => {
@@ -1037,8 +1082,9 @@ fn plan(cmd: &Command, json_output: bool) -> Plan {
         Command::Cache { cmd: Some(CacheCmd::Clear { kinds, dry_run }) } => {
             q("cache.clear", json!({ "kinds": kinds, "dry_run": dry_run }))
         }
-        Command::Transcript { asset, span } => {
-            let mut p = json!({ "format": if json_output { "words" } else { "text" } });
+        Command::Transcript { asset, format, span } => {
+            let default = if json_output { "words" } else { "text" };
+            let mut p = json!({ "format": format.as_deref().unwrap_or(default) });
             if let Some(a) = asset {
                 p["asset"] = json!(a);
             }
@@ -1582,6 +1628,31 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             println!("{}", result["url"].as_str().unwrap_or("?"));
             println!("{}", media_text(&result["media"]));
         }
+        Command::Relink { .. } => {
+            let file = |u: &Value| u.as_str().unwrap_or("?").to_owned();
+            for r in result["relinked"].as_array().into_iter().flatten() {
+                let note = if r["changed_content"].as_bool() == Some(true) { "  (different content, probed again)" } else { "" };
+                println!("{}  {} -> {}{note}", r["asset"].as_str().unwrap_or("?"), file(&r["from"]), file(&r["url"]));
+            }
+            let missing: Vec<&str> = result["missing"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+            if missing.is_empty() {
+                println!("no missing media");
+            } else {
+                let urls: std::collections::HashMap<&str, &str> = result["assets"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|a| Some((a["id"].as_str()?, a["url"].as_str()?)))
+                    .collect();
+                for id in &missing {
+                    println!("missing  {id}  {}", urls.get(id).copied().unwrap_or(""));
+                }
+                println!("fix with: ve relink --folder <where the files are now>");
+            }
+            if result.get("patch").is_some() {
+                print_commit(&result);
+            }
+        }
         Command::Import { .. } => {
             for a in result["assets"].as_array().into_iter().flatten() {
                 let file = a["url"].as_str().unwrap_or("?").rsplit('/').next().unwrap_or("?");
@@ -1770,7 +1841,7 @@ async fn plugin_command(cli: &Cli, cmd: &PluginCmd) -> anyhow::Result<()> {
             }
             print_plugins(&list);
         }
-        PluginCmd::Install { folder } => match ve_plugin::install(&absolute(folder)) {
+        PluginCmd::Install { folder, force } => match ve_plugin::install(&absolute(folder), &ve_daemon::ENGINE_VERSION.parse().expect("engine version is semver"), *force) {
             Ok((m, dest)) => {
                 if cli.json {
                     println!("{}", json!({ "id": m.id, "version": m.version.to_string(), "dir": dest }));

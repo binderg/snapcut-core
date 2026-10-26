@@ -51,7 +51,7 @@ when a word ends before it starts, starts before 0, has a confidence outside
 | --- | --- | --- |
 | `asset` | string? | One asset's whole transcript, in its media time |
 | `from`, `to` | time? | Without `asset`: the timeline range (default: all) |
-| `format` | `words` \| `text` | Default `words`. `text` gives readable lines instead |
+| `format` | `words` \| `text` \| `srt` \| `vtt` | Default `words`. `text` gives readable lines; `srt` and `vtt` give a caption file, in `text` |
 
 **With `asset`**: the stored transcript, with `language`, `speakers`,
 `provenance` and `words` (or `text`). No transcript yet -> `invalid_params`.
@@ -86,6 +86,13 @@ pause of a second or more, after a sentence once a line has 8 words, or at
 [00:00:00:02] S0: Hello world. Thanks for having me.
 [00:00:02:03] S1: Glad you could make it!
 ```
+
+**Captions.** `format: srt` or `vtt` (WebVTT) returns a caption file's
+contents in `text`; write it next to the export. Without `asset` the times
+are timeline times, so captions match the edited video. Words are grouped
+into captions of at most two 42-character lines and 6 seconds, with a new
+caption on a speaker change, a pause of 0.7 s or more, or after a sentence.
+WebVTT marks speakers with `<v S0>`; SRT has no speaker field.
 
 This is the cheapest way for an agent to see a talking head: read the text,
 find the words to cut, then use the word list for exact times.

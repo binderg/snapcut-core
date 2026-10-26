@@ -6,7 +6,7 @@
 //! the default build never needs a GPL codec.
 
 use ve_model::Timeline;
-use ve_render::{Canvas, EncodeSettings, Fit, project_canvas};
+use ve_render::{Canvas, EncodeSettings, Fit, Format, project_canvas};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Preset {
@@ -84,6 +84,7 @@ pub fn settings(tl: &Timeline, p: &Preset) -> EncodeSettings {
     let (width, height) = p.size.unwrap_or((base.width, base.height));
     EncodeSettings {
         canvas: Canvas { width: width & !1, height: height & !1, fit: p.fit, ..base },
+        format: Format::Mp4,
         encoder: None,
         crf: p.crf,
         x264_preset: p.x264_preset.to_owned(),
@@ -97,6 +98,7 @@ pub fn settings(tl: &Timeline, p: &Preset) -> EncodeSettings {
 pub fn preview_settings(tl: &Timeline, width: u32) -> EncodeSettings {
     EncodeSettings {
         canvas: project_canvas(tl).scaled_to_width(width),
+        format: Format::Mp4,
         encoder: None,
         crf: 28,
         // Previews are played once, locally, right after they are made: encode speed matters, size does not.

@@ -54,6 +54,11 @@ JSON-RPC 2.0 protocol. Primary use case: an agent editing real footage
 - **One method registry** (`ve-protocol::Registry` on jsonrpsee `RpcModule`);
   every transport calls `Registry::dispatch(raw_json)`. OpenRPC is generated
   from the same registrations, so it cannot drift.
+- **Protocol stability (Oct 25 2026):** additive within a protocol major.
+  `ve-daemon/tests/protocol.rs` diffs stable methods against
+  `tests/fixtures/protocol-<major>.json` and fails on removals, new required
+  params or narrowed types; record additions with `VE_UPDATE_PROTOCOL=1`.
+  Retire methods with `Registry::deprecate` (works until the next major).
 - **Optimistic concurrency:** mutating calls carry `base_rev`; `stale_revision`
   on conflict. Every call carries an `actor` (user/agent/plugin). Dry runs on all
   mutations. Plugin callbacks run inside a transaction (`txn_id`) so a plugin's
@@ -121,6 +126,11 @@ formats SMPTE (matches OTIO's timecode output; we don't wrap at 24h).
 Project folders (`ve-daemon::project`): `init`/`open`/`save` with an exclusive
 lock file in the OS cache dir (`ve/locks/<hash>.lock`, not the project folder,
 because of OneDrive), atomic saves, missing IDs assigned and saved on open.
+Format upgrades (`ve-model::migrate`): `schema_version` older than
+`SCHEMA_VERSION` runs raw-JSON steps on open (`upgraded_from` in the open
+result; saved on the next save), newer is refused. Bump the minor (pre-1.0)
+for any field an older engine would drop; add a step only to rewrite old
+files. No steps yet (nothing released).
 Methods `project.init|open|save|get|summary`; CLI `ve init`, `ve summary`,
 global `--project` (else nearest parent with `project.otio`). Error code
 `project_locked` (-31003, exit 6).
@@ -129,7 +139,12 @@ Media (`ve-media`, `ve-daemon::media`): `media.probe` (no project needed),
 bumps rev and saves), `media.assets`; CLI `ve probe`, `ve import`. Asset rows
 carry a compact `media` block (exact duration, size, nominal rate, rotation,
 vfr flag, first audio stream); full ffprobe JSON is not stored. Media URLs are
-absolute `file://`. VFR footage keeps `r_frame_rate` as its rate. No proxies
+absolute `file://`, with `rel` (path from the project folder, same drive
+only) beside it: `media::follow_moves` on open relinks missing files found
+at `rel` with the same size and refreshes stale `rel`s (saved like
+`ids_added`); `media.relink` (`ve relink`) takes `asset`+`path` (hash must
+match unless `force`) or a `folder` searched by name+size, then size, then
+blake3; `media.assets` lists `missing`. VFR footage keeps `r_frame_rate` as its rate. No proxies
 yet (needs jobs).
 Edit ops (`ve-ops`): insert, split, trim (ripple or roll), move (overwrite, or `reorder`: swap places by rotating the span, refused if it would split a link; the drag-to-push variant is `ui.move_push`, UI-only),
 ripple_delete (ranges, marker names or clips), delete (lift), set_speed,
@@ -167,7 +182,12 @@ out of placing audio by its own position. Matroska/WebM audio is decoded from
 the start (ms timestamps make seeks off by up to 0.5 ms). Methods
 `render.frame`, `render.contact_sheet` (base64 images), `render.range_preview`,
 `render.export` (MP4 in `<cache>/projects/<hash>/renders/`, CLI moves it to
-`-o`), `render.presets` (`ve-export`: master, youtube-1080p/720p,
+`-o`; `format`: `ve_render::Format` mp4/hevc/prores/prores-4444/webm and
+audio-only wav/m4a/mp3/flac, encoder per format via `ffmpeg::first_encoder`;
+prores-4444 always takes the GPU path, drawn on a transparent background
+(`Gpu::render_on`, CPU unpremultiply) and the blend shader handles a
+backdrop with alpha; audio-only skips the picture), captions as
+`transcript.get` `format: srt|vtt`, `render.presets` (`ve-export`: master, youtube-1080p/720p,
 vertical-1080x1920 (crop-fill), draft-540p). Encoder: libx264 if the local
 ffmpeg has it, else hardware, openh264, mpeg4.
 `VE_KEEP_GRAPH=1` keeps the generated graph for debugging. Tests check exact
@@ -233,7 +253,12 @@ skip a disabled video track (hidden) or audio track (muted).
 Transforms (`ve-ops::transform`, `edit.set_transform`, CLI `ve transform`):
 `metadata.ve.clip.transform` holds x/y (canvas fractions from center), scale
 (of the fitted size), rotation (degrees clockwise), opacity, crop per side,
-with keyframes like effects (clip-relative, moved on split). GPU only: the
+`blend` (one of `ve_model::meta::BLEND_MODES`: W3C set plus add, subtract,
+linear-burn), with keyframes like effects (clip-relative, moved on split).
+Blend modes mix in sRGB-encoded values (Photoshop), not linear light: before
+each blended picture the output so far is copied as its backdrop
+(`gpu::draw_blended`); frames with only normal pictures keep the one-pass
+draw, so they still match the ffmpeg path. GPU only: the
 rect shader draws a quad (crop as a UV sub-rect, rotation on the CPU,
 opacity in the fragment), and the default placement stays 0-diff vs ffmpeg.
 Decode size follows the largest scale the clip reaches, capped at the
@@ -373,6 +398,11 @@ Next, in order:
    (`skills/video-edit/SKILL.md`, every command in it run as written).
 
 Not done yet, and what the gate still needs (suggested order, not decided):
+- Ready to ship (ARCHITECTURE.md, TODO, "Ready to ship"): text layer in
+  core (needs a decision: `cosmic-text`), speed ramps, masks and track
+  mattes, audio keyframes/pan/fades/ducking, LUTs and the 601/709 choice,
+  compound clips and freeze frames, crash recovery and a soak test, GPU
+  export speed, testing across GPU vendors.
 - Run the gate for real: an agent with only the skill cutting real footage
   (so far only a synthetic 10-min talking head has been cut end to end).
 - (done) Daemon socket + connect-or-spawn + WebSocket + `project.changed`.

@@ -244,6 +244,7 @@ pub fn registry(session: Arc<Session>) -> Arc<Registry> {
 
     on_project!("media.import", "Probe, hash and add files to the asset table; same content is never added twice", true, media::import);
     on_project!("media.remove", "Remove assets from the asset table; refused while any clip uses them", true, media::remove);
+    on_project!("media.relink", "Point assets at files that moved: one asset to a path, or search a folder for every missing asset", true, media::relink);
     on_project!("media.assets", "The project's asset table", false, |p: &mut OpenProject, _: NoParams| Ok(media::assets(p)));
     {
         let s = session.clone();
@@ -332,9 +333,9 @@ pub fn registry(session: Arc<Session>) -> Arc<Registry> {
         |_: &Session, snap: &Snapshot, p| render::contact_sheet(snap, p));
     long!("render.range_preview", "A low-res MP4 of a range, written to the engine cache", false, render::PreviewParams,
         |s: &Session, snap: &Snapshot, p| render::range_preview(s, snap, p));
-    long!("render.export", "Render the timeline (or a range) with a preset to an MP4 in the engine cache", false, render::ExportParams,
+    long!("render.export", "Render the timeline (or a range) with a preset and format (MP4, HEVC, ProRes, WebM, audio) to the engine cache", false, render::ExportParams,
         |_: &Session, snap: &Snapshot, p| render::export(snap, p));
-    r.method("render.presets", "Export presets", false, |_: NoParams| Ok(render::presets()));
+    r.method("render.presets", "Export presets and formats", false, |_: NoParams| Ok(render::presets()));
     let s = session.clone();
     r.method(
         "render.layers",
@@ -456,6 +457,14 @@ pub struct ProjectInfo {
     pub revision: u64,
     /// Stable IDs given on open to items that had none (files from other tools).
     pub ids_added: usize,
+    /// Schema version the file had when this engine upgraded it on open
+    /// (the next save writes the current one, which older engines refuse).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub upgraded_from: Option<String>,
+    /// Missing media found at its place relative to the project folder (the
+    /// folder moved with its media) and relinked on open.
+    #[serde(default)]
+    pub relinked: usize,
 }
 
 impl ProjectInfo {
@@ -465,6 +474,8 @@ impl ProjectInfo {
             name: p.timeline.name.clone(),
             revision: p.revision(),
             ids_added: p.ids_added,
+            upgraded_from: p.upgraded_from.as_ref().map(ToString::to_string),
+            relinked: p.relinked,
         }
     }
 }

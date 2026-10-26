@@ -1,6 +1,6 @@
 //! `media.*` methods: probe files and keep the project's asset table.
 
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -56,6 +56,10 @@ pub struct ImportedAsset {
 pub struct AssetList {
     pub revision: u64,
     pub assets: Vec<Asset>,
+    /// Assets whose local file is not there (moved, renamed, on an unplugged
+    /// drive). Fix with `media.relink`.
+    #[serde(default)]
+    pub missing: Vec<Id>,
 }
 
 pub fn probe(p: ProbeParams) -> Result<ProbeResult, RpcError> {
@@ -70,6 +74,7 @@ pub fn import(project: &mut OpenProject, p: ImportParams) -> Result<Committed<Im
     if p.paths.is_empty() {
         return Err(RpcError::invalid_params("paths is empty"));
     }
+    let root = project.root().to_owned();
     crate::commit::commit(project, p.mutation(), "media.import", |tl| {
         let mut next = tl.clone();
         let mut ids = next.ids();
@@ -90,7 +95,8 @@ pub fn import(project: &mut OpenProject, p: ImportParams) -> Result<Committed<Im
                 }
             };
             out.push(ImportedAsset { id: id.clone(), url: url.clone(), existing: false, media: Some(media.clone()) });
-            assets.push(Asset { id, url, kind: AssetKind::Source, hash: Some(hash), provenance: None, media: Some(media) });
+            let rel = rel_path(&root, &url);
+            assets.push(Asset { id, url, kind: AssetKind::Source, hash: Some(hash), provenance: None, rel, media: Some(media) });
         }
         Ok((next, ImportResult { assets: out }))
     })
@@ -134,7 +140,210 @@ pub fn remove(project: &mut OpenProject, p: RemoveParams) -> Result<Committed<Re
 }
 
 pub fn assets(project: &OpenProject) -> AssetList {
-    AssetList { revision: project.revision(), assets: project.timeline.metadata.ve.assets.clone() }
+    let assets = &project.timeline.metadata.ve.assets;
+    AssetList { revision: project.revision(), assets: assets.clone(), missing: missing(assets) }
+}
+
+// --- relink ---
+
+/// Assets with a local file that does not exist. Other URL schemes are not checked.
+fn missing(assets: &[Asset]) -> Vec<Id> {
+    assets.iter().filter(|a| ve_render::plan::local_path(&a.url).is_some_and(|p| !p.exists())).map(|a| a.id.clone()).collect()
+}
+
+/// A canonical Windows path without its `\\?\` prefix, so it compares with
+/// paths read from `file://` URLs.
+fn plain(p: &Path) -> PathBuf {
+    match p.to_str().and_then(|s| s.strip_prefix(r"\\?\")) {
+        Some(rest) if !rest.starts_with(r"UNC\") => PathBuf::from(rest),
+        _ => p.to_owned(),
+    }
+}
+
+/// Where the file at `url` is relative to the project folder `root`, with
+/// `/` separators; `None` for other drives and non-file URLs.
+pub(crate) fn rel_path(root: &Path, url: &str) -> Option<String> {
+    let file = ve_render::plan::local_path(url)?;
+    let root = plain(root);
+    let (r, f): (Vec<Component<'_>>, Vec<Component<'_>>) = (root.components().collect(), file.components().collect());
+    let common = r.iter().zip(&f).take_while(|(a, b)| a == b).count();
+    // Both must share at least the drive and its root (`C:` + `\`, or `/`).
+    let needed = if matches!(r.first(), Some(Component::Prefix(_))) { 2 } else { 1 };
+    if common < needed {
+        return None;
+    }
+    let mut parts: Vec<String> = vec!["..".into(); r.len() - common];
+    parts.extend(f[common..].iter().map(|c| c.as_os_str().to_string_lossy().into_owned()));
+    Some(parts.join("/"))
+}
+
+fn from_rel(root: &Path, rel: &str) -> PathBuf {
+    rel.split('/').fold(plain(root), |p, part| p.join(part))
+}
+
+/// Point asset `i` at `path`: its URL, every clip using the old URL, and
+/// the relative hint. Returns the new URL.
+fn retarget(tl: &mut ve_model::Timeline, root: &Path, i: usize, path: &Path) -> Result<String, RpcError> {
+    let url = ve_media::file_url(path).map_err(media_error)?;
+    let old = tl.metadata.ve.assets[i].url.clone();
+    tl.retarget(&old, &url);
+    let a = &mut tl.metadata.ve.assets[i];
+    a.url = url.clone();
+    a.rel = rel_path(root, &url);
+    Ok(url)
+}
+
+/// On open: an asset whose file is gone but sits at its relative place (the
+/// project folder moved with its media) is pointed there, if the size
+/// matches. Relative hints of present files are brought up to date. Returns
+/// (assets relinked, hints changed).
+pub(crate) fn follow_moves(tl: &mut ve_model::Timeline, root: &Path) -> (usize, usize) {
+    let (mut relinked, mut hints) = (0, 0);
+    for i in 0..tl.metadata.ve.assets.len() {
+        let a = &tl.metadata.ve.assets[i];
+        let Some(path) = ve_render::plan::local_path(&a.url) else { continue };
+        if path.exists() {
+            let rel = rel_path(root, &a.url);
+            if rel != a.rel {
+                tl.metadata.ve.assets[i].rel = rel;
+                hints += 1;
+            }
+            continue;
+        }
+        let Some(candidate) = a.rel.as_deref().map(|r| from_rel(root, r)) else { continue };
+        let size = std::fs::metadata(&candidate).ok().filter(std::fs::Metadata::is_file).map(|m| m.len());
+        let fits = size.is_some() && a.media.as_ref().is_none_or(|m| Some(m.size_bytes) == size);
+        if fits && retarget(tl, root, i, &candidate).is_ok() {
+            relinked += 1;
+        }
+    }
+    (relinked, hints)
+}
+
+crate::commit::mutation_params! {
+    /// `media.relink`: point assets at files that moved or were renamed.
+    pub struct RelinkParams {
+        /// The asset to relink, with `path`. Without it, `folder` is searched for every missing asset.
+        #[serde(default)]
+        pub asset: Option<Id>,
+        /// The asset's file in its new place.
+        #[serde(default)]
+        pub path: Option<PathBuf>,
+        /// Search this folder and its subfolders for missing assets: a file with the same content
+        /// (blake3), looked for by name and size first, then by size alone (renamed files).
+        #[serde(default)]
+        pub folder: Option<PathBuf>,
+        /// With `asset` and `path`: use the file even if its content differs (it is probed again).
+        #[serde(default)]
+        pub force: bool,
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct RelinkResult {
+    pub relinked: Vec<Relinked>,
+    /// Assets still missing afterwards.
+    pub missing: Vec<Id>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct Relinked {
+    pub asset: Id,
+    pub from: String,
+    pub url: String,
+    /// The file has different content than the asset had (`force`); it was probed again.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub changed_content: bool,
+}
+
+/// Most files a folder search looks at.
+const SEARCH_LIMIT: usize = 200_000;
+
+/// Every file under `dir` with its size, skipping hidden folders.
+fn walk(dir: &Path, out: &mut Vec<(PathBuf, u64)>) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for e in entries.flatten() {
+        if out.len() >= SEARCH_LIMIT {
+            return;
+        }
+        let path = e.path();
+        let Ok(t) = e.file_type() else { continue };
+        if t.is_dir() {
+            if !e.file_name().to_string_lossy().starts_with('.') {
+                walk(&path, out);
+            }
+        } else if t.is_file()
+            && let Ok(m) = e.metadata()
+        {
+            out.push((path, m.len()));
+        }
+    }
+}
+
+type Found = (PathBuf, u64);
+
+/// A file in `files` with asset `a`'s content: same name and size first,
+/// then any file of the same size (a rename), checked by hash.
+fn find_in<'a>(files: &'a [Found], a: &Asset) -> Option<&'a Found> {
+    let name = ve_render::plan::local_path(&a.url).and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_lowercase()));
+    let size = a.media.as_ref().map(|m| m.size_bytes);
+    let sized = |f: &&Found| size.is_none_or(|s| s == f.1);
+    let named = |f: &&Found| name.as_deref().is_some_and(|n| f.0.file_name().is_some_and(|x| x.to_string_lossy().to_lowercase() == n));
+    let mut candidates: Vec<&Found> = files.iter().filter(sized).filter(named).collect();
+    if a.hash.is_some() && size.is_some() {
+        candidates.extend(files.iter().filter(sized).filter(|f| !named(f)));
+    }
+    candidates.into_iter().find(|f| a.hash.as_ref().is_none_or(|h| ve_media::hash_file(&f.0).is_ok_and(|x| x == *h)))
+}
+
+pub fn relink(project: &mut OpenProject, p: RelinkParams) -> Result<Committed<RelinkResult>, RpcError> {
+    let root = project.root().to_owned();
+    match (&p.asset, &p.path, &p.folder) {
+        (Some(_), Some(_), None) | (None, None, Some(_)) => {}
+        _ => return Err(RpcError::invalid_params("pass `asset` with `path`, or `folder` to search for every missing asset")),
+    }
+    if p.force && p.folder.is_some() {
+        return Err(RpcError::invalid_params("`force` only goes with `asset` and `path`"));
+    }
+    crate::commit::commit(project, p.mutation(), "media.relink", |tl| {
+        let mut next = tl.clone();
+        let mut done = Vec::new();
+        if let (Some(id), Some(path)) = (&p.asset, &p.path) {
+            let i = next.metadata.ve.assets.iter().position(|a| &a.id == id).ok_or_else(|| RpcError::invalid_params(format!("no asset {id}")))?;
+            let hash = ve_media::hash_file(path).map_err(media_error)?;
+            let same = next.metadata.ve.assets[i].hash.as_ref().is_none_or(|h| *h == hash);
+            if !same && !p.force {
+                return Err(RpcError::invalid_params(format!(
+                    "{} has different content than {id} was imported from; pass force to use it anyway (it is probed again, and clips keep their in and out points)",
+                    path.display()
+                )));
+            }
+            let from = next.metadata.ve.assets[i].url.clone();
+            let url = retarget(&mut next, &root, i, path)?;
+            if !same {
+                let media = ve_media::probe(path).map_err(media_error)?.media;
+                let a = &mut next.metadata.ve.assets[i];
+                a.hash = Some(hash);
+                a.media = Some(media);
+            }
+            done.push(Relinked { asset: id.clone(), from, url, changed_content: !same });
+        } else if let Some(folder) = &p.folder {
+            if !folder.is_dir() {
+                return Err(RpcError::invalid_params(format!("{} is not a folder", folder.display())));
+            }
+            let mut files = Vec::new();
+            walk(folder, &mut files);
+            for id in missing(&next.metadata.ve.assets) {
+                let i = next.metadata.ve.assets.iter().position(|a| a.id == id).expect("listed from the same table");
+                let Some((path, _)) = find_in(&files, &next.metadata.ve.assets[i]).cloned() else { continue };
+                let from = next.metadata.ve.assets[i].url.clone();
+                let url = retarget(&mut next, &root, i, &path)?;
+                done.push(Relinked { asset: id, from, url, changed_content: false });
+            }
+        }
+        let still = missing(&next.metadata.ve.assets);
+        Ok((next, RelinkResult { relinked: done, missing: still }))
+    })
 }
 
 fn media_error(e: MediaError) -> RpcError {

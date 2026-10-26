@@ -11,7 +11,10 @@
 //!    runs the transition shader into a third.
 //! 4. Everything is drawn bottom to top with premultiplied "over" onto
 //!    opaque black in an `Rgba8UnormSrgb` target (blending in linear light),
-//!    then read back.
+//!    then read back. A picture with a blend mode other than normal copies
+//!    what is drawn so far and mixes with it in its own pass
+//!    ([`BLEND_SHADER`]), in sRGB-encoded values as Photoshop and the W3C
+//!    spec do, so `multiply` and `screen` match what editors expect.
 //!
 //! Each picture is drawn as a quad: its rectangle, cropped, rotated around
 //! its center and multiplied by its opacity ([`Xf`]); the default draws the
@@ -59,11 +62,13 @@ pub struct Xf {
     pub rotation: f32,
     /// 0..1; multiplies the premultiplied colour.
     pub opacity: f32,
+    /// Index into [`ve_model::meta::BLEND_MODES`]; 0 is normal.
+    pub blend: u32,
 }
 
 impl Default for Xf {
     fn default() -> Self {
-        Self { crop: [0.0; 4], rotation: 0.0, opacity: 1.0 }
+        Self { crop: [0.0; 4], rotation: 0.0, opacity: 1.0, blend: 0 }
     }
 }
 
@@ -126,6 +131,118 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
 }
 ";
 
+/// A picture mixed with the backdrop (what is drawn below it) by blend mode
+/// `place.o.y` (the index in `BLEND_MODES`). The quad is the rect shader's.
+/// Formulas are the W3C Compositing spec's, applied to sRGB-encoded values;
+/// the result is laid over the backdrop by the picture's alpha as the spec's
+/// source-over with blending. On the usual opaque backdrop that is
+/// `(1 - a) * backdrop + a * blend(backdrop, picture)`; on a transparent one
+/// (exports with alpha) the picture shows as itself where nothing is below.
+const BLEND_SHADER: &str = r"
+struct Place { a: vec4<f32>, b: vec4<f32>, uv: vec4<f32>, o: vec4<f32> };
+@group(0) @binding(0) var tex: texture_2d<f32>;
+@group(0) @binding(1) var samp: sampler;
+@group(0) @binding(2) var<uniform> place: Place;
+@group(0) @binding(3) var backdrop: texture_2d<f32>;
+struct VsOut { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> };
+@vertex
+fn vs(@builtin(vertex_index) i: u32) -> VsOut {
+    var corners = array<vec2<f32>, 6>(
+        vec2(0.0, 0.0), vec2(1.0, 0.0), vec2(0.0, 1.0),
+        vec2(0.0, 1.0), vec2(1.0, 0.0), vec2(1.0, 1.0),
+    );
+    let c = corners[i];
+    let top = mix(place.a.xy, place.a.zw, c.x);
+    let bottom = mix(place.b.xy, place.b.zw, c.x);
+    var out: VsOut;
+    out.pos = vec4(mix(top, bottom, c.y), 0.0, 1.0);
+    out.uv = mix(place.uv.xy, place.uv.zw, c);
+    return out;
+}
+fn encode(c: vec3<f32>) -> vec3<f32> {
+    let x = clamp(c, vec3(0.0), vec3(1.0));
+    return select(1.055 * pow(x, vec3(1.0 / 2.4)) - 0.055, x * 12.92, x <= vec3(0.0031308));
+}
+fn decode(c: vec3<f32>) -> vec3<f32> {
+    let x = clamp(c, vec3(0.0), vec3(1.0));
+    return select(pow((x + 0.055) / 1.055, vec3(2.4)), x / 12.92, x <= vec3(0.04045));
+}
+fn screen(b: vec3<f32>, s: vec3<f32>) -> vec3<f32> { return b + s - b * s; }
+fn hard_light(b: vec3<f32>, s: vec3<f32>) -> vec3<f32> {
+    return select(screen(b, 2.0 * s - 1.0), b * 2.0 * s, s <= vec3(0.5));
+}
+fn dodge1(b: f32, s: f32) -> f32 {
+    if b <= 0.0 { return 0.0; }
+    if s >= 1.0 { return 1.0; }
+    return min(1.0, b / (1.0 - s));
+}
+fn burn1(b: f32, s: f32) -> f32 {
+    if b >= 1.0 { return 1.0; }
+    if s <= 0.0 { return 0.0; }
+    return 1.0 - min(1.0, (1.0 - b) / s);
+}
+fn soft1(b: f32, s: f32) -> f32 {
+    if s <= 0.5 { return b - (1.0 - 2.0 * s) * b * (1.0 - b); }
+    var d = sqrt(b);
+    if b <= 0.25 { d = ((16.0 * b - 12.0) * b + 4.0) * b; }
+    return b + (2.0 * s - 1.0) * (d - b);
+}
+fn lum(c: vec3<f32>) -> f32 { return dot(c, vec3(0.3, 0.59, 0.11)); }
+fn clip_color(c: vec3<f32>) -> vec3<f32> {
+    let l = lum(c);
+    let n = min(c.r, min(c.g, c.b));
+    let x = max(c.r, max(c.g, c.b));
+    var o = c;
+    if n < 0.0 { o = l + (o - l) * l / max(l - n, 1e-6); }
+    if x > 1.0 { o = l + (o - l) * (1.0 - l) / max(x - l, 1e-6); }
+    return o;
+}
+fn set_lum(c: vec3<f32>, l: f32) -> vec3<f32> { return clip_color(c + (l - lum(c))); }
+fn sat(c: vec3<f32>) -> f32 { return max(c.r, max(c.g, c.b)) - min(c.r, min(c.g, c.b)); }
+fn set_sat(c: vec3<f32>, s: f32) -> vec3<f32> {
+    let n = min(c.r, min(c.g, c.b));
+    let r = sat(c);
+    if r <= 0.0 { return vec3(0.0); }
+    return (c - n) * s / r;
+}
+fn blend(b: vec3<f32>, s: vec3<f32>, mode: u32) -> vec3<f32> {
+    switch mode {
+        case 1u: { return b * s; }
+        case 2u: { return screen(b, s); }
+        case 3u: { return hard_light(s, b); }
+        case 4u: { return min(b, s); }
+        case 5u: { return max(b, s); }
+        case 6u: { return vec3(dodge1(b.r, s.r), dodge1(b.g, s.g), dodge1(b.b, s.b)); }
+        case 7u: { return vec3(burn1(b.r, s.r), burn1(b.g, s.g), burn1(b.b, s.b)); }
+        case 8u: { return hard_light(b, s); }
+        case 9u: { return vec3(soft1(b.r, s.r), soft1(b.g, s.g), soft1(b.b, s.b)); }
+        case 10u: { return abs(b - s); }
+        case 11u: { return b + s - 2.0 * b * s; }
+        case 12u: { return set_lum(set_sat(s, sat(b)), lum(b)); }
+        case 13u: { return set_lum(set_sat(b, sat(s)), lum(b)); }
+        case 14u: { return set_lum(s, lum(b)); }
+        case 15u: { return set_lum(b, lum(s)); }
+        case 16u: { return min(b + s, vec3(1.0)); }
+        case 17u: { return max(b - s, vec3(0.0)); }
+        case 18u: { return max(b + s - 1.0, vec3(0.0)); }
+        default: { return s; }
+    }
+}
+@fragment
+fn fs(in: VsOut) -> @location(0) vec4<f32> {
+    let src = textureSampleLevel(tex, samp, in.uv, 0.0) * place.o.x;
+    let back = textureLoad(backdrop, vec2<i32>(floor(in.pos.xy)), 0);
+    let sa = clamp(src.a, 0.0, 1.0);
+    let ba = clamp(back.a, 0.0, 1.0);
+    let b = encode(back.rgb / max(ba, 1e-6));
+    let s = encode(src.rgb / max(sa, 1e-6));
+    let mixed = clamp(blend(b, s, u32(place.o.y + 0.5)), vec3(0.0), vec3(1.0));
+    let oa = sa + ba * (1.0 - sa);
+    let oc = (sa * (1.0 - ba) * s + sa * ba * mixed + (1.0 - sa) * ba * b) / max(oa, 1e-6);
+    return vec4(decode(oc) * oa, oa);
+}
+";
+
 /// Decoded sRGB texture (sampled as linear, straight alpha) to premultiplied float.
 const PREP_SHADER: &str = r"
 @group(0) @binding(0) var tex: texture_2d<f32>;
@@ -169,6 +286,9 @@ pub struct Gpu {
     rect_work: wgpu::RenderPipeline,
     /// Rectangle draw onto the output (premultiplied over).
     rect_out: wgpu::RenderPipeline,
+    /// Rectangle mixed with a copy of the output by a blend mode.
+    blend_layout: wgpu::BindGroupLayout,
+    blend_out: wgpu::RenderPipeline,
     fx: Mutex<HashMap<u64, Arc<FxPipeline>>>,
     /// Effect images on the GPU, by content hash. Few and small; kept for the process.
     images: Mutex<HashMap<u64, Arc<wgpu::Texture>>>,
@@ -260,7 +380,7 @@ fn quad(r: Rect, xf: Xf, w: u32, h: u32) -> Vec<u8> {
     };
     let ndc = |(x, y): (f32, f32)| [x / w * 2.0 - 1.0, 1.0 - y / h * 2.0];
     let [tl, tr, bl, br] = [turn(x0, y0), turn(x1, y0), turn(x0, y1), turn(x1, y1)].map(ndc);
-    [tl[0], tl[1], tr[0], tr[1], bl[0], bl[1], br[0], br[1], l, t, 1.0 - rr, 1.0 - b, xf.opacity, 0.0, 0.0, 0.0]
+    [tl[0], tl[1], tr[0], tr[1], bl[0], bl[1], br[0], br[1], l, t, 1.0 - rr, 1.0 - b, xf.opacity, xf.blend as f32, 0.0, 0.0]
         .iter()
         .flat_map(|v| v.to_le_bytes())
         .collect()
@@ -336,6 +456,22 @@ impl Gpu {
         let prep = make("prep", PREP_SHADER, &prep_layout, WORK, None);
         let rect_work = make("rect work", RECT_SHADER, &rect_layout, WORK, None);
         let rect_out = make("rect out", RECT_SHADER, &rect_layout, OUT, Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING));
+        // The backdrop is read with textureLoad, so it needs no filtering.
+        let backdrop_entry = wgpu::BindGroupLayoutEntry {
+            binding: 3,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+            count: None,
+        };
+        let blend_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("blend"),
+            entries: &[tex_entry(0), sampler_entry(1), uniform_entry(2, wgpu::ShaderStages::VERTEX_FRAGMENT), backdrop_entry],
+        });
+        let blend_out = make("blend out", BLEND_SHADER, &blend_layout, OUT, None);
         Ok(Self {
             device,
             queue,
@@ -345,6 +481,8 @@ impl Gpu {
             rect_layout,
             rect_work,
             rect_out,
+            blend_layout,
+            blend_out,
             fx: Mutex::new(HashMap::new()),
             images: Mutex::new(HashMap::new()),
             adapter: format!("{} ({:?})", info.name, info.backend),
@@ -563,6 +701,13 @@ impl Gpu {
     /// Render a frame: `items` bottom to top onto opaque black, `width x height`.
     /// Returns RGBA8, sRGB-encoded, opaque.
     pub fn render(&self, width: u32, height: u32, items: &[Item<'_>]) -> Result<Vec<u8>> {
+        self.render_on(width, height, items, false)
+    }
+
+    /// [`Gpu::render`], or with `transparent` onto a clear background,
+    /// returning straight (not premultiplied) alpha where nothing covers it.
+    pub fn render_on(&self, width: u32, height: u32, items: &[Item<'_>], transparent: bool) -> Result<Vec<u8>> {
+        let background = if transparent { wgpu::Color::TRANSPARENT } else { wgpu::Color::BLACK };
         if width == 0 || height == 0 {
             return Err(RenderError::Invalid("output size must be at least 1x1".into()));
         }
@@ -584,7 +729,9 @@ impl Gpu {
                     let pipe = self.fx_pipeline(&pass.fx).map_err(|e| RenderError::Invalid(e.0))?;
                     let (va, vb, vo) = (ca.create_view(&Default::default()), cb.create_view(&Default::default()), out.create_view(&Default::default()));
                     self.encode_pass(&mut enc, pass, &pipe, (&va, Some(&vb)), &vo, (width, height));
-                    draws.push((out, Rect { x: 0.0, y: 0.0, w: width as f32, h: height as f32 }, Xf::default()));
+                    // Both sides share a blend mode: the mix keeps it. Otherwise normal.
+                    let blend = if outgoing.xf.blend == incoming.xf.blend { incoming.xf.blend } else { 0 };
+                    draws.push((out, Rect { x: 0.0, y: 0.0, w: width as f32, h: height as f32 }, Xf { blend, ..Xf::default() }));
                 }
             }
         }
@@ -598,18 +745,86 @@ impl Gpu {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
-        let groups: Vec<wgpu::BindGroup> = draws.iter().map(|(t, r, xf)| self.rect_group(&t.create_view(&Default::default()), *r, *xf, width, height)).collect();
-        {
-            let view = target.create_view(&Default::default());
-            let mut rp = begin(&mut enc, &view, wgpu::Color::BLACK);
+        let view = target.create_view(&Default::default());
+        if draws.iter().all(|d| d.2.blend == 0) {
+            // One pass, all premultiplied "over" (what plain frames always did).
+            let groups: Vec<wgpu::BindGroup> = draws.iter().map(|(t, r, xf)| self.rect_group(&t.create_view(&Default::default()), *r, *xf, width, height)).collect();
+            let mut rp = begin(&mut enc, &view, background);
             rp.set_pipeline(&self.rect_out);
             for g in &groups {
                 rp.set_bind_group(0, g, &[]);
                 rp.draw(0..6, 0..1);
             }
+        } else {
+            self.draw_blended(&mut enc, &target, &view, &draws, (width, height), background);
         }
-        let bytes = self.read(enc, &target, width, height, 4, None)?;
+        let mut bytes = self.read(enc, &target, width, height, 4, None)?;
+        if transparent {
+            unpremultiply(&mut bytes);
+        }
         Ok(bytes)
+    }
+
+    /// Draw runs of normal pictures in one pass each; before a picture with
+    /// another blend mode, copy the output so far as its backdrop.
+    fn draw_blended(
+        &self,
+        enc: &mut wgpu::CommandEncoder,
+        target: &wgpu::Texture,
+        view: &wgpu::TextureView,
+        draws: &[(wgpu::Texture, Rect, Xf)],
+        (width, height): (u32, u32),
+        background: wgpu::Color,
+    ) {
+        let size = wgpu::Extent3d { width, height, depth_or_array_layers: 1 };
+        let backdrop = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("backdrop"),
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: OUT,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let back_view = backdrop.create_view(&Default::default());
+        let mut load = wgpu::LoadOp::Clear(background);
+        let mut i = 0;
+        while i <= draws.len() {
+            // A run of normal pictures (maybe empty), then one blended picture.
+            let j = draws[i..].iter().position(|d| d.2.blend != 0).map_or(draws.len(), |n| i + n);
+            let groups: Vec<wgpu::BindGroup> = draws[i..j].iter().map(|(t, r, xf)| self.rect_group(&t.create_view(&Default::default()), *r, *xf, width, height)).collect();
+            {
+                let mut rp = begin_with(enc, view, load);
+                rp.set_pipeline(&self.rect_out);
+                for g in &groups {
+                    rp.set_bind_group(0, g, &[]);
+                    rp.draw(0..6, 0..1);
+                }
+            }
+            load = wgpu::LoadOp::Load;
+            let Some((tex, rect, xf)) = draws.get(j) else { break };
+            enc.copy_texture_to_texture(copy_info(target), copy_info(&backdrop), size);
+            let place = self.uniform(&quad(*rect, *xf, width, height));
+            let src = tex.create_view(&Default::default());
+            let group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("blend"),
+                layout: &self.blend_layout,
+                entries: &[
+                    wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&src) },
+                    wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&self.sampler) },
+                    wgpu::BindGroupEntry { binding: 2, resource: place.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(&back_view) },
+                ],
+            });
+            {
+                let mut rp = begin_with(enc, view, wgpu::LoadOp::Load);
+                rp.set_pipeline(&self.blend_out);
+                rp.set_bind_group(0, &group, &[]);
+                rp.draw(0..6, 0..1);
+            }
+            i = j + 1;
+        }
     }
 
     /// Stack plain `layers` (bottom first) onto opaque black.
@@ -704,14 +919,51 @@ impl Gpu {
     }
 }
 
+/// sRGB-encoded premultiplied RGBA (what the output target holds) to
+/// sRGB-encoded straight alpha, as video encoders expect it.
+fn unpremultiply(px: &mut [u8]) {
+    static DECODE: OnceLock<[f32; 256]> = OnceLock::new();
+    let decode = DECODE.get_or_init(|| {
+        std::array::from_fn(|i| {
+            let c = i as f32 / 255.0;
+            if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
+        })
+    });
+    let encode = |l: f32| {
+        let l = l.clamp(0.0, 1.0);
+        let c = if l <= 0.003_130_8 { l * 12.92 } else { 1.055 * l.powf(1.0 / 2.4) - 0.055 };
+        (c * 255.0).round() as u8
+    };
+    for p in px.chunks_exact_mut(4) {
+        match p[3] {
+            255 => {}
+            0 => p[..3].fill(0),
+            a => {
+                let a = f32::from(a) / 255.0;
+                for c in &mut p[..3] {
+                    *c = encode(decode[usize::from(*c)] / a);
+                }
+            }
+        }
+    }
+}
+
+fn copy_info(t: &wgpu::Texture) -> wgpu::TexelCopyTextureInfo<'_> {
+    wgpu::TexelCopyTextureInfo { texture: t, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All }
+}
+
 fn begin<'a>(enc: &'a mut wgpu::CommandEncoder, view: &'a wgpu::TextureView, clear: wgpu::Color) -> wgpu::RenderPass<'a> {
+    begin_with(enc, view, wgpu::LoadOp::Clear(clear))
+}
+
+fn begin_with<'a>(enc: &'a mut wgpu::CommandEncoder, view: &'a wgpu::TextureView, load: wgpu::LoadOp<wgpu::Color>) -> wgpu::RenderPass<'a> {
     enc.begin_render_pass(&wgpu::RenderPassDescriptor {
         label: None,
         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
             view,
             depth_slice: None,
             resolve_target: None,
-            ops: wgpu::Operations { load: wgpu::LoadOp::Clear(clear), store: wgpu::StoreOp::Store },
+            ops: wgpu::Operations { load, store: wgpu::StoreOp::Store },
         })],
         depth_stencil_attachment: None,
         timestamp_writes: None,
@@ -776,6 +1028,47 @@ mod tests {
         let out = draw(full(8), Xf { opacity: 0.5, ..Xf::default() });
         let px = at(&out, 8, 4, 4);
         assert!((185..=190).contains(&px[0]) && px[1] == 0, "{px:?}");
+    }
+
+    /// Blend modes over a known backdrop, in sRGB-encoded values (as Photoshop).
+    #[test]
+    fn blend_modes_mix_with_what_is_below() {
+        let gpu = Gpu::shared().expect("a GPU or software adapter");
+        let mode = |name: &str| ve_model::meta::BLEND_MODES.iter().position(|m| *m == name).unwrap() as u32;
+        let backdrop = solid(4, 4, [200, 100, 50, 255]);
+        let top = solid(2, 2, [128, 255, 0, 255]);
+        let pic = |rgba, w, rect, xf| Item::Picture(Picture { rgba, width: w, height: w, rect, xf, effects: Vec::new() });
+        let left = Rect { x: 0.0, y: 0.0, w: 4.0, h: 8.0 };
+        let draw = |name: &str, opacity: f32| {
+            let out = gpu
+                .render(8, 8, &[pic(&backdrop, 4, full(8), Xf::default()), pic(&top, 2, left, Xf { blend: mode(name), opacity, ..Xf::default() })])
+                .unwrap();
+            // Outside the top picture the backdrop is untouched.
+            assert_eq!(at(&out, 8, 6, 4), [200, 100, 50, 255], "{name}");
+            at(&out, 8, 1, 4)
+        };
+        let near = |got: [u8; 4], want: [u8; 3], what: &str| {
+            assert!(got.iter().zip(want).all(|(g, w)| g.abs_diff(w) <= 2) && got[3] == 255, "{what}: {got:?}, want {want:?}");
+        };
+        near(draw("normal", 1.0), [128, 255, 0], "normal");
+        // multiply: 200*128/255, 100*255/255, 50*0.
+        near(draw("multiply", 1.0), [100, 100, 0], "multiply");
+        // screen: 255 - (55*127/255), 255, 50.
+        near(draw("screen", 1.0), [228, 255, 50], "screen");
+        near(draw("difference", 1.0), [72, 155, 50], "difference");
+        near(draw("darken", 1.0), [128, 100, 0], "darken");
+        near(draw("lighten", 1.0), [200, 255, 50], "lighten");
+        near(draw("add", 1.0), [255, 255, 50], "add");
+        near(draw("subtract", 1.0), [72, 0, 50], "subtract");
+        // Half opacity mixes the blended result halfway back to the backdrop.
+        near(draw("multiply", 0.5), [150, 100, 25], "multiply at 50%");
+        // Luminosity keeps the backdrop's hue: red stays the largest channel.
+        let l = draw("luminosity", 1.0);
+        assert!(l[0] > l[1] && l[1] > l[2], "{l:?}");
+        for name in ve_model::meta::BLEND_MODES {
+            let px = draw(name, 1.0);
+            assert_eq!(px[3], 255, "{name}");
+        }
     }
 
     #[test]

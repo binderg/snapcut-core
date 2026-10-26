@@ -97,6 +97,12 @@ pub struct Asset {
     pub hash: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provenance: Option<Value>,
+    /// Where the file is relative to the project folder (`media/a.mp4`,
+    /// `../footage/a.mp4`; `/` separators), when both are on one drive. If
+    /// `url` is missing on open, the engine looks here, so a project folder
+    /// moved together with its media keeps working.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rel: Option<String>,
     /// Compact probe result, so edits and summaries need no ffprobe run and
     /// work while media is offline. The full ffprobe JSON is not stored.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -315,10 +321,45 @@ pub struct Transform {
     pub crop_top: f64,
     #[serde(default, skip_serializing_if = "is_zero")]
     pub crop_bottom: f64,
+    /// How the picture mixes with what is below it: one of [`BLEND_MODES`].
+    #[serde(default = "normal", skip_serializing_if = "is_normal")]
+    pub blend: String,
     /// Field name -> keyframes (values are numbers). Times count from the
     /// clip's start on the timeline, as for effects.
     #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
     pub keyframes: IndexMap<String, Vec<Keyframe>>,
+}
+
+/// Blend modes a clip can use, in the order the compositor numbers them:
+/// the W3C Compositing set, then add, subtract and linear burn.
+pub const BLEND_MODES: [&str; 19] = [
+    "normal",
+    "multiply",
+    "screen",
+    "overlay",
+    "darken",
+    "lighten",
+    "color-dodge",
+    "color-burn",
+    "hard-light",
+    "soft-light",
+    "difference",
+    "exclusion",
+    "hue",
+    "saturation",
+    "color",
+    "luminosity",
+    "add",
+    "subtract",
+    "linear-burn",
+];
+
+fn normal() -> String {
+    "normal".to_owned()
+}
+
+fn is_normal(s: &str) -> bool {
+    s == "normal"
 }
 
 impl Default for Transform {
@@ -333,6 +374,7 @@ impl Default for Transform {
             crop_right: 0.0,
             crop_top: 0.0,
             crop_bottom: 0.0,
+            blend: normal(),
             keyframes: IndexMap::new(),
         }
     }

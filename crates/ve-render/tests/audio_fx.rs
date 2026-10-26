@@ -47,6 +47,7 @@ fn timeline(work: &Path) -> (Timeline, Id) {
     tl.metadata.ve.assets.push(Asset {
         id: Id::from_raw("asset_tone"),
         url: ve_media::file_url(&tone).unwrap(),
+        rel: None,
         kind: AssetKind::Source,
         hash: None,
         provenance: None,

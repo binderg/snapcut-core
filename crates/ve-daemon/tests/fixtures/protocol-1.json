@@ -1,0 +1,2683 @@
+{
+  "methods": {
+    "analyze.scenes": {
+      "deprecated": false,
+      "params": {
+        "actor": {
+          "required": false,
+          "types": [
+            "object"
+          ]
+        },
+        "background": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "base_rev": {
+          "required": true,
+          "types": [
+            "integer"
+          ]
+        },
+        "dry_run": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "from": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "markers": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "threshold": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "to": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        }
+      },
+      "result": [
+        "changed",
+        "dry_run",
+        "group",
+        "job_id",
+        "markers",
+        "patch",
+        "ranges",
+        "revision",
+        "state",
+        "warnings"
+      ]
+    },
+    "analyze.silence": {
+      "deprecated": false,
+      "params": {
+        "actor": {
+          "required": false,
+          "types": [
+            "object"
+          ]
+        },
+        "background": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "base_rev": {
+          "required": true,
+          "types": [
+            "integer"
+          ]
+        },
+        "dry_run": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "from": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "markers": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "min_duration": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "pad": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "threshold": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "to": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        }
+      },
+      "result": [
+        "changed",
+        "dry_run",
+        "group",
+        "job_id",
+        "markers",
+        "patch",
+        "ranges",
+        "revision",
+        "state",
+        "warnings"
+      ]
+    },
+    "cache.clear": {
+      "deprecated": false,
+      "params": {
+        "dry_run": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "kinds": {
+          "required": false,
+          "types": [
+            "array"
+          ]
+        }
+      },
+      "result": [
+        "cleared",
+        "entries",
+        "total_bytes"
+      ]
+    },
+    "cache.status": {
+      "deprecated": false,
+      "params": {},
+      "result": [
+        "cleared",
+        "entries",
+        "total_bytes"
+      ]
+    },
+    "daemon.info": {
+      "deprecated": false,
+      "params": {},
+      "result": [
+        "engine",
+        "exe",
+        "idle_timeout_secs",
+        "pid",
+        "project",
+        "socket",
+        "websocket"
+      ]
+    },
+    "daemon.stop": {
+      "deprecated": false,
+      "params": {},
+      "result": [
+        "stopping"
+      ]
+    },
+    "edit.delete": {
+      "deprecated": false,
+      "params": {
+        "actor": {
+          "required": false,
+          "types": [
+            "object"
+          ]
+        },
+        "base_rev": {
+          "required": true,
+          "types": [
+            "integer"
+          ]
+        },
+        "clips": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "dry_run": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "linked": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        }
+      },
+      "result": [
+        "changed",
+        "created",
+        "dry_run",
+        "duration",
+        "group",
+        "modified",
+        "patch",
+        "removed",
+        "revision"
+      ]
+    },
+    "edit.insert": {
+      "deprecated": false,
+      "params": {
+        "actor": {
+          "required": false,
+          "types": [
+            "object"
+          ]
+        },
+        "asset": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "at": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "audio": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "audio_track": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "base_rev": {
+          "required": true,
+          "types": [
+            "integer"
+          ]
+        },
+        "dry_run": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "duration": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "overwrite": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "source_in": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "source_out": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "track": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "video": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        }
+      },
+      "result": [
+        "changed",
+        "created",
+        "dry_run",
+        "duration",
+        "group",
+        "modified",
+        "patch",
+        "removed",
+        "revision"
+      ]
+    },
+    "edit.move": {
+      "deprecated": false,
+      "params": {
+        "actor": {
+          "required": false,
+          "types": [
+            "object"
+          ]
+        },
+        "base_rev": {
+          "required": true,
+          "types": [
+            "integer"
+          ]
+        },
+        "clip": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "dry_run": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "linked": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "reorder": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "to": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "track": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        }
+      },
+      "result": [
+        "changed",
+        "created",
+        "dry_run",
+        "duration",
+        "group",
+        "modified",
+        "patch",
+        "removed",
+        "revision"
+      ]
+    },
+    "edit.normalize": {
+      "deprecated": false,
+      "params": {
+        "actor": {
+          "required": false,
+          "types": [
+            "object"
+          ]
+        },
+        "background": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "base_rev": {
+          "required": true,
+          "types": [
+            "integer"
+          ]
+        },
+        "ceiling": {
+          "required": false,
+          "types": [
+            "number"
+          ]
+        },
+        "dry_run": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "from": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "target": {
+          "required": false,
+          "types": [
+            "number"
+          ]
+        },
+        "to": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        }
+      },
+      "result": [
+        "changed",
+        "clips",
+        "created",
+        "dry_run",
+        "duration",
+        "expected_lufs",
+        "expected_true_peak_dbtp",
+        "gain_db",
+        "group",
+        "job_id",
+        "measured_lufs",
+        "measured_true_peak_dbtp",
+        "modified",
+        "patch",
+        "removed",
+        "revision",
+        "state",
+        "warnings"
+      ]
+    },
+    "edit.ripple_delete": {
+      "deprecated": false,
+      "params": {
+        "actor": {
+          "required": false,
+          "types": [
+            "object"
+          ]
+        },
+        "base_rev": {
+          "required": true,
+          "types": [
+            "integer"
+          ]
+        },
+        "clips": {
+          "required": false,
+          "types": [
+            "array"
+          ]
+        },
+        "dry_run": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "linked": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "markers": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "ranges": {
+          "required": false,
+          "types": [
+            "array"
+          ]
+        },
+        "tracks": {
+          "required": false,
+          "types": [
+            "array"
+          ]
+        }
+      },
+      "result": [
+        "changed",
+        "created",
+        "dry_run",
+        "duration",
+        "group",
+        "modified",
+        "patch",
+        "removed",
+        "revision"
+      ]
+    },
+    "edit.set_speed": {
+      "deprecated": false,
+      "params": {
+        "actor": {
+          "required": false,
+          "types": [
+            "object"
+          ]
+        },
+        "base_rev": {
+          "required": true,
+          "types": [
+            "integer"
+          ]
+        },
+        "clip": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "dry_run": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "linked": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "ripple": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "speed": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        }
+      },
+      "result": [
+        "changed",
+        "created",
+        "dry_run",
+        "duration",
+        "group",
+        "modified",
+        "patch",
+        "removed",
+        "revision"
+      ]
+    },
+    "edit.set_transform": {
+      "deprecated": false,
+      "params": {
+        "actor": {
+          "required": false,
+          "types": [
+            "object"
+          ]
+        },
+        "base_rev": {
+          "required": true,
+          "types": [
+            "integer"
+          ]
+        },
+        "blend": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "clip": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "crop_bottom": {
+          "required": false,
+          "types": [
+            "number"
+          ]
+        },
+        "crop_left": {
+          "required": false,
+          "types": [
+            "number"
+          ]
+        },
+        "crop_right": {
+          "required": false,
+          "types": [
+            "number"
+          ]
+        },
+        "crop_top": {
+          "required": false,
+          "types": [
+            "number"
+          ]
+        },
+        "dry_run": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "keyframes": {
+          "required": false,
+          "types": [
+            "object"
+          ]
+        },
+        "opacity": {
+          "required": false,
+          "types": [
+            "number"
+          ]
+        },
+        "reset": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "rotation": {
+          "required": false,
+          "types": [
+            "number"
+          ]
+        },
+        "scale": {
+          "required": false,
+          "types": [
+            "number"
+          ]
+        },
+        "x": {
+          "required": false,
+          "types": [
+            "number"
+          ]
+        },
+        "y": {
+          "required": false,
+          "types": [
+            "number"
+          ]
+        }
+      },
+      "result": [
+        "blend",
+        "changed",
+        "clip",
+        "crop_bottom",
+        "crop_left",
+        "crop_right",
+        "crop_top",
+        "dry_run",
+        "group",
+        "keyframed",
+        "opacity",
+        "patch",
+        "revision",
+        "rotation",
+        "scale",
+        "x",
+        "y"
+      ]
+    },
+    "edit.set_volume": {
+      "deprecated": false,
+      "params": {
+        "actor": {
+          "required": false,
+          "types": [
+            "object"
+          ]
+        },
+        "base_rev": {
+          "required": true,
+          "types": [
+            "integer"
+          ]
+        },
+        "clip": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "db": {
+          "required": true,
+          "types": [
+            "number"
+          ]
+        },
+        "dry_run": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "linked": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        }
+      },
+      "result": [
+        "changed",
+        "created",
+        "dry_run",
+        "duration",
+        "group",
+        "modified",
+        "patch",
+        "removed",
+        "revision"
+      ]
+    },
+    "edit.split": {
+      "deprecated": false,
+      "params": {
+        "actor": {
+          "required": false,
+          "types": [
+            "object"
+          ]
+        },
+        "at": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "base_rev": {
+          "required": true,
+          "types": [
+            "integer"
+          ]
+        },
+        "clips": {
+          "required": false,
+          "types": [
+            "array"
+          ]
+        },
+        "dry_run": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "linked": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "tracks": {
+          "required": false,
+          "types": [
+            "array"
+          ]
+        }
+      },
+      "result": [
+        "changed",
+        "created",
+        "dry_run",
+        "duration",
+        "group",
+        "modified",
+        "patch",
+        "removed",
+        "revision"
+      ]
+    },
+    "edit.trim": {
+      "deprecated": false,
+      "params": {
+        "actor": {
+          "required": false,
+          "types": [
+            "object"
+          ]
+        },
+        "base_rev": {
+          "required": true,
+          "types": [
+            "integer"
+          ]
+        },
+        "clip": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "dry_run": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "in": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "linked": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "out": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "roll": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        }
+      },
+      "result": [
+        "changed",
+        "created",
+        "dry_run",
+        "duration",
+        "group",
+        "modified",
+        "patch",
+        "removed",
+        "revision"
+      ]
+    },
+    "edit.unlink": {
+      "deprecated": false,
+      "params": {
+        "actor": {
+          "required": false,
+          "types": [
+            "object"
+          ]
+        },
+        "base_rev": {
+          "required": true,
+          "types": [
+            "integer"
+          ]
+        },
+        "clip": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "dry_run": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        }
+      },
+      "result": [
+        "changed",
+        "created",
+        "dry_run",
+        "duration",
+        "group",
+        "modified",
+        "patch",
+        "removed",
+        "revision"
+      ]
+    },
+    "effect.add": {
+      "deprecated": false,
+      "params": {
+        "actor": {
+          "required": false,
+          "types": [
+            "object"
+          ]
+        },
+        "base_rev": {
+          "required": true,
+          "types": [
+            "integer"
+          ]
+        },
+        "clip": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "dry_run": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "effect": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "index": {
+          "required": false,
+          "types": [
+            "integer"
+          ]
+        },
+        "params": {
+          "required": false,
+          "types": [
+            "object"
+          ]
+        }
+      },
+      "result": [
+        "changed",
+        "clip",
+        "dry_run",
+        "effect",
+        "effects",
+        "group",
+        "patch",
+        "revision"
+      ]
+    },
+    "effect.remove": {
+      "deprecated": false,
+      "params": {
+        "actor": {
+          "required": false,
+          "types": [
+            "object"
+          ]
+        },
+        "base_rev": {
+          "required": true,
+          "types": [
+            "integer"
+          ]
+        },
+        "dry_run": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "id": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        }
+      },
+      "result": [
+        "changed",
+        "clip",
+        "dry_run",
+        "effect",
+        "effects",
+        "group",
+        "patch",
+        "revision"
+      ]
+    },
+    "effect.set": {
+      "deprecated": false,
+      "params": {
+        "actor": {
+          "required": false,
+          "types": [
+            "object"
+          ]
+        },
+        "base_rev": {
+          "required": true,
+          "types": [
+            "integer"
+          ]
+        },
+        "dry_run": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "id": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "index": {
+          "required": false,
+          "types": [
+            "integer"
+          ]
+        },
+        "keyframes": {
+          "required": false,
+          "types": [
+            "object"
+          ]
+        },
+        "params": {
+          "required": false,
+          "types": [
+            "object"
+          ]
+        }
+      },
+      "result": [
+        "changed",
+        "clip",
+        "dry_run",
+        "effect",
+        "effects",
+        "group",
+        "patch",
+        "revision"
+      ]
+    },
+    "events.subscribe": {
+      "deprecated": false,
+      "params": {},
+      "result": [
+        "revision"
+      ]
+    },
+    "fx.define": {
+      "deprecated": false,
+      "params": {
+        "dry_run": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "files": {
+          "required": false,
+          "types": [
+            "object"
+          ]
+        },
+        "manifest": {
+          "required": true,
+          "types": []
+        },
+        "source": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        }
+      },
+      "result": [
+        "effect",
+        "path",
+        "tested_on"
+      ]
+    },
+    "fx.list": {
+      "deprecated": false,
+      "params": {},
+      "result": [
+        "effects",
+        "problems"
+      ]
+    },
+    "history.begin_group": {
+      "deprecated": false,
+      "params": {
+        "actor": {
+          "required": false,
+          "types": [
+            "object"
+          ]
+        },
+        "label": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        }
+      },
+      "result": [
+        "id",
+        "label"
+      ]
+    },
+    "history.end_group": {
+      "deprecated": false,
+      "params": {
+        "actor": {
+          "required": false,
+          "types": [
+            "object"
+          ]
+        }
+      },
+      "result": [
+        "edits",
+        "group"
+      ]
+    },
+    "history.list": {
+      "deprecated": false,
+      "params": {
+        "limit": {
+          "required": false,
+          "types": [
+            "integer"
+          ]
+        }
+      },
+      "result": [
+        "open_groups",
+        "redo",
+        "revision",
+        "undo"
+      ]
+    },
+    "history.redo": {
+      "deprecated": false,
+      "params": {
+        "actor": {
+          "required": false,
+          "types": [
+            "object"
+          ]
+        },
+        "base_rev": {
+          "required": true,
+          "types": [
+            "integer"
+          ]
+        },
+        "dry_run": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        }
+      },
+      "result": [
+        "changed",
+        "dry_run",
+        "group",
+        "patch",
+        "revision",
+        "step"
+      ]
+    },
+    "history.undo": {
+      "deprecated": false,
+      "params": {
+        "actor": {
+          "required": false,
+          "types": [
+            "object"
+          ]
+        },
+        "base_rev": {
+          "required": true,
+          "types": [
+            "integer"
+          ]
+        },
+        "dry_run": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        }
+      },
+      "result": [
+        "changed",
+        "dry_run",
+        "group",
+        "patch",
+        "revision",
+        "step"
+      ]
+    },
+    "jobs.cancel": {
+      "deprecated": false,
+      "params": {
+        "job_id": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        }
+      },
+      "result": [
+        "created_ms",
+        "error",
+        "finished_ms",
+        "job_id",
+        "method",
+        "progress",
+        "result",
+        "state"
+      ]
+    },
+    "jobs.get": {
+      "deprecated": false,
+      "params": {
+        "job_id": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        }
+      },
+      "result": [
+        "created_ms",
+        "error",
+        "finished_ms",
+        "job_id",
+        "method",
+        "progress",
+        "result",
+        "state"
+      ]
+    },
+    "jobs.list": {
+      "deprecated": false,
+      "params": {},
+      "result": [
+        "jobs"
+      ]
+    },
+    "marker.add": {
+      "deprecated": false,
+      "params": {
+        "actor": {
+          "required": false,
+          "types": [
+            "object"
+          ]
+        },
+        "at": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "base_rev": {
+          "required": true,
+          "types": [
+            "integer"
+          ]
+        },
+        "color": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "comment": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "dry_run": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "duration": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "name": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        }
+      },
+      "result": [
+        "changed",
+        "dry_run",
+        "group",
+        "markers",
+        "patch",
+        "revision"
+      ]
+    },
+    "marker.remove": {
+      "deprecated": false,
+      "params": {
+        "actor": {
+          "required": false,
+          "types": [
+            "object"
+          ]
+        },
+        "base_rev": {
+          "required": true,
+          "types": [
+            "integer"
+          ]
+        },
+        "dry_run": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "ids": {
+          "required": false,
+          "types": [
+            "array"
+          ]
+        },
+        "name": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        }
+      },
+      "result": [
+        "changed",
+        "dry_run",
+        "group",
+        "markers",
+        "patch",
+        "revision"
+      ]
+    },
+    "measure.levels": {
+      "deprecated": false,
+      "params": {
+        "asset": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "background": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "from": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "resolution": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "to": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        }
+      },
+      "result": [
+        "balance_db",
+        "cached",
+        "channels",
+        "correlation",
+        "job_id",
+        "noise_floor_db",
+        "sample_rate",
+        "series",
+        "source",
+        "state",
+        "warnings"
+      ]
+    },
+    "measure.loudness": {
+      "deprecated": false,
+      "params": {
+        "asset": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "background": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "from": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "resolution": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "to": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        }
+      },
+      "result": [
+        "cached",
+        "integrated_lufs",
+        "job_id",
+        "range_lu",
+        "series",
+        "source",
+        "state",
+        "true_peak_dbtp",
+        "warnings"
+      ]
+    },
+    "measure.pitch": {
+      "deprecated": false,
+      "params": {
+        "asset": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "background": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "from": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "resolution": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "to": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        }
+      },
+      "result": [
+        "cached",
+        "high_hz",
+        "job_id",
+        "low_hz",
+        "median_hz",
+        "note",
+        "series",
+        "source",
+        "state",
+        "voiced",
+        "warnings"
+      ]
+    },
+    "measure.waveform": {
+      "deprecated": false,
+      "params": {
+        "asset": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "background": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "buckets": {
+          "required": false,
+          "types": [
+            "integer"
+          ]
+        },
+        "from": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "to": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        }
+      },
+      "result": [
+        "cached",
+        "job_id",
+        "max",
+        "min",
+        "rms",
+        "sample_rate",
+        "samples",
+        "source",
+        "state",
+        "warnings"
+      ]
+    },
+    "media.assets": {
+      "deprecated": false,
+      "params": {},
+      "result": [
+        "assets",
+        "missing",
+        "revision"
+      ]
+    },
+    "media.extract_audio": {
+      "deprecated": false,
+      "params": {
+        "asset": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "channels": {
+          "required": false,
+          "types": [
+            "integer"
+          ]
+        },
+        "format": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "sample_rate": {
+          "required": false,
+          "types": [
+            "integer"
+          ]
+        }
+      },
+      "result": [
+        "cached",
+        "channels",
+        "duration",
+        "format",
+        "path",
+        "sample_rate"
+      ]
+    },
+    "media.import": {
+      "deprecated": false,
+      "params": {
+        "actor": {
+          "required": false,
+          "types": [
+            "object"
+          ]
+        },
+        "base_rev": {
+          "required": true,
+          "types": [
+            "integer"
+          ]
+        },
+        "dry_run": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "paths": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        }
+      },
+      "result": [
+        "assets",
+        "changed",
+        "dry_run",
+        "group",
+        "patch",
+        "revision"
+      ]
+    },
+    "media.probe": {
+      "deprecated": false,
+      "params": {
+        "path": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        }
+      },
+      "result": [
+        "ffprobe",
+        "media",
+        "url"
+      ]
+    },
+    "media.relink": {
+      "deprecated": false,
+      "params": {
+        "actor": {
+          "required": false,
+          "types": [
+            "object"
+          ]
+        },
+        "asset": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "base_rev": {
+          "required": true,
+          "types": [
+            "integer"
+          ]
+        },
+        "dry_run": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "folder": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "force": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "path": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        }
+      },
+      "result": [
+        "changed",
+        "dry_run",
+        "group",
+        "missing",
+        "patch",
+        "relinked",
+        "revision"
+      ]
+    },
+    "media.remove": {
+      "deprecated": false,
+      "params": {
+        "actor": {
+          "required": false,
+          "types": [
+            "object"
+          ]
+        },
+        "assets": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "base_rev": {
+          "required": true,
+          "types": [
+            "integer"
+          ]
+        },
+        "dry_run": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        }
+      },
+      "result": [
+        "changed",
+        "dry_run",
+        "group",
+        "patch",
+        "removed",
+        "revision"
+      ]
+    },
+    "plugin.list": {
+      "deprecated": false,
+      "params": {},
+      "result": [
+        "issues",
+        "plugins",
+        "user_dir"
+      ]
+    },
+    "project.get": {
+      "deprecated": false,
+      "params": {},
+      "result": [
+        "revision",
+        "timeline"
+      ]
+    },
+    "project.init": {
+      "deprecated": false,
+      "params": {
+        "color_space": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "fps": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "height": {
+          "required": true,
+          "types": [
+            "integer"
+          ]
+        },
+        "name": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "path": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "sample_rate": {
+          "required": false,
+          "types": [
+            "integer"
+          ]
+        },
+        "width": {
+          "required": true,
+          "types": [
+            "integer"
+          ]
+        }
+      },
+      "result": [
+        "ids_added",
+        "name",
+        "path",
+        "relinked",
+        "revision",
+        "upgraded_from"
+      ]
+    },
+    "project.open": {
+      "deprecated": false,
+      "params": {
+        "path": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        }
+      },
+      "result": [
+        "ids_added",
+        "name",
+        "path",
+        "relinked",
+        "revision",
+        "upgraded_from"
+      ]
+    },
+    "project.save": {
+      "deprecated": false,
+      "params": {},
+      "result": [
+        "ids_added",
+        "name",
+        "path",
+        "relinked",
+        "revision",
+        "upgraded_from"
+      ]
+    },
+    "project.summary": {
+      "deprecated": false,
+      "params": {},
+      "result": [
+        "revision",
+        "text"
+      ]
+    },
+    "render.contact_sheet": {
+      "deprecated": false,
+      "params": {
+        "background": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "columns": {
+          "required": false,
+          "types": [
+            "integer"
+          ]
+        },
+        "count": {
+          "required": false,
+          "types": [
+            "integer"
+          ]
+        },
+        "format": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "from": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "to": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "width": {
+          "required": false,
+          "types": [
+            "integer"
+          ]
+        }
+      },
+      "result": [
+        "at",
+        "cached",
+        "columns",
+        "data",
+        "height",
+        "job_id",
+        "mime",
+        "rows",
+        "state",
+        "times",
+        "warnings",
+        "width"
+      ]
+    },
+    "render.export": {
+      "deprecated": false,
+      "params": {
+        "background": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "format": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "from": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "preset": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "to": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        }
+      },
+      "result": [
+        "cached",
+        "duration",
+        "encoder",
+        "frames",
+        "from",
+        "height",
+        "job_id",
+        "mime",
+        "path",
+        "size_bytes",
+        "state",
+        "to",
+        "url",
+        "warnings",
+        "width"
+      ]
+    },
+    "render.frame": {
+      "deprecated": false,
+      "params": {
+        "at": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "format": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "width": {
+          "required": false,
+          "types": [
+            "integer"
+          ]
+        }
+      },
+      "result": [
+        "at",
+        "cached",
+        "data",
+        "height",
+        "mime",
+        "warnings",
+        "width"
+      ]
+    },
+    "render.layers": {
+      "deprecated": false,
+      "params": {
+        "at": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "from": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "only": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "to": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        }
+      },
+      "result": [
+        "at",
+        "audible",
+        "audio",
+        "canvas",
+        "disabled",
+        "from",
+        "layers",
+        "muted",
+        "spans",
+        "to",
+        "visible"
+      ]
+    },
+    "render.presets": {
+      "deprecated": false,
+      "params": {},
+      "result": [
+        "formats",
+        "presets"
+      ]
+    },
+    "render.range_preview": {
+      "deprecated": false,
+      "params": {
+        "background": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "from": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "to": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "width": {
+          "required": false,
+          "types": [
+            "integer"
+          ]
+        }
+      },
+      "result": [
+        "cached",
+        "duration",
+        "encoder",
+        "frames",
+        "from",
+        "height",
+        "job_id",
+        "mime",
+        "path",
+        "size_bytes",
+        "state",
+        "to",
+        "url",
+        "warnings",
+        "width"
+      ]
+    },
+    "system.describe": {
+      "deprecated": false,
+      "params": {},
+      "result": []
+    },
+    "system.version": {
+      "deprecated": false,
+      "params": {},
+      "result": [
+        "engine",
+        "protocol",
+        "schema"
+      ]
+    },
+    "track.add": {
+      "deprecated": false,
+      "params": {
+        "actor": {
+          "required": false,
+          "types": [
+            "object"
+          ]
+        },
+        "base_rev": {
+          "required": true,
+          "types": [
+            "integer"
+          ]
+        },
+        "dry_run": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "index": {
+          "required": false,
+          "types": [
+            "integer"
+          ]
+        },
+        "kind": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "name": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        }
+      },
+      "result": [
+        "changed",
+        "dry_run",
+        "group",
+        "patch",
+        "removed",
+        "revision",
+        "track",
+        "tracks"
+      ]
+    },
+    "track.list": {
+      "deprecated": false,
+      "params": {},
+      "result": [
+        "revision",
+        "tracks"
+      ]
+    },
+    "track.move": {
+      "deprecated": false,
+      "params": {
+        "actor": {
+          "required": false,
+          "types": [
+            "object"
+          ]
+        },
+        "base_rev": {
+          "required": true,
+          "types": [
+            "integer"
+          ]
+        },
+        "dry_run": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "index": {
+          "required": true,
+          "types": [
+            "integer"
+          ]
+        },
+        "track": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        }
+      },
+      "result": [
+        "changed",
+        "dry_run",
+        "group",
+        "patch",
+        "removed",
+        "revision",
+        "track",
+        "tracks"
+      ]
+    },
+    "track.remove": {
+      "deprecated": false,
+      "params": {
+        "actor": {
+          "required": false,
+          "types": [
+            "object"
+          ]
+        },
+        "base_rev": {
+          "required": true,
+          "types": [
+            "integer"
+          ]
+        },
+        "dry_run": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "force": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "track": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        }
+      },
+      "result": [
+        "changed",
+        "dry_run",
+        "group",
+        "patch",
+        "removed",
+        "revision",
+        "track",
+        "tracks"
+      ]
+    },
+    "track.rename": {
+      "deprecated": false,
+      "params": {
+        "actor": {
+          "required": false,
+          "types": [
+            "object"
+          ]
+        },
+        "base_rev": {
+          "required": true,
+          "types": [
+            "integer"
+          ]
+        },
+        "dry_run": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "name": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "track": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        }
+      },
+      "result": [
+        "changed",
+        "dry_run",
+        "group",
+        "patch",
+        "removed",
+        "revision",
+        "track",
+        "tracks"
+      ]
+    },
+    "track.set": {
+      "deprecated": false,
+      "params": {
+        "actor": {
+          "required": false,
+          "types": [
+            "object"
+          ]
+        },
+        "base_rev": {
+          "required": true,
+          "types": [
+            "integer"
+          ]
+        },
+        "dry_run": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "enabled": {
+          "required": true,
+          "types": [
+            "boolean"
+          ]
+        },
+        "track": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        }
+      },
+      "result": [
+        "changed",
+        "dry_run",
+        "group",
+        "patch",
+        "removed",
+        "revision",
+        "track",
+        "tracks"
+      ]
+    },
+    "transcript.get": {
+      "deprecated": false,
+      "params": {
+        "asset": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "format": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "from": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "to": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        }
+      },
+      "result": [
+        "asset",
+        "language",
+        "missing",
+        "provenance",
+        "revision",
+        "speakers",
+        "text",
+        "words"
+      ]
+    },
+    "transcript.list": {
+      "deprecated": false,
+      "params": {},
+      "result": [
+        "transcripts"
+      ]
+    },
+    "transcript.remove": {
+      "deprecated": false,
+      "params": {
+        "asset": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        }
+      },
+      "result": [
+        "asset",
+        "removed"
+      ]
+    },
+    "transcript.set": {
+      "deprecated": false,
+      "params": {
+        "actor": {
+          "required": false,
+          "types": [
+            "object"
+          ]
+        },
+        "asset": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "language": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "provenance": {
+          "required": false,
+          "types": []
+        },
+        "speakers": {
+          "required": false,
+          "types": [
+            "array"
+          ]
+        },
+        "words": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        }
+      },
+      "result": [
+        "asset",
+        "end",
+        "replaced",
+        "words"
+      ]
+    },
+    "transition.add": {
+      "deprecated": false,
+      "params": {
+        "actor": {
+          "required": false,
+          "types": [
+            "object"
+          ]
+        },
+        "align": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "at": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "base_rev": {
+          "required": true,
+          "types": [
+            "integer"
+          ]
+        },
+        "clip": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "dry_run": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "duration": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "params": {
+          "required": false,
+          "types": [
+            "object"
+          ]
+        },
+        "track": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "transition": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        }
+      },
+      "result": [
+        "changed",
+        "cut",
+        "dry_run",
+        "end",
+        "group",
+        "id",
+        "incoming",
+        "outgoing",
+        "patch",
+        "revision",
+        "start",
+        "track",
+        "transition"
+      ]
+    },
+    "transition.remove": {
+      "deprecated": false,
+      "params": {
+        "actor": {
+          "required": false,
+          "types": [
+            "object"
+          ]
+        },
+        "base_rev": {
+          "required": true,
+          "types": [
+            "integer"
+          ]
+        },
+        "dry_run": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "id": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        }
+      },
+      "result": [
+        "changed",
+        "cut",
+        "dry_run",
+        "end",
+        "group",
+        "id",
+        "incoming",
+        "outgoing",
+        "patch",
+        "revision",
+        "start",
+        "track",
+        "transition"
+      ]
+    },
+    "transition.set": {
+      "deprecated": false,
+      "params": {
+        "actor": {
+          "required": false,
+          "types": [
+            "object"
+          ]
+        },
+        "align": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "base_rev": {
+          "required": true,
+          "types": [
+            "integer"
+          ]
+        },
+        "dry_run": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "duration": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "id": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "params": {
+          "required": false,
+          "types": [
+            "object"
+          ]
+        },
+        "transition": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        }
+      },
+      "result": [
+        "changed",
+        "cut",
+        "dry_run",
+        "end",
+        "group",
+        "id",
+        "incoming",
+        "outgoing",
+        "patch",
+        "revision",
+        "start",
+        "track",
+        "transition"
+      ]
+    }
+  },
+  "protocol": 1
+}

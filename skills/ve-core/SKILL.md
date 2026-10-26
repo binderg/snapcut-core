@@ -71,6 +71,22 @@ every result. It cannot drift from the code. These docs explain meaning,
 defaults and how things fit together; when they and `describe` disagree on a
 field, `describe` wins (and these docs have a bug).
 
+## Versions and stability
+
+`system.version` gives three numbers: `engine` (the release), `protocol`
+(a major number, now `1`) and `schema` (the project file format).
+
+- **Within a protocol major, changes are additive:** new methods, new
+  optional params, new result fields, new accepted values. Ignore fields you
+  do not know. Nothing is removed or renamed, and no param becomes required.
+- **Deprecation:** a method on its way out is marked `deprecated: true` in
+  `describe`, with what to use instead. It keeps working until the next
+  protocol major.
+- **Experimental:** `ui.*` methods (the `ve-ui` skill) may change in any
+  release. Plugin methods follow their plugin's own version.
+- **Project files:** an engine upgrades older project formats on open and
+  refuses newer ones ([model/project.md](model/project.md)).
+
 ## Rules that never change
 
 - **AI-neutral core.** No models in the engine (no speech recognition, no

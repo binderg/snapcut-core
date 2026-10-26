@@ -76,11 +76,13 @@ The project file is an OpenTimelineIO (OTIO) JSON document. Anything OTIO cannot
 | Where | Key | Holds |
 | --- | --- | --- |
 | Timeline | `metadata.ve.project` | schema version, revision, output settings (resolution, fps, sample rate, color space) |
-| Timeline | `metadata.ve.assets` | asset table: id, path, hash, kind (source, proxy, analysis, baked), provenance |
+| Timeline | `metadata.ve.assets` | asset table: id, url, `rel` (path from the project folder, so a moved project finds its media), hash, kind (source, proxy, analysis, baked), provenance |
 | Clip | `metadata.ve.clip` | stable id, speed, volume, transform, effect stack |
 | Clip effect | `metadata.ve.effects[]` | id, plugin effect id, params, keyframes |
 | Transition | `metadata.ve.transition` | plugin transition id, params |
 | Marker | `metadata.ve.marker` | stable id, source (user, agent, analyzer), payload |
+
+**Format versions and upgrades.** `metadata.ve.project.schema_version` is the format of everything under `metadata.ve` (`ve_model::SCHEMA_VERSION`). On open, an older file is upgraded in memory by `ve_model::migrate` steps (raw JSON to raw JSON, one version at a time, so old steps keep working after the model types change) and saved in the new format on the next save; a newer file is refused. Bump the version whenever an older engine would misread a file or silently drop data from it on save: before 1.0 that is the minor version, and a new optional field counts (an older engine drops it when it saves). A step is needed only when old files must be rewritten (a renamed or reshaped field). New accepted values for an existing field (a blend mode, an ease) are a patch bump.
 
 **Example clip**
 
@@ -176,7 +178,7 @@ FFmpeg handles decode and encode; a wgpu compositor handles everything between. 
 1. **Resolve.** For time `t`, walk the timeline and list active clips per track, their source times (after speed and trims), effects with keyframes evaluated at `t`, and any transition in progress.
 2. **Decode.** Pull source frames through a decoder pool. Each source keeps a warm decoder with a GOP-aware seek (seek to the prior keyframe, decode forward). Proxies are used when the request is low-res.
 3. **Upload.** Frames go to GPU textures in a linear working color space (convert from Rec.709/sRGB on the way in).
-4. **Composite.** Per track: apply the clip's effect stack (shader passes), then the transform; blend tracks bottom to top; apply transitions where two clips overlap.
+4. **Composite.** Per track: apply the clip's effect stack (shader passes), then the transform; blend tracks bottom to top; apply transitions where two clips overlap. Normal layers use premultiplied "over" in linear light; a clip's blend mode (W3C Compositing set plus add, subtract, linear burn) reads what is drawn below it and mixes in sRGB-encoded values, as Photoshop does. Blend modes are core because an effect only sees its own clip, never the layers under it.
 5. **Output.** Convert back to the output color space. Preview: read back to RGBA and encode as JPEG/PNG. Export: hand frames to the encoder.
 6. **Audio.** Separate graph: decode, resample (`rubato`), apply gain and fades, mix tracks, measure loudness (`ebur128`). Export muxes audio with video; preview uses the audio clock as master.
 
@@ -377,7 +379,7 @@ first); a new major is copied next to the old one. Built-in ids and
 
 **Transcripts (core data, plugin-made).** The core owns the transcript shape (`ve-model::transcript`): words with media-time start/end (exact decimal seconds to the millisecond), text, speaker, confidence, plus language, speakers and provenance. A transcript belongs to a source asset and lives in the project folder (`transcripts/<file hash>.json`), so it survives edits and re-imports. `transcript.set` stores one (from any plugin or tool), `transcript.get` returns it in media time or maps it onto the timeline through the audio clips (frame-floored start, frame-ceiled end, so `start..end` cuts exactly the word), `transcript.list|remove`. Vendor formats (Deepgram, WhisperX) are converted in their plugins, never in the core. `media.extract_audio` hands plugins a WAV or FLAC of an asset (16 kHz mono by default) from the cache, so no plugin needs a decoder. The first STT plugin, `plugins/deepgram` (Python standard library, the user's own key), is not compiled in or installed by default.
 
-**Versioning.** Plugins declare the engine range and protocol major version they support. The engine refuses to load mismatches with a clear error. A prerelease engine (`0.1.0-rc.1`) also matches as its release (`0.1.0`), so `*` and `>=0.1` ranges work on release candidates. Protocol changes follow semver: additive in minors, breaking only in a new major with a deprecation window.
+**Versioning.** Plugins declare the engine range and protocol major version they support. The engine refuses to load mismatches with a clear error. A prerelease engine (`0.1.0-rc.1`) also matches as its release (`0.1.0`), so `*` and `>=0.1` ranges work on release candidates. Protocol changes follow semver: additive in minors, breaking only in a new major with a deprecation window. `ve plugin install` refuses a mismatched plugin (`--force` overrides). Inside the engine, `Registry::deprecate` marks a method (`deprecated: true` and the replacement in `describe`), and `ve-daemon/tests/protocol.rs` compares the stable methods (not `ui.*`, not plugins) with a checked-in snapshot per protocol major (`tests/fixtures/protocol-1.json`): a removed method, param or result field, a param that becomes required or narrows its type, or a new required param fails the build; additions must be recorded with `VE_UPDATE_PROTOCOL=1`.
 
 **Sandboxing.** Process plugins run with the user's permissions, like VS Code extensions. `wgsl` effects are sandboxed by the GPU validation path and `wasm` effects by `wasmtime`. If a public plugin registry happens, extend `wasmtime` (WASI) to commands and analyzers too, with explicit capabilities (read project, write edits, read media folder) for untrusted plugins. `ofx` plugins are never sandboxed and load only when installed by the user.
 
@@ -581,6 +583,38 @@ chunk. Removing that wait for good needs two things:
   shipping its DLLs. It is not the main cost of GPU export (that reads in
   order); profile export separately (RGBA pipes, synchronous readback, CPU
   RGBA to YUV).
+
+**Ready to ship (robustness and the features editors expect).** What a
+CapCut-class editor still needs from the core, beyond the sections above.
+Not ordered or decided yet.
+
+- [ ] **Text and titles in core.** No text rendering exists yet. Captions
+  are the main use case for talking heads and podcasts, and baking text
+  through a headless browser is too slow for live editing, so core likely
+  needs a basic text layer (for example `cosmic-text`, MIT/Apache).
+  Decide before building: it is a new dependency.
+- [ ] **Speed ramps:** keyframed time remap on a clip, using the keyframe
+  curves (`ve-model::curve`). Today `set_speed` is constant per clip. The
+  hard part is audio (pitch-preserving stretch along a ramp).
+- [ ] **Masks and track mattes:** shape masks with feather on a clip, and a
+  clip using the track above as its alpha or luma matte. Goes with blend
+  modes.
+- [ ] **Audio:** keyframed volume and pan, fades as first-class items (not
+  only the 20 ms cut crossfades), and ducking music under voice. EQ,
+  compression and denoise can be plugins.
+- [ ] **Color:** `.cube` LUTs on a clip, and the open BT.601 vs BT.709 choice
+  for untagged HD footage (read as 601 everywhere today, while players show
+  it as 709).
+- [ ] **Compound clips** (nested timelines) and **freeze frames**.
+- [ ] **Crash recovery:** autosave snapshots that survive a crash between
+  saves, and a daemon soak test: memory over hours, several clients at once.
+- [ ] **GPU export speed:** about 4.6x slower than the ffmpeg path today
+  (25 ms vs 5.5 ms per 1080p frame). Profile the RGBA pipes, the synchronous
+  readback and the CPU RGBA to YUV step (see "Real-time playback" above for
+  the decoder side).
+- [ ] **Testing across GPU vendors:** NVIDIA, AMD, Intel, Apple and the WARP /
+  llvmpipe fallback in CI, with golden-frame tolerances instead of exact
+  matches where drivers round differently.
 
 Smaller gaps from the transform and preview work:
 

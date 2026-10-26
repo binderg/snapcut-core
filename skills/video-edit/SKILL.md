@@ -85,6 +85,7 @@ Exit codes: 0 ok, 2 bad arguments (the message says what), 3 stale revision,
 | Loudness to a target (one gain on every audio clip) | `ve normalize --target -14` (-16 podcasts, -23 broadcast) |
 | Insert part of a source | `ve insert asset_94b8 --in 00:03:10:00 --out 00:03:25:00 --at 00:01:00:00` |
 | Insert over existing material | `… --overwrite` |
+| Media moved or renamed ("missing" in renders) | `ve relink` lists missing files; `ve relink --folder D:/footage` finds them by content; `ve relink asset_… D:/new/take3.mp4` points one |
 | Image (logo, title card, photo) | `ve import logo.png`, then `ve insert asset_… --duration 3s` (default 5 s); PNG transparency is kept |
 | Logo in a corner for a stretch | `ve track add video`, `ve insert asset_logo --track V2 --at 00:00:05:00 --duration 20s --overwrite`, `ve transform clip_… --scale 0.2 --x 0.4 --y -0.4` |
 | Add a track (any number of each kind) | `ve track add video` (makes `V2`, drawn on top of `V1`), `ve track add audio --name Music` |
@@ -92,7 +93,7 @@ Exit codes: 0 ok, 2 bad arguments (the message says what), 3 stale revision,
 | Tracks: list, rename, reorder, remove | `ve track list`, `ve track rename V2 Broll`, `ve track move V2 0`, `ve track rm V2 [--force]` |
 | Hide a video track / mute an audio track | `ve track hide V2`, `ve track show V2` (`mute` / `unmute` are the same) |
 | Picture in picture (bottom right, 35%) | `ve transform clip_9c1e --scale 0.35 --x 0.3 --y 0.3` |
-| Fade a layer in, move, rotate, crop | `ve transform clip_9c1e --key opacity@0s=0:ease-out --key opacity@0.5s=1` (eases: `ease-in`, `ease-out`, `ease-in-out`, `hold`, `cubic-bezier(x1,y1,x2,y2)`), `--rotation 90`, `--crop-left 0.2`; `--reset` puts it back |
+| Fade a layer in, move, rotate, crop | `ve transform clip_9c1e --key opacity@0s=0:ease-out --key opacity@0.5s=1` (eases: `ease-in`, `ease-out`, `ease-in-out`, `hold`, `cubic-bezier(x1,y1,x2,y2)`), `--rotation 90`, `--crop-left 0.2`, `--blend multiply` (or screen, overlay, difference, ...); `--reset` puts it back |
 | Effects available | `ve fx list` |
 | Effect on a clip | `ve effect add clip_7f3a core.color/exposure --param stops=0.5`; change with `ve effect set fx_1a2b --param stops=1`, animate with `--key stops@0s=0 --key stops@2s=1`; `ve effect rm fx_1a2b` |
 | Audio effect on a clip's sound | `ve effect add clip_7f3b core.audio/highpass` on the audio clip (A1), not the video clip; `ve fx list` shows `audio` ones (EQ, compressor, noise reduction, de-esser) |
@@ -233,6 +234,10 @@ ve export -o final.mp4                          # project size, high quality
 ve export --preset youtube-1080p -o final.mp4
 ve export --preset vertical-1080x1920 -o short.mp4   # landscape sources are center-cropped
 ve export --from 00:01:00:00 --to 00:02:00:00 -o clip.mp4
+ve export -o master.mov                         # ProRes 422 HQ (format from the extension)
+ve export --format prores-4444 -o titles.mov    # transparent where no clip draws
+ve export --format hevc -o small.mp4            # also: webm, wav, m4a, mp3, flac
+ve transcript --format srt > captions.srt       # captions in timeline time (also vtt)
 ```
 
 A 1080p export runs at about twice real time on a 4-core machine; run it last.

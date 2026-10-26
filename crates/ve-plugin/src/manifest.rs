@@ -143,6 +143,19 @@ impl Manifest {
     /// Whether this engine version is in the plugin's range. A prerelease
     /// engine (`0.1.0-rc.1`) also counts as its release (`0.1.0`), so ranges
     /// like `*` or `>=0.1` work on release candidates too.
+    /// Why this engine cannot run the plugin: its engine range or protocol
+    /// major does not match. Checked on install and again on load.
+    pub fn compatible(&self, engine: &semver::Version) -> Result<(), String> {
+        if !self.supports(engine) {
+            return Err(format!("plugin {} {} wants engine {}, this is {engine}", self.id, self.version, self.engine));
+        }
+        let ours = ve_protocol::PROTOCOL_VERSION.to_string();
+        if self.protocol.split('.').next() != Some(ours.as_str()) {
+            return Err(format!("plugin {} speaks protocol {}, this engine speaks {ours}", self.id, self.protocol));
+        }
+        Ok(())
+    }
+
     pub fn supports(&self, engine: &semver::Version) -> bool {
         let mut release = engine.clone();
         release.pre = semver::Prerelease::EMPTY;
@@ -280,6 +293,14 @@ mod tests {
         let star: semver::VersionReq = "*".parse().unwrap();
         let m2 = Manifest { engine: star, ..m.clone() };
         assert!(m2.supports(&semver::Version::parse("0.1.0-rc.1").unwrap()));
+
+        // Compatibility: engine range and protocol major, as install and load check them.
+        let v = |s: &str| semver::Version::parse(s).unwrap();
+        assert!(m.compatible(&v("0.1.0")).is_ok());
+        let old: semver::VersionReq = "^0.0.1".parse().unwrap();
+        assert!(Manifest { engine: old, ..m.clone() }.compatible(&v("0.1.0")).unwrap_err().contains("wants engine"));
+        assert!(Manifest { protocol: "2".into(), ..m.clone() }.compatible(&v("0.1.0")).unwrap_err().contains("speaks protocol 2"));
+        assert!(Manifest { protocol: "1.3".into(), ..m.clone() }.compatible(&v("0.1.0")).is_ok(), "a minor is fine");
     }
 
     #[test]

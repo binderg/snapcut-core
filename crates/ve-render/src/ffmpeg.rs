@@ -40,6 +40,26 @@ pub fn h264_encoder() -> Result<&'static str, RenderError> {
         .ok_or_else(|| RenderError::Ffmpeg { message: "no usable video encoder in this ffmpeg".into(), stderr: String::new() })
 }
 
+/// The first of `names` the local ffmpeg can use (checked once per name).
+pub fn first_encoder(names: &[&str]) -> Result<String, RenderError> {
+    static SEEN: OnceLock<std::sync::Mutex<std::collections::HashMap<String, bool>>> = OnceLock::new();
+    let seen = SEEN.get_or_init(Default::default);
+    for name in names {
+        let cached = seen.lock().ok().and_then(|m| m.get(*name).copied());
+        let works = cached.unwrap_or_else(|| {
+            let w = encoder_works(name);
+            if let Ok(mut m) = seen.lock() {
+                m.insert((*name).to_owned(), w);
+            }
+            w
+        });
+        if works {
+            return Ok((*name).to_owned());
+        }
+    }
+    Err(RenderError::Ffmpeg { message: format!("this ffmpeg has none of these encoders: {}", names.join(", ")), stderr: String::new() })
+}
+
 fn encoder_works(name: &str) -> bool {
     Command::new(ffmpeg_path())
         .args(["-hide_banner", "-nostdin", "-v", "error", "-f", "lavfi", "-i", "color=s=256x256:r=25:d=0.2", "-frames:v", "3", "-c:v", name, "-f", "null", "-"])

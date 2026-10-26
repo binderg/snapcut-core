@@ -151,3 +151,57 @@ async fn import_checks_revision_dry_run_and_bad_files() {
     assert_eq!(file(), before);
     assert_eq!(call(&r, "media.assets", json!({})).await["result"]["assets"], json!([]));
 }
+
+/// Moved media: assets keep a path relative to the project folder, missing
+/// files are listed, `media.relink` finds them in a folder by content (even
+/// renamed) or takes one path, and a project folder moved together with its
+/// media relinks itself on open.
+#[tokio::test]
+async fn relink_moved_media() {
+    let dir = scratch("media-relink");
+    fs::create_dir_all(dir.join("edit/media")).unwrap();
+    fs::create_dir_all(dir.join("footage")).unwrap();
+    let r = new_project(&dir).await;
+    make_clip(&dir.join("edit/media/a.mp4"), 440);
+    make_clip(&dir.join("footage/b.mp4"), 660);
+    let ok = |resp: Value| {
+        assert!(resp.get("error").is_none(), "{resp}");
+        resp["result"].clone()
+    };
+    let imported = ok(call(&r, "media.import", json!({"paths": [dir.join("edit/media/a.mp4"), dir.join("footage/b.mp4")], "base_rev": 0})).await);
+    let (a, b) = (imported["assets"][0]["id"].clone(), imported["assets"][1]["id"].clone());
+    ok(call(&r, "edit.insert", json!({"asset": a, "base_rev": 1})).await);
+    let list = ok(call(&r, "media.assets", json!({})).await);
+    assert_eq!(list["assets"][0]["rel"], "media/a.mp4");
+    assert_eq!(list["assets"][1]["rel"], "../footage/b.mp4");
+    assert_eq!(list["missing"], json!([]));
+
+    // b moves and is renamed: listed missing, then found by content.
+    fs::create_dir_all(dir.join("elsewhere/sub")).unwrap();
+    fs::rename(dir.join("footage/b.mp4"), dir.join("elsewhere/sub/renamed.mp4")).unwrap();
+    assert_eq!(ok(call(&r, "media.assets", json!({})).await)["missing"], json!([b]));
+    let resp = call(&r, "media.relink", json!({"base_rev": 2})).await;
+    assert_eq!(resp["error"]["code"], -32602, "needs asset+path or folder: {resp}");
+    let done = ok(call(&r, "media.relink", json!({"folder": dir.join("elsewhere"), "base_rev": 2})).await);
+    assert_eq!(done["relinked"][0]["asset"], b, "{done}");
+    assert!(done["relinked"][0]["url"].as_str().unwrap().ends_with("elsewhere/sub/renamed.mp4"));
+    assert_eq!(done["missing"], json!([]));
+    assert_eq!(ok(call(&r, "media.assets", json!({})).await)["assets"][1]["rel"], "../elsewhere/sub/renamed.mp4");
+
+    // One asset to a file with other content: refused unless forced.
+    make_clip(&dir.join("other.mp4"), 880);
+    let resp = call(&r, "media.relink", json!({"asset": b, "path": dir.join("other.mp4"), "base_rev": 3})).await;
+    assert!(resp["error"]["message"].as_str().unwrap().contains("different content"), "{resp}");
+    let forced = ok(call(&r, "media.relink", json!({"asset": b, "path": dir.join("other.mp4"), "force": true, "base_rev": 3})).await);
+    assert_eq!(forced["relinked"][0]["changed_content"], true);
+    drop(r);
+
+    // The project folder moves with its media inside: fixed on open, clips included.
+    fs::rename(dir.join("edit"), dir.join("moved")).unwrap();
+    let r = ve_daemon::build_registry();
+    let opened = ok(call(&r, "project.open", json!({"path": dir.join("moved")})).await);
+    assert_eq!(opened["relinked"], 1, "{opened}");
+    assert_eq!(ok(call(&r, "media.assets", json!({})).await)["missing"], json!([]));
+    let saved = fs::read_to_string(dir.join("moved/project.otio")).unwrap();
+    assert!(saved.contains("moved/media/a.mp4") && !saved.contains("edit/media/a.mp4"), "asset and clip URLs follow");
+}

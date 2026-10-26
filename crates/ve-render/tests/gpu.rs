@@ -41,6 +41,7 @@ fn add_asset(tl: &mut Timeline, id: &str, path: &Path) {
         kind: AssetKind::Source,
         hash: None,
         provenance: None,
+        rel: None,
         media: Some(probe.media),
     });
 }
@@ -350,6 +351,7 @@ fn effects_and_transitions_on_the_timeline() {
 fn settings(tl: &Timeline) -> ve_render::EncodeSettings {
     ve_render::EncodeSettings {
         canvas: ve_render::project_canvas(tl),
+        format: ve_render::Format::Mp4,
         encoder: None,
         crf: 10,
         x264_preset: "veryfast".into(),
@@ -644,6 +646,7 @@ fn transforms_place_and_fade_a_layer() {
         reset: false,
         values: vec![("scale".into(), Some(0.5)), ("x".into(), Some(0.25)), ("y".into(), Some(0.25))],
         keyframes: [("opacity".to_owned(), vec![key(0, 0.0), key(10, 1.0)])].into_iter().collect(),
+        blend: None,
     };
     tl = transform::set(&tl, &top, &change).unwrap().0;
     assert!(ve_render::needs_gpu(&tl, ve_render::Span::new(fr(0), fr(1))).unwrap());

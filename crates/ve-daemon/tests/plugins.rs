@@ -155,6 +155,11 @@ async fn plugin_transcribes_through_engine_calls() {
     assert_eq!(words[0]["source_start"], "1.000s");
     let text = ok(&r, "transcript.get", json!({"format": "text"})).await["text"].as_str().unwrap().to_owned();
     assert!(text.starts_with("[00:00:00:00] S0: w2 w3"), "{text}");
+    // Captions follow the edit: timeline times, not media times.
+    let srt = ok(&r, "transcript.get", json!({"format": "srt"})).await["text"].as_str().unwrap().to_owned();
+    assert!(srt.starts_with("1\n00:00:00,000 --> "), "{srt}");
+    let vtt = ok(&r, "transcript.get", json!({"format": "vtt"})).await["text"].as_str().unwrap().to_owned();
+    assert!(vtt.starts_with("WEBVTT\n\n00:00:00.000 --> ") && vtt.contains("<v S0>w2"), "{vtt}");
     let own = ok(&r, "transcript.get", json!({"asset": asset})).await;
     assert_eq!(own["words"].as_array().unwrap().len(), 6);
     assert_eq!(own["language"], "en");

@@ -71,8 +71,38 @@ goes; the media file on disk is never touched. Undo brings the row back.
 
 ## `media.assets`
 
-No params. `{"revision": 4, "assets": [ ...asset rows... ]}`, the same rows
-as `metadata.ve.assets` in the document.
+No params. `{"revision": 4, "assets": [ ...asset rows... ], "missing": ["asset_77c1"]}`:
+the same rows as `metadata.ve.assets` in the document, and the assets whose
+local file is not there (moved, renamed, on an unplugged drive). Fix those
+with `media.relink`.
+
+Each row's `url` is the absolute `file://` URL, and `rel` (when the file is
+on the same drive as the project) is its path from the project folder, like
+`media/take3.mp4` or `../footage/take3.mp4`. When a project is opened and a
+file is missing but sits at its `rel` place with the same size (the project
+folder moved together with its media), the engine points the asset and its
+clips there and saves; `project.open` reports how many as `relinked`.
+
+## `media.relink` (edits)
+
+| Param | Type | |
+| --- | --- | --- |
+| `asset` + `path` | string, string | Point one asset at a file. Refused if the content differs (blake3), unless `force` |
+| `folder` | string | Instead: search this folder and its subfolders for every missing asset, by content: same name and size first, then same size (a renamed file) |
+| `force` | bool | With `asset` + `path`: use a file with different content. It is probed again; clips keep their in and out points |
+| + `base_rev`, `dry_run`, `actor` | | |
+
+The asset's URL, its `rel` path and every clip that used the old URL change
+together, as one undo step.
+
+```json
+{"revision": 6, "changed": true, "dry_run": false, "patch": [...],
+ "relinked": [{"asset": "asset_77c1", "from": "file:///D:/old/b.mp4", "url": "file:///E:/footage/b.mp4"}],
+ "missing": []}
+```
+
+`missing` lists assets still missing afterwards. Only `file://` media is
+checked; other URL schemes are left alone.
 
 ## `media.extract_audio`
 
