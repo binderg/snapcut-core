@@ -1,6 +1,10 @@
 //! `fx.*`, `effect.*` and `transition.*`: the effects and transitions a
 //! project can use, defining new ones, and putting them on clips and cuts.
 
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
 use indexmap::IndexMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -16,6 +20,103 @@ use crate::project::OpenProject;
 
 fn registry(p: &OpenProject) -> Registry {
     Registry::for_project(Some(p.root()))
+}
+
+/// Effects from installed packs (plugins with `contributes.effects`, in the
+/// project's `plugins/` folder or the user's), and which plugin each folder
+/// belongs to.
+struct Packs {
+    registry: Registry,
+    plugin_of: HashMap<PathBuf, String>,
+}
+
+fn packs(p: &OpenProject) -> Packs {
+    let engine = semver::Version::parse(crate::ENGINE_VERSION).expect("engine version is semver");
+    let (plugins, _) = ve_plugin::discover(Some(p.root()), ve_plugin::user_dir().as_deref(), &engine);
+    let mut dirs = Vec::new();
+    let mut plugin_of = HashMap::new();
+    for pl in &plugins {
+        for d in pl.manifest.effect_dirs(&pl.dir) {
+            plugin_of.insert(d.clone(), pl.manifest.id.clone());
+            dirs.push(d);
+        }
+    }
+    Packs { registry: Registry::packs(&dirs), plugin_of }
+}
+
+impl Packs {
+    /// Pack effects the project does not already have (same `id@major`).
+    fn unshadowed<'a>(&'a self, project: &'a Registry) -> impl Iterator<Item = &'a Arc<Fx>> + 'a {
+        self.registry.list.iter().filter(|f| !project.list.iter().any(|x| x.reference() == f.reference()))
+    }
+
+    fn plugin(&self, f: &Fx) -> Option<String> {
+        f.dir.as_ref().and_then(|d| self.plugin_of.get(d).cloned())
+    }
+}
+
+/// The effect a call names: the project's own (built-ins and `effects/`)
+/// first, so a project keeps the version it copied even when a pack has a
+/// newer one, then the installed packs. A pack effect comes back with
+/// `Origin::Pack`; [`with_fx`] copies it in before the edit commits.
+fn resolve(p: &OpenProject, reference: &str, kind: Kind) -> Result<Arc<Fx>, RpcError> {
+    let project = registry(p);
+    if project.get(reference).is_some() {
+        return project.require(reference, kind).map_err(invalid);
+    }
+    let packs = packs(p);
+    let mut all = project.clone();
+    all.list.extend(packs.unshadowed(&project).cloned());
+    all.require(reference, kind).map_err(invalid)
+}
+
+/// Copy a pack effect into `<project>/effects/`, so the project renders
+/// without the pack installed. Returns the new folder.
+fn copy_in(p: &OpenProject, fx: &Fx) -> Result<PathBuf, RpcError> {
+    let src = fx.dir.as_ref().ok_or_else(|| internal(format!("{} has no folder to copy", fx.manifest.id)))?;
+    let effects = p.root().join("effects");
+    let base = fx.manifest.id.replace(['/', '.'], "_");
+    let major = fx.manifest.version.split('.').next().unwrap_or("0");
+    let dest = std::iter::once(base.clone())
+        .chain(std::iter::once(format!("{base}_v{major}")))
+        .chain((2..).map(|n| format!("{base}_v{major}_{n}")))
+        .map(|name| effects.join(name))
+        .find(|d| !d.exists())
+        .expect("an unused folder name");
+    copy_dir(src, &dest).map_err(|e| {
+        let _ = std::fs::remove_dir_all(&dest);
+        internal(format!("copying {} into the project: {e}", src.display()))
+    })?;
+    Registry::forget(p.root());
+    Ok(dest)
+}
+
+fn copy_dir(src: &Path, dest: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dest)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let to = dest.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_dir(&entry.path(), &to)?;
+        } else {
+            std::fs::copy(entry.path(), to)?;
+        }
+    }
+    Ok(())
+}
+
+/// Run an edit that uses `fx`, copying it in from its pack first (not on a
+/// dry run). The copy is removed again if the edit fails.
+fn with_fx<T>(p: &mut OpenProject, fx: &Fx, dry_run: bool, edit: impl FnOnce(&mut OpenProject) -> Result<T, RpcError>) -> Result<T, RpcError> {
+    let copied = if fx.origin == Origin::Pack && !dry_run { Some(copy_in(p, fx)?) } else { None };
+    let r = edit(p);
+    if r.is_err()
+        && let Some(d) = copied
+    {
+        let _ = std::fs::remove_dir_all(d);
+        Registry::forget(p.root());
+    }
+    r
 }
 
 fn internal(m: impl Into<String>) -> RpcError {
@@ -41,8 +142,12 @@ pub struct FxInfo {
     pub runtime: String,
     pub name: String,
     pub description: String,
-    /// `builtin` or `project`.
+    /// `builtin`, `project` or `pack` (installed, not yet in this project:
+    /// using it copies it into the project's `effects/`).
     pub origin: String,
+    /// The plugin a `pack` effect comes from.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plugin: Option<String>,
     /// JSON Schema of the params (`x-animatable` marks params that take keyframes).
     pub params: Value,
 }
@@ -50,12 +155,12 @@ pub struct FxInfo {
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct FxList {
     pub effects: Vec<FxInfo>,
-    /// Project effects that failed to load, with the reason.
+    /// Project and pack effects that failed to load, with the reason.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub problems: Vec<String>,
 }
 
-fn info(f: &Fx) -> FxInfo {
+fn info(f: &Fx, plugin: Option<String>) -> FxInfo {
     FxInfo {
         id: f.manifest.id.clone(),
         reference: f.reference(),
@@ -67,14 +172,21 @@ fn info(f: &Fx) -> FxInfo {
         origin: match f.origin {
             Origin::Builtin => "builtin".into(),
             Origin::Project => "project".into(),
+            Origin::Pack => "pack".into(),
         },
+        plugin,
         params: f.manifest.params.clone(),
     }
 }
 
 pub fn list(p: &OpenProject) -> FxList {
     let r = registry(p);
-    FxList { effects: r.list.iter().map(|f| info(f)).collect(), problems: r.problems }
+    let packs = packs(p);
+    let mut effects: Vec<FxInfo> = r.list.iter().map(|f| info(f, None)).collect();
+    effects.extend(packs.unshadowed(&r).map(|f| info(f, packs.plugin(f))));
+    let mut problems = r.problems;
+    problems.extend(packs.registry.problems.iter().cloned());
+    FxList { effects, problems }
 }
 
 // --- fx.define ---
@@ -139,7 +251,7 @@ pub fn define(p: &mut OpenProject, a: DefineParams) -> Result<Defined, RpcError>
         }
         Registry::forget(p.root());
     }
-    Ok(Defined { effect: info(&fx), path: (!a.dry_run).then(|| dir.display().to_string()), tested_on: gpu.adapter.clone() })
+    Ok(Defined { effect: info(&fx, None), path: (!a.dry_run).then(|| dir.display().to_string()), tested_on: gpu.adapter.clone() })
 }
 
 // --- effect.* ---
@@ -194,9 +306,11 @@ mutation_params! {
 }
 
 pub fn effect_add(p: &mut OpenProject, a: EffectAddParams) -> Result<Committed<EffectReport>, RpcError> {
-    let fx = registry(p).require(&a.effect, Kind::Effect).map_err(invalid)?;
+    let fx = resolve(p, &a.effect, Kind::Effect)?;
     fx.check_params(&a.params).map_err(invalid)?;
-    commit(p, a.mutation(), "effect.add", |tl| effects::add(tl, &a.clip, &fx.reference(), a.params.clone(), a.index).map_err(invalid))
+    with_fx(p, &fx, a.dry_run, |p| {
+        commit(p, a.mutation(), "effect.add", |tl| effects::add(tl, &a.clip, &fx.reference(), a.params.clone(), a.index).map_err(invalid))
+    })
 }
 
 mutation_params! {
@@ -283,7 +397,7 @@ mutation_params! {
 }
 
 pub fn transition_add(p: &mut OpenProject, a: TransitionAddParams) -> Result<Committed<TransitionReport>, RpcError> {
-    let fx = registry(p).require(&a.transition, Kind::Transition).map_err(invalid)?;
+    let fx = resolve(p, &a.transition, Kind::Transition)?;
     fx.check_params(&a.params).map_err(invalid)?;
     let rate = p.timeline.output_rate();
     let at = a.at.as_ref().map(|s| parse_time("at", s, rate)).transpose()?;
@@ -299,7 +413,7 @@ pub fn transition_add(p: &mut OpenProject, a: TransitionAddParams) -> Result<Com
         transition: fx.reference(),
         params: a.params.clone(),
     };
-    commit(p, a.mutation(), "transition.add", |tl| effects::add_transition(tl, &new).map_err(invalid))
+    with_fx(p, &fx, a.dry_run, |p| commit(p, a.mutation(), "transition.add", |tl| effects::add_transition(tl, &new).map_err(invalid)))
 }
 
 mutation_params! {
@@ -322,8 +436,7 @@ mutation_params! {
 
 pub fn transition_set(p: &mut OpenProject, a: TransitionSetParams) -> Result<Committed<TransitionReport>, RpcError> {
     let current = effects::transition_meta(&p.timeline, &a.id).ok_or_else(|| invalid(format!("no transition `{}`", a.id)))?.clone();
-    let reg = registry(p);
-    let fx = reg.require(a.transition.as_deref().unwrap_or(&current.transition), Kind::Transition).map_err(invalid)?;
+    let fx = resolve(p, a.transition.as_deref().unwrap_or(&current.transition), Kind::Transition)?;
     if let Some(params) = &a.params {
         let set: Map<String, Value> = params.iter().filter(|(_, v)| !v.is_null()).map(|(k, v)| (k.clone(), v.clone())).collect();
         fx.check_params(&set).map_err(invalid)?;
@@ -331,8 +444,10 @@ pub fn transition_set(p: &mut OpenProject, a: TransitionSetParams) -> Result<Com
     let rate = p.timeline.output_rate();
     let duration = a.duration.as_ref().map(|d| parse_time("duration", d, rate)).transpose()?;
     let kind = a.transition.as_ref().map(|_| fx.reference());
-    commit(p, a.mutation(), "transition.set", |tl| {
-        effects::set_transition(tl, &a.id, duration, a.align, kind.as_deref(), a.params.as_ref()).map_err(invalid)
+    with_fx(p, &fx, a.dry_run, |p| {
+        commit(p, a.mutation(), "transition.set", |tl| {
+            effects::set_transition(tl, &a.id, duration, a.align, kind.as_deref(), a.params.as_ref()).map_err(invalid)
+        })
     })
 }
 

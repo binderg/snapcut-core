@@ -42,6 +42,12 @@ pub struct Manifest {
 pub struct Contributes {
     #[serde(default)]
     pub commands: Vec<CommandSpec>,
+    /// Effect and transition folders (an effect pack), relative to the
+    /// plugin folder: each is one effect (it holds an `effect.json`) or a
+    /// folder of them. They need no process; the engine copies one into the
+    /// project's `effects/` the first time the project uses it.
+    #[serde(default)]
+    pub effects: Vec<String>,
 }
 
 /// One protocol method the plugin adds.
@@ -177,6 +183,15 @@ impl Manifest {
                 }
             }
         }
+        for e in &m.contributes.effects {
+            let rel = Path::new(e);
+            if e.is_empty() || rel.is_absolute() || rel.components().any(|c| !matches!(c, std::path::Component::Normal(_) | std::path::Component::CurDir)) {
+                return Err(bad(format!("effects `{e}`: give a folder inside the plugin folder")));
+            }
+            if effect_dirs_in(&dir.join(rel)).is_empty() {
+                return Err(bad(format!("effects `{e}`: no effect.json in {} or the folders inside it", dir.join(rel).display())));
+            }
+        }
         if m.run.is_none() && !m.contributes.commands.is_empty() {
             return Err(bad("commands need a process, but the manifest has no `run`".into()));
         }
@@ -188,10 +203,27 @@ impl Manifest {
         Ok(m)
     }
 
+    /// Every effect folder the plugin contributes, in manifest order (each
+    /// holds an `effect.json`).
+    pub fn effect_dirs(&self, dir: &Path) -> Vec<PathBuf> {
+        self.contributes.effects.iter().flat_map(|e| effect_dirs_in(&dir.join(e))).collect()
+    }
+
     /// The SKILL.md path, if the plugin has one.
     pub fn skill_path(&self, dir: &Path) -> Option<PathBuf> {
         self.skill.as_ref().map(|s| dir.join(s))
     }
+}
+
+/// `dir` itself when it holds an `effect.json`, else its subfolders that do (sorted).
+fn effect_dirs_in(dir: &Path) -> Vec<PathBuf> {
+    if dir.join("effect.json").is_file() {
+        return vec![dir.to_owned()];
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else { return Vec::new() };
+    let mut dirs: Vec<PathBuf> = entries.flatten().map(|e| e.path()).filter(|p| p.join("effect.json").is_file()).collect();
+    dirs.sort();
+    dirs
 }
 
 impl CommandSpec {
@@ -267,6 +299,26 @@ mod tests {
             let d = scratch(&format!("manifest-bad-{i}"));
             write(&d, &base(bad));
             assert!(Manifest::load(&d).is_err(), "{bad}");
+        }
+    }
+    #[test]
+    fn effect_packs_need_no_process() {
+        let d = scratch("manifest-pack");
+        for e in ["looks/grain", "looks/vhs", "single"] {
+            std::fs::create_dir_all(d.join(e)).unwrap();
+            std::fs::write(d.join(e).join("effect.json"), "{}").unwrap();
+        }
+        let pack = |effects: &str| {
+            format!(r#"{{"id": "acme.looks", "version": "1.0.0", "engine": "*", "protocol": "1", "name": "Looks", "contributes": {{"effects": {effects}}}}}"#)
+        };
+        write(&d, &pack(r#"["looks", "single"]"#));
+        let m = Manifest::load(&d).unwrap();
+        assert!(m.run.is_none());
+        let names: Vec<String> = m.effect_dirs(&d).iter().map(|p| p.strip_prefix(&d).unwrap().to_string_lossy().replace('\\', "/")).collect();
+        assert_eq!(names, ["looks/grain", "looks/vhs", "single"]);
+        for bad in [r#"["../x"]"#, r#"["missing"]"#, r#"[""]"#] {
+            write(&d, &pack(bad));
+            assert!(Manifest::load(&d).is_err(), "{bad} should be refused");
         }
     }
 }

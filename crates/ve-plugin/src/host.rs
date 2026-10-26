@@ -88,37 +88,20 @@ impl Host {
     /// Read every plugin folder again (a plugin installed while the engine runs).
     pub fn rescan(&self) {
         let mut st = State::default();
-        let mut roots: Vec<(Source, PathBuf)> = Vec::new();
-        if let Some(p) = &self.cfg.project {
-            roots.push((Source::Project, p.join("plugins")));
-        }
-        if let Some(u) = &self.cfg.user_dir {
-            roots.push((Source::User, u.clone()));
-        }
-        for (source, root) in roots {
-            let Ok(entries) = std::fs::read_dir(&root) else { continue };
-            let mut dirs: Vec<PathBuf> = entries.flatten().map(|e| e.path()).filter(|p| p.join("plugin.json").is_file()).collect();
-            dirs.sort();
-            for dir in dirs {
-                if let Err(message) = self.add(&mut st, source, &dir) {
-                    st.issues.push(Issue { dir, message });
-                }
+        let (found, issues) = discover(self.cfg.project.as_deref(), self.cfg.user_dir.as_deref(), &self.cfg.engine);
+        st.issues = issues;
+        for p in found {
+            if let Err(message) = self.add_commands(&mut st, &p) {
+                st.issues.push(Issue { dir: p.dir.clone(), message });
+                continue;
             }
+            st.plugins.push(p);
         }
         *self.state.write().unwrap_or_else(|e| e.into_inner()) = st;
     }
 
-    fn add(&self, st: &mut State, source: Source, dir: &Path) -> Result<(), String> {
-        let m = Manifest::load(dir).map_err(|e| e.to_string())?;
-        if let Some(other) = st.plugins.iter().find(|p| p.manifest.id == m.id) {
-            return Err(format!("plugin {} is also in {}, which takes priority", m.id, other.dir.display()));
-        }
-        if !m.supports(&self.cfg.engine) {
-            return Err(format!("plugin {} {} wants engine {}, this is {}", m.id, m.version, m.engine, self.cfg.engine));
-        }
-        if m.protocol.split('.').next() != Some(PROTOCOL_VERSION.to_string().as_str()) {
-            return Err(format!("plugin {} speaks protocol {}, this engine speaks {PROTOCOL_VERSION}", m.id, m.protocol));
-        }
+    fn add_commands(&self, st: &mut State, p: &Plugin) -> Result<(), String> {
+        let m = &p.manifest;
         for c in &m.contributes.commands {
             let ns = c.method.split('.').next().unwrap_or_default();
             if (self.cfg.reserved)(ns) {
@@ -132,7 +115,6 @@ impl Host {
         for (ci, c) in m.contributes.commands.iter().enumerate() {
             st.commands.insert(c.method.clone(), (pi, ci));
         }
-        st.plugins.push(Plugin { manifest: m, dir: dir.to_owned(), source });
         Ok(())
     }
 
@@ -250,6 +232,49 @@ impl Host {
             }
         }
     }
+}
+
+/// Every usable plugin in the project's `plugins/` folder, then the user's
+/// plugin folder, with the folders that could not be used. A plugin id found
+/// twice keeps the first; plugins for another engine or protocol are left
+/// out. Commands are not checked here (the [`Host`] does that), so effect
+/// packs can be listed without a host.
+pub fn discover(project: Option<&Path>, user_dir: Option<&Path>, engine: &semver::Version) -> (Vec<Plugin>, Vec<Issue>) {
+    let mut plugins: Vec<Plugin> = Vec::new();
+    let mut issues = Vec::new();
+    let mut roots: Vec<(Source, PathBuf)> = Vec::new();
+    if let Some(p) = project {
+        roots.push((Source::Project, p.join("plugins")));
+    }
+    if let Some(u) = user_dir {
+        roots.push((Source::User, u.to_owned()));
+    }
+    for (source, root) in roots {
+        let Ok(entries) = std::fs::read_dir(&root) else { continue };
+        let mut dirs: Vec<PathBuf> = entries.flatten().map(|e| e.path()).filter(|p| p.join("plugin.json").is_file()).collect();
+        dirs.sort();
+        for dir in dirs {
+            match check(&plugins, &dir, engine) {
+                Ok(manifest) => plugins.push(Plugin { manifest, dir, source }),
+                Err(message) => issues.push(Issue { dir, message }),
+            }
+        }
+    }
+    (plugins, issues)
+}
+
+fn check(found: &[Plugin], dir: &Path, engine: &semver::Version) -> Result<Manifest, String> {
+    let m = Manifest::load(dir).map_err(|e| e.to_string())?;
+    if let Some(other) = found.iter().find(|p| p.manifest.id == m.id) {
+        return Err(format!("plugin {} is also in {}, which takes priority", m.id, other.dir.display()));
+    }
+    if !m.supports(engine) {
+        return Err(format!("plugin {} {} wants engine {}, this is {engine}", m.id, m.version, m.engine));
+    }
+    if m.protocol.split('.').next() != Some(PROTOCOL_VERSION.to_string().as_str()) {
+        return Err(format!("plugin {} speaks protocol {}, this engine speaks {PROTOCOL_VERSION}", m.id, m.protocol));
+    }
+    Ok(m)
 }
 
 impl Drop for Host {

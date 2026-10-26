@@ -14,7 +14,7 @@ pub mod secrets;
 
 use std::path::{Path, PathBuf};
 
-pub use host::{Config, Host, Issue, Plugin, Source};
+pub use host::{Config, Host, Issue, Plugin, Source, discover};
 pub use manifest::Manifest;
 pub use process::CallHooks;
 

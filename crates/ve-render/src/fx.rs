@@ -175,6 +175,9 @@ pub struct Param {
 pub enum Origin {
     Builtin,
     Project,
+    /// An installed effect pack (a plugin with `contributes.effects`). Projects
+    /// never render from a pack: using one copies it into `effects/`.
+    Pack,
 }
 
 /// A loaded effect or transition.
@@ -697,17 +700,22 @@ fn signature(effects: &Path) -> u64 {
     dirs.sort_by_key(std::fs::DirEntry::file_name);
     for d in dirs {
         d.file_name().hash(&mut h);
-        let mut files: Vec<std::fs::DirEntry> = std::fs::read_dir(d.path()).into_iter().flatten().flatten().collect();
-        files.sort_by_key(std::fs::DirEntry::file_name);
-        for f in files {
-            f.file_name().hash(&mut h);
-            if let Ok(m) = f.metadata() {
-                m.len().hash(&mut h);
-                m.modified().ok().hash(&mut h);
-            }
-        }
+        hash_files(&d.path(), &mut h);
     }
     h.finish()
+}
+
+/// Hash the names, sizes and modification times of the files in one folder.
+fn hash_files(dir: &Path, h: &mut DefaultHasher) {
+    let mut files: Vec<std::fs::DirEntry> = std::fs::read_dir(dir).into_iter().flatten().flatten().collect();
+    files.sort_by_key(std::fs::DirEntry::file_name);
+    for f in files {
+        f.file_name().hash(h);
+        if let Ok(m) = f.metadata() {
+            m.len().hash(h);
+            m.modified().ok().hash(h);
+        }
+    }
 }
 
 /// Read `effect.json`, its code and its images (every PNG or JPEG next to it) from a folder.
@@ -779,13 +787,58 @@ impl Registry {
         dirs.sort();
         for d in dirs {
             match load_dir(&d, Origin::Project) {
-                Ok(fx) if r.list.iter().any(|x| x.manifest.id == fx.manifest.id) => {
-                    r.problems.push(format!("{}: id {} is already taken", d.display(), fx.manifest.id));
+                Ok(fx) if builtins().iter().any(|b| b.manifest.id == fx.manifest.id) => {
+                    r.problems.push(format!("{}: {} is a built-in id", d.display(), fx.manifest.id));
+                }
+                // Majors of one id may sit side by side (clips name `id@major`).
+                Ok(fx) if r.list.iter().any(|x| x.reference() == fx.reference()) => {
+                    r.problems.push(format!("{}: {} is already taken", d.display(), fx.reference()));
                 }
                 Ok(fx) => r.list.push(Arc::new(fx)),
                 Err(e) => r.problems.push(format!("{}: {e}", d.display())),
             }
         }
+        r
+    }
+
+    /// The effects in installed packs: one folder per effect (from
+    /// `ve_plugin::Manifest::effect_dirs`), earlier folders winning a shared
+    /// `id@major`. Built-in ids and `project.` ids are refused. Like
+    /// [`Self::for_project`], the result is kept while no file in the
+    /// folders changes.
+    pub fn packs(dirs: &[PathBuf]) -> Self {
+        static KEPT: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<u64, Registry>>> = std::sync::OnceLock::new();
+        let mut h = DefaultHasher::new();
+        for d in dirs {
+            d.hash(&mut h);
+            hash_files(d, &mut h);
+        }
+        let key = h.finish();
+        let kept = KEPT.get_or_init(Default::default);
+        if let Some(r) = kept.lock().unwrap_or_else(|e| e.into_inner()).get(&key) {
+            return r.clone();
+        }
+        let mut r = Self::default();
+        for d in dirs {
+            match load_dir(d, Origin::Pack) {
+                Ok(fx) if fx.manifest.id.starts_with("project.") => {
+                    r.problems.push(format!("{}: `project.` ids are for project effects", d.display()));
+                }
+                Ok(fx) if builtins().iter().any(|b| b.manifest.id == fx.manifest.id) => {
+                    r.problems.push(format!("{}: {} is a built-in id", d.display(), fx.manifest.id));
+                }
+                Ok(fx) if r.list.iter().any(|x| x.reference() == fx.reference()) => {
+                    r.problems.push(format!("{}: {} is already in another pack", d.display(), fx.reference()));
+                }
+                Ok(fx) => r.list.push(Arc::new(fx)),
+                Err(e) => r.problems.push(format!("{}: {e}", d.display())),
+            }
+        }
+        let mut kept = kept.lock().unwrap_or_else(|e| e.into_inner());
+        if kept.len() >= 8 {
+            kept.clear();
+        }
+        kept.insert(key, r.clone());
         r
     }
 

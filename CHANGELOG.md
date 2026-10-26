@@ -86,6 +86,12 @@ not final (the command is `ve`).
 - `media.extract_audio`: an asset's audio as WAV or FLAC for plugins.
 - First speech-to-text plugin: `plugins/deepgram` (bring your own key;
   install with `ve plugin install plugins/deepgram`).
+- Effect packs: a plugin's `contributes.effects` adds effects and
+  transitions with no process. `fx.list` shows them as `origin: "pack"`,
+  and the first use in a project copies the effect into its `effects/`
+  folder, so projects render without the pack installed.
+- A project may hold two majors of one effect id side by side
+  (`id@1`, `id@2`); before, the second was refused as a duplicate.
 
 ### Protocol and tools
 

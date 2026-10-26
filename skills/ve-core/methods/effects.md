@@ -17,8 +17,8 @@ a backend (for tests and debugging).
 
 ## `fx.list`
 
-No params. Everything this project can use: built-ins plus the project's
-`effects/` folder.
+No params. Everything this project can use: built-ins, the project's
+`effects/` folder, and installed effect packs (see below).
 
 ```json
 {"effects": [
@@ -32,7 +32,19 @@ No params. Everything this project can use: built-ins plus the project's
 
 `params` is JSON Schema: build a settings panel straight from it.
 `x-animatable: true` means the param takes keyframes. `problems` lists
-project effects that failed to load.
+project and pack effects that failed to load.
+
+`origin` is `builtin`, `project` (in the project's `effects/`) or `pack`
+(from an installed effect pack, with `plugin` naming it). Packs are plugins
+that contribute effects and transitions
+([../guides/writing-plugins.md](../guides/writing-plugins.md#effect-packs)).
+The first `effect.add`, `transition.add` or `transition.set` that uses a
+pack effect copies its folder into the project's `effects/`, so the project
+renders on machines without the pack; from then on it lists as `project`.
+A dry run copies nothing, and neither does an edit that fails. The
+project's copy wins over the pack: a newer `1.x` in the pack does not
+change a project that already has `1.0`. Ask for a new major explicitly
+(`acme.looks/glitch@2`); it is copied next to the old one.
 
 Built-ins:
 

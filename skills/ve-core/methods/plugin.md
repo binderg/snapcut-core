@@ -51,6 +51,7 @@ engine runs shows up. Works with no project open (user plugins only).
     "commands": [{"method": "deepgram.transcribe", "summary": "...", "mutates": false, "job": true,
                   "cli": {"name": "transcribe", "args": ["asset"]},
                   "params": { "...JSON Schema...": "" }}],
+    "effects": 0,
     "secrets": [{"name": "DEEPGRAM_API_KEY", "source": "keychain"}],
     "skill": "C:\\...\\deepgram\\SKILL.md"}
  ],
@@ -59,6 +60,8 @@ engine runs shows up. Works with no project open (user plugins only).
 ```
 
 - `source`: `project` or `user`.
+- `effects`: how many effects and transitions it contributes (an effect
+  pack; `fx.list` lists them, [effects.md](effects.md)).
 - `secrets[].source`: `environment` (a variable of that name is set where
   the engine runs), `keychain` (`ve plugin secret set`), or `missing`.
 - `skill`: the plugin's SKILL.md, for agents to read before using it.

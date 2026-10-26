@@ -279,7 +279,7 @@ fn transition(uv: vec2<f32>) -> vec4<f32> {
 **Importing gl-transitions.** The gl-transitions library is GLSL with the same shape (`from`, `to`, `progress`, uniforms). An importer translates GLSL to WGSL with `naga` and generates the manifest from its uniform declarations, giving a large transition library on day one. The library is not core: it is not compiled into the engine.
 
 - *Now (decided Oct 22 2026):* the editor (`ui/`, its own repo) ships the converted WGSL. On first use in a project it calls `fx.define` (id `project.gl-<name>`), then `transition.add`. No core change, and the shader lands in the project's `effects/` folder, so the project renders anywhere, including from the CLI.
-- *Later: effect packs.* Once the plugin host exists, a pack is a plugin folder with only effect manifests and WGSL (no code of its own), installed per user (e.g. `<data dir>/ve/plugins/gl-transitions/`) and scanned at startup. Using an effect from a pack still copies it into the project's `effects/` (copy on use), so a project never depends on what is installed on the machine that opens it. The gl-transitions set moves to a pack then, and so can the built-ins in `plugins/core`.
+- *Effect packs (built).* A pack is a plugin folder with only effect manifests and WGSL (no code of its own), installed per user (e.g. `<data dir>/ve/plugins/gl-transitions/`) and found like any plugin. Using an effect from a pack copies it into the project's `effects/` (copy on use), so a project never depends on what is installed on the machine that opens it. Still to do: move the gl-transitions set from the editor into a pack, and later the built-ins in `plugins/core` (that needs release builds to ship and install `plugins/core`).
 
 **Agent-authored effects: the safety path**
 
@@ -327,7 +327,17 @@ Every plugin can also ship a `SKILL.md` that teaches agents when and how to use 
 }
 ```
 
-(Effect manifests in `contributes` come with effect packs; not built yet.)
+**Effect packs (built).** `contributes.effects` lists effect folders
+(each holds an `effect.json`, or is a folder of them); a plugin with only
+effects needs no `run`. `fx.list` lists pack effects as `origin: "pack"`
+(found with the same discovery as other plugins, `ve_plugin::discover`, no
+host needed), and `effect.add`, `transition.add` and `transition.set` copy
+a pack effect into the project's `effects/` before they commit (not on a
+dry run; removed again if the edit fails). Rendering only reads built-ins
+and `effects/`, so a project never depends on what is installed. The
+project's copy wins over the pack (`id@major` resolves in the project
+first); a new major is copied next to the old one. Built-in ids and
+`project.` ids are refused in packs.
 
 **Process plugins (built, `ve-plugin` + `ve-daemon::plugins`).** The engine starts the plugin's process on the first call to one of its methods and talks newline-delimited JSON-RPC over stdio, the same pattern as LSP: an `initialize` handshake, then calls; `$/progress` and `$/log` from the plugin, `$/cancel` and `shutdown` from the engine. The plugin can call back into any engine method (`media.extract_audio`, `transcript.set`, `edit.*`, `render.frame`) on the same pipe; methods that record an actor get `plugin:<id>` whatever the plugin sends. Any language works. Processes stop after 5 idle minutes, and on engine exit (they must also exit when stdin closes). Calls run on plain threads (the daemon's blocking pool or a job thread) and wait for the answer; the plugin's own calls are dispatched through the same `Registry`.
 
@@ -549,6 +559,13 @@ chunk. Removing that wait for good needs two things:
   file first. The planned HLS stream ("Frame server") does this for the web;
   the desktop app may stream frames more directly. Effects and transitions
   feel bad without it.
+- [ ] **In-process decoders** (`ffmpeg-the-third`, step 2 of "Decoding for
+  the compositor"): one seek (about 40 ms) per random jump instead of a
+  process restart (100 to 200 ms), for scrubbing. Not decided yet: it needs
+  LLVM on build machines, an LGPL shared FFmpeg build per platform, and
+  shipping its DLLs. It is not the main cost of GPU export (that reads in
+  order); profile export separately (RGBA pipes, synchronous readback, CPU
+  RGBA to YUV).
 
 Smaller gaps from the transform and preview work:
 

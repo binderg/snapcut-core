@@ -381,10 +381,13 @@ Not done yet, and what the gate still needs (suggested order, not decided):
 - HLS playback stream for web frontends (plan in ARCHITECTURE.md, "Frame server").
 - (done) `ve-plugin` host. Next: move the analyzers to `plugins/core`
   (dogfooding), and the `ui.*` methods to a UI plugin; captions from transcripts.
-- Effect packs (plugins with only effect manifests + WGSL), installed per user
-  and scanned at startup, with copy on use into the project's `effects/`.
-  Then move the gl-transitions set (today shipped by the editor and added
-  with `fx.define`) into a pack. See ARCHITECTURE.md, "Importing
+- (done) Effect packs: `contributes.effects` in `plugin.json` (no `run`
+  needed), found by `ve_plugin::discover`, listed by `fx.list` as `pack`,
+  copied into the project's `effects/` on first use (`ve-daemon::fx`
+  `resolve`/`with_fx`; not on dry runs or failed edits). Rendering never
+  reads packs. A project holds majors side by side (`id@1`, `id@2`). Next:
+  move the gl-transitions set (today shipped by the editor and added with
+  `fx.define`) into a pack. See ARCHITECTURE.md, "Importing
   gl-transitions". Transitions are not core and are never compiled in.
 
 ## Working style

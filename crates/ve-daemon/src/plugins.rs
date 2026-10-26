@@ -242,6 +242,9 @@ pub struct PluginInfo {
     /// Its process is running now.
     pub running: bool,
     pub commands: Vec<CommandInfo>,
+    /// How many effects and transitions it contributes (an effect pack);
+    /// `fx.list` lists them.
+    pub effects: usize,
     pub secrets: Vec<SecretInfo>,
     /// Its SKILL.md, for agents.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -316,6 +319,7 @@ impl PluginMethods {
                         params: params_schema(c),
                     })
                     .collect(),
+                effects: m.effect_dirs(&p.dir).len(),
                 secrets: m.secrets.iter().map(|s| SecretInfo { name: s.clone(), source: label(ve_plugin::secrets::source(&m.id, s)) }).collect(),
                 skill: m.skill_path(&p.dir),
                 dir: p.dir,

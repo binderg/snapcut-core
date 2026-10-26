@@ -68,6 +68,7 @@ every project with `ve plugin install my-plugin/`.
 | `run` | `command` and `args`, started in the plugin folder. A command with a `/` is relative to the folder; a bare name is looked up on PATH. `windows`, `macos`, `linux` override `command`/`args` per OS. |
 | `secrets` | Environment variable names your program needs (API keys). |
 | `requires` | `{"gpu": bool, "downloads": [...]}`: for the user to know (models fetched on first use). |
+| `effects` | Effect and transition folders, relative to the plugin folder (see Effect packs). |
 | `skill` | A SKILL.md shown in `plugin.list`. |
 
 Unknown fields are refused, so a typo fails at load with a clear message
@@ -140,6 +141,44 @@ A variable of the same name in the engine's environment wins (CI, shell
 profiles). Your program reads it from its environment. If a secret is
 missing, calls fail before your program starts, telling the user the
 command to run. Secrets are never written to the project.
+
+## Effect packs
+
+A plugin can ship effects and transitions instead of (or as well as)
+commands. A pack with only effects needs no `run` and no program:
+
+```
+glitch-pack/
+  plugin.json
+  effects/
+    rgb-split/   effect.json + rgb-split.wgsl
+    shake/       effect.json + shake.wgsl
+```
+
+```json
+{
+  "id": "glitch-pack",
+  "version": "1.0.0",
+  "engine": ">=0.1.0-rc.1",
+  "protocol": "1",
+  "name": "Glitch looks",
+  "contributes": { "effects": ["effects"] }
+}
+```
+
+Each `effects` entry is a folder holding an `effect.json`, or a folder of
+such folders. The effect folders are the same as a project's `effects/`
+ones (manifest, WGSL, images; contracts in
+[../methods/effects.md](../methods/effects.md)). Ids are yours to choose
+but should start with something of your own (`glitch/rgb-split`): built-in
+ids and `project.` ids are refused, and so is an `id@major` another pack
+already has.
+
+Installed packs show in `fx.list` as `origin: "pack"`. A project never
+renders from a pack: the first time it uses one of your effects, the
+engine copies that effect's folder into the project's `effects/`. Bump the
+major version for a change that would alter existing projects' look;
+projects keep the copy they have until asked for the new major.
 
 ## Checklist
 
