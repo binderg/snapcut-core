@@ -2,9 +2,11 @@
 #
 #   irm https://raw.githubusercontent.com/binderg/snapcut-core/main/install.ps1 | iex
 #
-# $env:VE_INSTALL_DIR picks the folder (default %LOCALAPPDATA%\Programs\ve).
-# $env:VE_VERSION installs a given tag (v0.1.0-rc.1) instead of the newest
-# release. FFmpeg is not included: winget install Gyan.FFmpeg
+# $env:VE_INSTALL_DIR picks the folder (default %LOCALAPPDATA%\Programs\ve);
+# it holds ve.exe with its bundled LGPL ffmpeg.exe and ffprobe.exe, and is
+# added to the end of your PATH (so an ffmpeg you installed yourself still
+# wins). $env:VE_VERSION installs a given tag (v0.1.0-rc.1, or nightly)
+# instead of the newest release.
 $ErrorActionPreference = 'Stop'
 
 $repo = 'binderg/snapcut-core'
@@ -23,8 +25,12 @@ try {
     Invoke-WebRequest -Uri $url -OutFile (Join-Path $tmp 've.zip') -UseBasicParsing
     Expand-Archive -Path (Join-Path $tmp 've.zip') -DestinationPath $tmp
     New-Item -ItemType Directory -Force -Path $dir | Out-Null
-    Copy-Item (Join-Path $tmp "ve-$target\ve.exe") (Join-Path $dir 've.exe') -Force
-    Write-Host "installed $dir\ve.exe"
+    try {
+        Copy-Item (Join-Path $tmp "ve-$target\*") $dir -Recurse -Force
+    } catch {
+        throw "could not replace files in $dir (an export may be running; try 've daemon stop' in your projects): $_"
+    }
+    Write-Host "installed $dir (ve.exe, ffmpeg.exe, ffprobe.exe)"
 } finally {
     Remove-Item -Recurse -Force $tmp
 }
@@ -34,8 +40,5 @@ if (-not ($userPath -split ';' | Where-Object { $_ -eq $dir })) {
     [Environment]::SetEnvironmentVariable('Path', "$userPath;$dir", 'User')
     $env:Path = "$env:Path;$dir"
     Write-Host "added $dir to your PATH (open a new terminal to use it)"
-}
-if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
-    Write-Host 've needs FFmpeg: winget install Gyan.FFmpeg'
 }
 & (Join-Path $dir 've.exe') version

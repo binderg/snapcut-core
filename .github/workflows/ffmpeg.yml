@@ -1,0 +1,136 @@
+name: FFmpeg
+
+# Run by hand after changing .github/ffmpeg/pins.env. Builds or fetches the
+# LGPL ffmpeg + ffprobe for every target, checks them, and publishes them with
+# their sources as the release named by FFMPEG_RELEASE. ve releases and
+# nightlies copy from that release, so this runs only when FFmpeg changes.
+
+on:
+  workflow_dispatch:
+  # Also runs by itself when the pins change on main (a no-op if
+  # FFMPEG_RELEASE already exists).
+  push:
+    branches: [main]
+    paths: [".github/ffmpeg/**"]
+
+permissions:
+  contents: write
+
+jobs:
+  # Pushes skip the build when the release exists; a manual run fails instead,
+  # since it usually means FFMPEG_RELEASE was not bumped.
+  plan:
+    runs-on: ubuntu-24.04
+    outputs:
+      needed: ${{ steps.check.outputs.needed }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          source .github/ffmpeg/pins.env
+          if ! gh release view "$FFMPEG_RELEASE" > /dev/null 2>&1; then
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = workflow_dispatch ]; then
+            echo "$FFMPEG_RELEASE already exists; bump FFMPEG_RELEASE in pins.env" >&2
+            exit 1
+          else
+            echo "$FFMPEG_RELEASE already exists; nothing to do"
+          fi
+
+  build:
+    needs: plan
+    if: needs.plan.outputs.needed == 'true'
+    name: ffmpeg (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04, target: x86_64-unknown-linux-gnu }
+          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu }
+          - { os: windows-2022, target: x86_64-pc-windows-msvc }
+          - { os: macos-14, target: aarch64-apple-darwin }
+          - { os: macos-15-intel, target: x86_64-apple-darwin }
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch BtbN build
+        if: runner.os != 'macOS'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          source .github/ffmpeg/pins.env
+          var=BTBN_$(echo "${{ matrix.target }}" | tr 'a-z-' 'A-Z_')
+          sha_var=${var}_SHA256
+          asset=${!var}
+          gh release download "$BTBN_TAG" -R BtbN/FFmpeg-Builds -p "$asset"
+          echo "${!sha_var}  $asset" | sha256sum -c -
+          mkdir unpacked out
+          case "$asset" in
+            *.zip) 7z x -ounpacked "$asset" > /dev/null ;;
+            *) tar xJf "$asset" -C unpacked ;;
+          esac
+          cp unpacked/*/bin/ffmpeg* unpacked/*/bin/ffprobe* out/
+          cp unpacked/*/LICENSE.txt out/LICENSE.txt
+          rm -f out/ffplay*
+
+      - name: Build (macOS)
+        if: runner.os == 'macOS'
+        run: bash .github/ffmpeg/build-macos.sh out
+
+      - name: Check
+        run: bash .github/ffmpeg/check.sh out
+
+      - name: Package
+        run: |
+          source .github/ffmpeg/pins.env
+          {
+            echo "FFmpeg $FFMPEG_COMMIT (release/8.1), LGPL."
+            echo "Built by: ${{ runner.os == 'macOS' && '.github/ffmpeg/build-macos.sh in ve' || 'BtbN/FFmpeg-Builds' }}"
+            if [ "$RUNNER_OS" != macOS ]; then
+              echo "BtbN build scripts: https://github.com/BtbN/FFmpeg-Builds/tree/$BTBN_COMMIT"
+            fi
+            echo
+            out/ffmpeg -hide_banner -buildconf
+          } > out/BUILD.txt
+          tar czf "ffmpeg-${{ matrix.target }}.tar.gz" -C out .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ffmpeg-${{ matrix.target }}
+          path: ffmpeg-${{ matrix.target }}.tar.gz
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      # LGPL: ship the exact source next to the binaries. LAME (LGPL) is the
+      # only other copyleft library linked in.
+      - name: Sources
+        run: |
+          source .github/ffmpeg/pins.env
+          curl -fsSL --retry 3 "$FFMPEG_SRC_URL" -o "dist/ffmpeg-source-$FFMPEG_COMMIT.tar.gz"
+          echo "$FFMPEG_SRC_SHA256  dist/ffmpeg-source-$FFMPEG_COMMIT.tar.gz" | sha256sum -c -
+          curl -fsSL --retry 3 "$LAME_URL" -o dist/lame-source.tar.gz
+          echo "$LAME_SHA256  dist/lame-source.tar.gz" | sha256sum -c -
+      - name: Checksums
+        run: cd dist && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          source .github/ffmpeg/pins.env
+          # Not "latest": install scripts use releases/latest for ve itself.
+          gh release create "$FFMPEG_RELEASE" dist/* --latest=false \
+            --title "$FFMPEG_RELEASE (bundled FFmpeg)" \
+            --notes "LGPL ffmpeg + ffprobe bundled into ve release archives, with their sources. Not a ve release. See .github/ffmpeg/pins.env."

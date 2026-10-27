@@ -2,13 +2,25 @@ name: Release
 
 # Push a tag like v0.1.0-rc.1 to build every platform and publish a GitHub
 # release. Tags with a hyphen (rc, beta) are marked as pre-releases.
+#
+# Every push to main also rebuilds the rolling "nightly" pre-release (same
+# archives, replaced each time), so the newest build is always downloadable.
+#
+# Each archive carries the LGPL ffmpeg + ffprobe from the release named in
+# .github/ffmpeg/pins.env (made by the FFmpeg workflow), next to `ve`.
 
 on:
   push:
     tags: ["v*"]
+    branches: [main]
 
 permissions:
   contents: write
+
+# A newer push to main replaces a nightly still building; tags never cancel.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type == 'branch' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -23,9 +35,12 @@ jobs:
           - { os: ubuntu-22.04, target: x86_64-unknown-linux-gnu }
           - { os: ubuntu-22.04-arm, target: aarch64-unknown-linux-gnu }
           - { os: macos-14, target: aarch64-apple-darwin }
-          - { os: macos-14, target: x86_64-apple-darwin }
+          - { os: macos-15-intel, target: x86_64-apple-darwin }
           - { os: windows-2022, target: x86_64-pc-windows-msvc }
     runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
       - run: rustup target add ${{ matrix.target }}
@@ -38,22 +53,78 @@ jobs:
 
       # Archive names carry no version, so releases/latest/download/<name>
       # always points at the newest build (the install scripts rely on it).
+      # Windows and macOS get a .zip (what people double-click), Linux a .tar.gz.
       - name: Package
-        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
+          source .github/ffmpeg/pins.env
           name="ve-${{ matrix.target }}"
           bin=ve
           if [ "$RUNNER_OS" = Windows ]; then bin=ve.exe; fi
-          mkdir -p "dist/$name"
+          ff="ffmpeg-${{ matrix.target }}.tar.gz"
+          mkdir -p "dist/$name/THIRD-PARTY/ffmpeg" ff-dl ff
+          if ! gh release view "$FFMPEG_RELEASE" > /dev/null; then
+            echo "no release $FFMPEG_RELEASE: run the FFmpeg workflow (Actions tab), then re-run this one" >&2
+            exit 1
+          fi
+          gh release download "$FFMPEG_RELEASE" -D ff-dl -p "$ff" -p SHA256SUMS.txt
+          sum() { if command -v sha256sum > /dev/null; then sha256sum "$@"; else shasum -a 256 "$@"; fi; }
+          (cd ff-dl && grep " $ff\$" SHA256SUMS.txt | sum -c -)
+          tar xzf "ff-dl/$ff" -C ff
+          cp ff/ffmpeg* ff/ffprobe* "dist/$name/"
+          cp ff/LICENSE.txt ff/BUILD.txt "dist/$name/THIRD-PARTY/ffmpeg/"
+          cat > "dist/$name/THIRD-PARTY/ffmpeg/SOURCE.txt" <<EOF
+          ffmpeg and ffprobe in this folder are FFmpeg (https://ffmpeg.org), licensed
+          under the LGPL (see LICENSE.txt), unmodified. The exact source code, and
+          the source of LAME (the one other LGPL library linked in), are at:
+          https://github.com/${{ github.repository }}/releases/tag/$FFMPEG_RELEASE
+          You can replace them with your own build, or point ve at another ffmpeg
+          with the VE_FFMPEG and VE_FFPROBE environment variables.
+          EOF
           cp "target/${{ matrix.target }}/release/$bin" "dist/$name/"
           cp -r README.md CHANGELOG.md LICENSE-MIT LICENSE-APACHE skills "dist/$name/"
           cd dist
-          if [ "$RUNNER_OS" = Windows ]; then
-            7z a "$name.zip" "$name" > /dev/null
-          else
-            tar czf "$name.tar.gz" "$name"
-          fi
+          case "$RUNNER_OS" in
+            Windows) 7z a "$name.zip" "$name" > /dev/null ;;
+            macOS) zip -qry "$name.zip" "$name" ;;
+            *) tar czf "$name.tar.gz" "$name" ;;
+          esac
           rm -rf "$name"
+
+      # Unpack the archive we just made and use it the way a user would, with
+      # any ffmpeg on the runner hidden so only the bundled one can be found.
+      - name: Smoke test
+        run: |
+          name="ve-${{ matrix.target }}"
+          for t in ffmpeg ffprobe; do
+            p=$(command -v "$t" || true)
+            if [ -n "$p" ]; then echo "hiding $p"; sudo mv "$p" "$p.hidden" 2> /dev/null || mv "$p" "$p.hidden"; fi
+          done
+          hash -r
+          t=$(mktemp -d)
+          case "$RUNNER_OS" in
+            Linux) tar xzf "dist/$name.tar.gz" -C "$t" ;;
+            Windows) 7z x -o"$t" "dist/$name.zip" > /dev/null ;;
+            *) unzip -q "dist/$name.zip" -d "$t" ;;
+          esac
+          d="$t/$name"
+          export VE_DAEMON_IDLE_SECS=30
+          "$d/ffmpeg" -hide_banner -v error -f lavfi -i testsrc2=s=320x240:r=30:d=2 -f lavfi -i sine=d=2 \
+            -c:v mpeg4 -c:a aac -shortest "$t/clip.mp4"
+          cd "$t"
+          "$d/ve" version
+          "$d/ve" probe clip.mp4
+          "$d/ve" init smoke --fps 30 --size 320x240
+          cd smoke
+          asset=$("$d/ve" import ../clip.mp4 | grep -o 'asset_[0-9a-f]*' | head -1)
+          "$d/ve" insert "$asset"
+          "$d/ve" frame --at 1s --width 160 -o f.jpg
+          "$d/ve" export --preset draft-540p -o out.mp4
+          "$d/ve" export --format webm -o out.webm
+          "$d/ve" export --format mp3 -o out.mp3
+          for f in f.jpg out.mp4 out.webm out.mp3; do test -s "$f" || { echo "$f is missing or empty" >&2; exit 1; }; done
+          "$d/ve" daemon stop || true
 
       - uses: actions/upload-artifact@v4
         with:
@@ -75,9 +146,18 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          pre=""
-          case "$GITHUB_REF_NAME" in *-*) pre="--prerelease" ;; esac
-          gh release create "$GITHUB_REF_NAME" dist/* install.sh install.ps1 \
-            --title "$GITHUB_REF_NAME" \
-            --notes "See [CHANGELOG.md](https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_REF_NAME/CHANGELOG.md). Needs FFmpeg on PATH." \
-            $pre
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            pre=""
+            case "$GITHUB_REF_NAME" in *-*) pre="--prerelease" ;; esac
+            gh release create "$GITHUB_REF_NAME" dist/* install.sh install.ps1 \
+              --title "$GITHUB_REF_NAME" \
+              --notes "See [CHANGELOG.md](https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_REF_NAME/CHANGELOG.md). FFmpeg (LGPL) is included." \
+              $pre
+          else
+            # Replace the previous nightly (release and tag) with this commit's.
+            gh release delete nightly --cleanup-tag --yes 2> /dev/null || true
+            gh release create nightly dist/* install.sh install.ps1 \
+              --target "$GITHUB_SHA" --prerelease --latest=false \
+              --title "nightly (${GITHUB_SHA::7})" \
+              --notes "Built from main at $GITHUB_SHA. Rebuilt on every push to main, so it may be broken; numbered releases are the stable ones. FFmpeg (LGPL) is included."
+          fi

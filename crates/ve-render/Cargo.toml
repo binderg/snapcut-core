@@ -10,7 +10,7 @@ publish.workspace = true
 [dependencies]
 ve-model.workspace = true
 ve-ops.workspace = true
-ffmpeg-sidecar.workspace = true
+ve-media.workspace = true
 url.workspace = true
 serde.workspace = true
 thiserror.workspace = true
@@ -25,7 +25,6 @@ blake3.workspace = true
 cosmic-text.workspace = true
 
 [dev-dependencies]
-ve-media.workspace = true
 image-compare.workspace = true
 
 [lints]

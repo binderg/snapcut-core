@@ -40,26 +40,15 @@ meant to come from plugins (the plugin host is not built yet).
 
 ## Install
 
-### 1. FFmpeg
-
-The engine runs `ffmpeg` and `ffprobe`, so they must be on your `PATH`.
-
-| System | Command |
-| --- | --- |
-| Windows | `winget install Gyan.FFmpeg` |
-| macOS | `brew install ffmpeg` |
-| Debian, Ubuntu | `sudo apt install ffmpeg` |
-
-Check with `ffmpeg -version`.
-
-### 2. The engine
-
-**Prebuilt binaries** for Windows, macOS (Apple silicon and Intel) and Linux
-(x86_64 and arm64) are on the [Releases](../../releases) page. Or install
-the newest one with a single command:
+**Prebuilt downloads** for Windows, macOS (Apple silicon and Intel) and Linux
+(x86_64 and arm64) are on the [Releases](../../releases) page: a `.zip`
+(Windows, macOS) or `.tar.gz` (Linux) per platform. Unpack it and run `ve`;
+nothing else to install, because each one includes an LGPL build of
+`ffmpeg` and `ffprobe` next to `ve`. Or install the newest one with a single
+command:
 
 ```bash
-# macOS, Linux (installs to ~/.local/bin)
+# macOS, Linux (files in ~/.local/share/ve, a `ve` link in ~/.local/bin)
 curl -fsSL https://raw.githubusercontent.com/binderg/snapcut-core/main/install.sh | sh
 ```
 
@@ -68,10 +57,21 @@ curl -fsSL https://raw.githubusercontent.com/binderg/snapcut-core/main/install.s
 irm https://raw.githubusercontent.com/binderg/snapcut-core/main/install.ps1 | iex
 ```
 
+Set `VE_VERSION=nightly` (`$env:VE_VERSION='nightly'` on Windows) for the
+newest build from `main`, rebuilt on every push and possibly broken. Numbered
+releases are the stable ones.
+
 The binaries are not code-signed yet. On Windows, SmartScreen may warn the
 first time; choose "More info", then "Run anyway". The macOS install script
 is not affected (only browser downloads are quarantined); for a downloaded
-archive, run `xattr -d com.apple.quarantine ve` once.
+archive, run `xattr -dr com.apple.quarantine ve-*` on the unpacked folder once.
+
+**Your own FFmpeg.** The bundled build has no x264/x265 (they are GPL), so
+H.264 comes from the hardware encoder (NVENC, QuickSync, AMF, VideoToolbox)
+or, without one, openh264, which looks worse at the same size. To use an
+FFmpeg you installed yourself, set `VE_FFMPEG` (and `VE_FFPROBE`, unless it
+sits next to it) to its path. Without those, `ve` uses the copy next to
+itself, then `ffmpeg` on your `PATH`.
 
 **From source**, with Rust from [rustup.rs](https://rustup.rs) (the pinned
 toolchain installs itself):
@@ -80,7 +80,9 @@ toolchain installs itself):
 cargo install --path crates/ve-cli
 ```
 
-Then `ve version` should print the engine version.
+Then `ve version` should print the engine version. A source build has no
+FFmpeg of its own: put `ffmpeg` and `ffprobe` on your `PATH`
+(`winget install Gyan.FFmpeg`, `brew install ffmpeg`, `sudo apt install ffmpeg`).
 
 Effects, transitions and transforms use the GPU (Vulkan, Metal or
 DirectX 12). Without a usable GPU the engine falls back to a software
@@ -161,5 +163,6 @@ cargo clippy --workspace --all-targets
 ## License
 
 Dual licensed under [MIT](LICENSE-MIT) or [Apache 2.0](LICENSE-APACHE), at
-your option. FFmpeg is not bundled; you install it yourself under its own
-license.
+your option. Release archives include FFmpeg, unmodified, under its own
+license (LGPL); see `THIRD-PARTY/ffmpeg/` inside the archive. Its source is
+on the release named in [`.github/ffmpeg/pins.env`](.github/ffmpeg/pins.env).
