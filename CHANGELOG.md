@@ -150,6 +150,15 @@ not final (the command is `ve`).
 - `ui.*` methods for human editors are experimental and may change or move
   without notice.
 
+### Install
+
+- Release archives (zip on Windows and macOS, tar.gz on Linux) include an
+  LGPL `ffmpeg` and `ffprobe` next to `ve`, so nothing else needs
+  installing. `ve` looks for them in `VE_FFMPEG`/`VE_FFPROBE`, then next to
+  itself, then on `PATH`.
+- A rolling `nightly` pre-release is rebuilt from every push to `main`
+  (`VE_VERSION=nightly` in the install scripts).
+
 ### Known limits
 
 - Tested mostly on Windows so far.

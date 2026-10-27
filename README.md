@@ -98,26 +98,13 @@ did what.
 
 ## Install
 
-### 1. FFmpeg
-
-The engine runs `ffmpeg` and `ffprobe`, so they must be on your `PATH`.
-
-| System | Command |
-| --- | --- |
-| Windows | `winget install Gyan.FFmpeg` |
-| macOS | `brew install ffmpeg` |
-| Debian, Ubuntu | `sudo apt install ffmpeg` |
-
-Check with `ffmpeg -version`.
-
-### 2. SnapCut Core
-
-Each release publishes prebuilt binaries for Windows, macOS (Apple silicon
+Each release has a download per platform for Windows, macOS (Apple silicon
 and Intel) and Linux (x86_64 and arm64) on the [Releases](../../releases)
-page. To install the newest one:
+page. There is nothing else to install: every download includes an LGPL
+build of `ffmpeg` and `ffprobe` next to `ve`. To install the newest one:
 
 ```bash
-# macOS, Linux (installs to ~/.local/bin)
+# macOS, Linux (files in ~/.local/share/ve, a `ve` link in ~/.local/bin)
 curl -fsSL https://raw.githubusercontent.com/binderg/snapcut-core/main/install.sh | sh
 ```
 
@@ -133,20 +120,34 @@ ve version
 ```
 
 <details>
-<summary>Unsigned binaries, GPU, and building from source</summary>
+<summary>Nightly builds, your own FFmpeg, unsigned binaries, GPU, and building from source</summary>
+
+**Nightly builds.** Set `VE_VERSION=nightly` (`$env:VE_VERSION='nightly'`
+on Windows) before the install command for the newest build from `main`,
+rebuilt on every push and possibly broken. Numbered releases are the stable
+ones.
+
+**Your own FFmpeg.** The bundled build has no x264/x265 (they are GPL), so
+H.264 comes from your hardware encoder (NVENC, QuickSync, AMF,
+VideoToolbox) or, without one, openh264, which looks worse at the same size.
+To use an FFmpeg you installed yourself, set `VE_FFMPEG` (and `VE_FFPROBE`,
+unless it sits next to it) to its path. Without those, `ve` uses the copy
+next to itself, then `ffmpeg` on your `PATH`.
 
 **Unsigned binaries.** The binaries are not code-signed yet. On Windows,
 SmartScreen may warn the first time; choose "More info", then "Run anyway".
 For a macOS archive downloaded in a browser, run
-`xattr -d com.apple.quarantine ve` once (the install script is not
-affected).
+`xattr -dr com.apple.quarantine ve-*` on the unpacked folder once (the
+install script is not affected).
 
 **GPU.** Effects, transitions, transforms and text use the GPU (Vulkan,
 Metal or DirectX 12). Without a usable GPU the engine falls back to a
 software renderer, which works but is slow.
 
 **From source**, with Rust from [rustup.rs](https://rustup.rs) (the pinned
-toolchain installs itself):
+toolchain installs itself) and FFmpeg on your `PATH`
+(`winget install Gyan.FFmpeg`, `brew install ffmpeg` or
+`sudo apt install ffmpeg`):
 
 ```bash
 git clone https://github.com/binderg/snapcut-core
@@ -316,5 +317,5 @@ cargo clippy --workspace --all-targets
 ## License
 
 Dual licensed under [MIT](LICENSE-MIT) or [Apache 2.0](LICENSE-APACHE), at
-your option. FFmpeg is not bundled; you install it yourself under its own
-license.
+your option. Release downloads include an LGPL build of FFmpeg, which keeps
+its own license; its sources are published with each FFmpeg build.

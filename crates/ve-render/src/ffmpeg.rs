@@ -13,7 +13,7 @@ use crate::control::{self, Control};
 use crate::graph::Graph;
 
 pub fn ffmpeg_path() -> PathBuf {
-    ffmpeg_sidecar::paths::ffmpeg_path()
+    ve_media::ffmpeg_path()
 }
 
 /// Major version of the ffmpeg binary, if it says. Git builds (`N-1234-g...`) give `None`.
@@ -402,7 +402,7 @@ fn command(
 fn spawn_error(e: io::Error) -> RenderError {
     match e.kind() {
         io::ErrorKind::NotFound => RenderError::Ffmpeg {
-            message: format!("ffmpeg not found (tried {}); install FFmpeg and put it on PATH", ffmpeg_path().display()),
+            message: format!("ffmpeg not found (tried {}); put ffmpeg next to ve or on PATH, or set VE_FFMPEG", ffmpeg_path().display()),
             stderr: String::new(),
         },
         _ => RenderError::Io(e.to_string()),

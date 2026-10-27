@@ -110,7 +110,9 @@ copies the workspace lints by hand for that reason.
 - If the checkout is in a synced folder (OneDrive, Dropbox), set
   `CARGO_TARGET_DIR` to a path outside it, or `target/` syncs gigabytes.
 - `cargo test --workspace`, `cargo clippy --workspace --all-targets` must stay clean.
-- Phase 1 needs `ffmpeg` and `ffprobe` on PATH.
+- Phase 1 needs `ffmpeg` and `ffprobe`: `VE_FFMPEG`/`VE_FFPROBE`, else next
+  to the `ve` binary (`VE_DAEMON_ORIGIN` for a staged daemon), else PATH
+  (`ve_media::ffmpeg_path`). Release archives put an LGPL build next to `ve`.
 
 ## Status (Oct 2026)
 
@@ -414,7 +416,15 @@ with a Python fixture plugin (skips without Python).
 CI (`.github/workflows/ci.yml`): clippy `-D warnings` and tests on Linux,
 macOS and Windows, plus the Python OTIO check. Releases
 (`release.yml`): a `v*` tag builds five targets and publishes a GitHub
-release with `install.sh` / `install.ps1`. Version 0.1.0-rc.1.
+release with `install.sh` / `install.ps1`; every push to main replaces the
+rolling `nightly` pre-release. Each archive (zip on Windows/macOS, tar.gz on
+Linux) bundles ffmpeg + ffprobe copied from our own release named by
+`FFMPEG_RELEASE` in `.github/ffmpeg/pins.env`, and is smoke tested
+unpacked with the runner's ffmpeg hidden. That release is made by
+`ffmpeg.yml` (manual, or on pins changes on main): BtbN's static `lgpl`
+builds for Linux/Windows, `build-macos.sh` for macOS, `check.sh` refuses GPL
+builds or missing export encoders, and the FFmpeg and LAME sources ship
+beside them. Version 0.1.0-rc.1.
 
 Phase 1 gate: **an agent cuts a 10-minute talking head end to end via the CLI only.**
 

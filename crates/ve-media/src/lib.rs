@@ -20,7 +20,7 @@ use ve_model::{Rate, RationalTime};
 
 #[derive(Debug, thiserror::Error)]
 pub enum MediaError {
-    #[error("ffprobe not found (tried {}); install FFmpeg and put ffprobe on PATH", .0.display())]
+    #[error("ffprobe not found (tried {}); put ffprobe next to ve or on PATH, or set VE_FFPROBE", .0.display())]
     FfprobeMissing(PathBuf),
     #[error("{} is not readable media: {message}", .path.display())]
     NotMedia { path: PathBuf, message: String },
@@ -32,9 +32,45 @@ pub enum MediaError {
 
 type Result<T> = std::result::Result<T, MediaError>;
 
-/// True when an `ffmpeg` binary is reachable (PATH, or next to the engine).
+/// True when an `ffmpeg` binary is reachable (see [`ffmpeg_path`]).
 pub fn ffmpeg_available() -> bool {
-    ffmpeg_sidecar::command::ffmpeg_is_installed()
+    Command::new(ffmpeg_path()).arg("-version").output().is_ok_and(|o| o.status.success())
+}
+
+/// The `ffmpeg` to run: `VE_FFMPEG`, else the one shipped next to `ve`, else
+/// `ffmpeg` on PATH.
+pub fn ffmpeg_path() -> PathBuf {
+    tool("ffmpeg", std::env::var_os("VE_FFMPEG").map(PathBuf::from))
+}
+
+/// The `ffprobe` to run: `VE_FFPROBE`, else the one beside `VE_FFMPEG` (so the
+/// two come from one build), else the one shipped next to `ve`, else PATH.
+pub fn ffprobe_path() -> PathBuf {
+    let set = std::env::var_os("VE_FFPROBE").map(PathBuf::from).or_else(|| {
+        let ffmpeg = PathBuf::from(std::env::var_os("VE_FFMPEG")?);
+        Some(ffmpeg.parent()?.join(exe_name("ffprobe"))).filter(|p| p.is_file())
+    });
+    tool("ffprobe", set)
+}
+
+fn tool(name: &str, set: Option<PathBuf>) -> PathBuf {
+    if let Some(p) = set.filter(|p| !p.as_os_str().is_empty()) {
+        return p;
+    }
+    // A daemon on Windows runs from a copy of `ve.exe` in the cache dir;
+    // `VE_DAEMON_ORIGIN` (ve_daemon::client::ORIGIN_ENV) names the real one,
+    // which is where release archives put ffmpeg. Canonical, because the
+    // install scripts put a symlink to `ve` on PATH (macOS reports the link).
+    let exe = std::env::var_os("VE_DAEMON_ORIGIN").map(PathBuf::from).or_else(|| std::env::current_exe().ok());
+    let exe = exe.map(|p| std::fs::canonicalize(&p).unwrap_or(p));
+    match exe.as_deref().and_then(Path::parent).map(|dir| dir.join(exe_name(name))) {
+        Some(beside) if beside.is_file() => beside,
+        _ => PathBuf::from(name),
+    }
+}
+
+fn exe_name(name: &str) -> String {
+    format!("{name}{}", std::env::consts::EXE_SUFFIX)
 }
 
 /// Content hash used in the asset table.
@@ -77,7 +113,7 @@ pub fn probe(path: &Path) -> Result<Probe> {
     if !path.is_file() {
         return Err(MediaError::Io { path: path.to_owned(), source: io::ErrorKind::NotFound.into() });
     }
-    let exe = ffmpeg_sidecar::ffprobe::ffprobe_path();
+    let exe = ffprobe_path();
     let out = Command::new(&exe)
         .args(["-v", "error", "-print_format", "json", "-show_format", "-show_streams"])
         .arg(path)
@@ -113,7 +149,7 @@ pub fn probe(path: &Path) -> Result<Probe> {
 
 /// Percent of a still's pixels that are not fully opaque, rounded up.
 fn measure_alpha(path: &Path) -> io::Result<u8> {
-    let out = Command::new(ffmpeg_sidecar::paths::ffmpeg_path())
+    let out = Command::new(ffmpeg_path())
         .args(["-v", "error", "-i"])
         .arg(path)
         .args(["-frames:v", "1", "-vf", "format=rgba,alphaextract", "-f", "rawvideo", "-pix_fmt", "gray", "-"])
@@ -527,7 +563,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let make = |name: &str, args: &[&str]| {
             let out = dir.join(name);
-            let st = Command::new(ffmpeg_sidecar::paths::ffmpeg_path())
+            let st = Command::new(ffmpeg_path())
                 .args(["-v", "error", "-y"])
                 .args(args)
                 .args(["-frames:v", "1"])
