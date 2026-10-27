@@ -1,42 +1,100 @@
-# Headless Video Engine
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/snapcut-core-logo-dark-mode.svg">
+    <img alt="SnapCut Core" src="docs/assets/snapcut-core-logo.svg" width="520">
+  </picture>
+</p>
 
-A video editor with no window. You (or an AI agent) edit real footage from
-the command line or over a JSON-RPC API: cut silences out of a talking head,
-trim, reorder, change speed, make J and L cuts, add effects and transitions,
-check the result with frames and contact sheets, and export.
+<p align="center">
+  <strong>The engine under a video editor. Bring the GUI, the AI, or both.</strong>
+</p>
 
-It is built for agents first. Every command is undoable, can run as a dry
-run, and names who made it, so an agent and a person can edit the same
-project side by side. The project is an
-[OpenTimelineIO](https://opentimeline.io) file, so a cut made here opens in
-DaVinci Resolve, Premiere or Avid.
+<p align="center">
+  <a href="https://github.com/binderg/snapcut-core/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/binderg/snapcut-core/actions/workflows/ci.yml/badge.svg"></a>
+  <img alt="Status: alpha" src="https://img.shields.io/badge/status-alpha-d10000">
+  <img alt="License: MIT or Apache-2.0" src="https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-blue">
+  <img alt="Platforms" src="https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey">
+</p>
 
-> **Status: 0.1.0-rc.1, alpha.** The editing core works and is heavily
-> tested, but expect rough edges and protocol changes before 1.0. The
-> product name is not final; the command is `ve` for now.
+<p align="center">
+  <a href="#quick-start">Quick start</a> ·
+  <a href="#install">Install</a> ·
+  <a href="#editing-with-an-ai-agent">AI agents</a> ·
+  <a href="#building-your-own-editor">Build an editor</a> ·
+  <a href="#plugins">Plugins</a> ·
+  <a href="ARCHITECTURE.md">Architecture</a>
+</p>
+
+---
+
+SnapCut Core is not a video editor. It is the part underneath one: the
+timeline, cuts, audio, titles, effects, rendering and export, with no window
+of its own. Everything it can do goes through one self-describing API, so
+whatever sits on top is up to you:
+
+- **A GUI.** A simple CapCut-style app for vertical clips, a dense
+  Resolve-style editor, or editing built into your own product.
+- **An AI.** An agent that edits from the command line or a chat, sees and
+  measures the footage, and checks its own work.
+- **Both at once.** A person in an editor and an agent in a terminal on the
+  same project, live. The agent's cuts appear on the timeline as it makes
+  them, and undo knows whose edit is whose.
+
+The bet behind it: AI is making interfaces cheap to build, so the part worth
+building well is the engine. Think of it as an open-source, self-hostable
+Shotstack you can build your own editor, automation or video service on.
+
+> [!NOTE]
+> **Status: 0.1.0-rc.1, alpha.** The editing core works end to end and is
+> heavily tested, but expect rough edges and protocol changes before 1.0.
+> The command is `ve` for now. See [What is not done yet](#what-is-not-done-yet).
+
+## Why SnapCut Core
+
+| | |
+| --- | --- |
+| **Built for agents** | Every edit can run as a dry run first, can be undone, and records who made it (`ve history`). Agents read the whole timeline, transcripts and measurements, so they edit from facts rather than guesses. |
+| **Bring your own frontend** | Every UI, script and plugin is a client of one JSON-RPC API over a local socket or WebSocket. Changes stream to every client as JSON Patch. `ve describe` prints the whole API as OpenRPC, generated from the code. |
+| **Lean core, open edges** | No AI models, voices or 3D in the core, ever. They come as plugins, in any language, local or cloud. |
+| **Open formats** | Projects are [OpenTimelineIO](https://opentimeline.io) files, so a cut made here opens in DaVinci Resolve, Premiere or Avid. Effects are WGSL shaders with a JSON Schema for their parameters. |
+| **Exact** | Time is stored as exact fractions, never floats. Renders are frame- and sample-exact, with a short crossfade on every audio cut so nothing clicks. |
 
 ## What it does
 
-- **Edit**: insert, split, trim (ripple or roll), move, reorder, ripple
-  delete, lift, speed (exact ratios), volume, any number of video and audio
-  tracks, hide and mute. Video and its sound stay linked; unlink one side
-  for J/L cuts.
-- **Find what to cut**: silence and scene-cut detection write markers;
-  `ve ripple-delete --markers silence` removes every pause in one step.
-- **Measure sound**: loudness (LUFS, true peak), levels, noise floor, stereo
-  balance, pitch, waveforms. `ve normalize --target -14` hits a loudness
-  target.
-- **Look at it**: exact frames, contact sheets, short preview clips.
-- **Picture**: position, scale, rotation, opacity and crop per clip, with
-  keyframes. Still images (logos, title cards, photos) with transparency. GPU effects and transitions (WGSL shaders), with an API for
-  writing your own.
-- **Export**: H.264 MP4 presets (master, YouTube 1080p/720p, vertical
-  1080x1920), frame- and sample-exact, with a short crossfade on every audio
-  cut so nothing clicks.
-- **Undo** across sessions, undo groups, and a full history of who did what.
+**Edit.** Insert, split, trim (ripple or roll), move, reorder, ripple delete,
+lift, speed (exact ratios), volume, any number of video and audio tracks,
+hide and mute. Video and its sound stay linked; unlink one side for J and L
+cuts.
 
-It does not bundle any AI models. Transcription, captions and the like are
-meant to come from plugins (the plugin host is not built yet).
+**Find what to cut.** Silence and scene-cut detection write markers, and
+`ve ripple-delete --markers silence` removes every pause in one step.
+
+**Measure.** Loudness (LUFS, true peak), levels, noise floor, stereo balance,
+pitch and waveforms. `ve normalize --target -14` hits a loudness target.
+
+**Look at it.** Exact frames, contact sheets and short preview clips, so an
+agent (or you) can check a cut without opening an editor.
+
+**Picture.** Position, scale, rotation, opacity, crop and blend modes per
+clip, with keyframes and easing curves. Still images with transparency for
+logos, title cards and photos.
+
+**Text.** Titles, lower thirds and labels with presets and in/out
+animations, any installed font, a font file or Google Fonts. Burned-in
+captions from a transcript, with the spoken word highlighted as it is said.
+
+**Effects and transitions.** GPU shaders (WGSL) that are validated and
+test-rendered before use, with an API for writing your own. A few are built
+in, and an optional pack adds 125 transitions from gl-transitions.
+
+**Audio effects.** FFmpeg filter chains on audio clips, with keyframes.
+
+**Export.** MP4 (H.264 or HEVC), ProRes 422 HQ, ProRes 4444 with alpha,
+WebM, or audio only (WAV, M4A, MP3, FLAC). Presets for master, YouTube and
+vertical 1080x1920. Captions as SRT or VTT.
+
+**Undo** across sessions, undo groups per actor, and a full history of who
+did what.
 
 ## Install
 
@@ -52,11 +110,11 @@ The engine runs `ffmpeg` and `ffprobe`, so they must be on your `PATH`.
 
 Check with `ffmpeg -version`.
 
-### 2. The engine
+### 2. SnapCut Core
 
-**Prebuilt binaries** for Windows, macOS (Apple silicon and Intel) and Linux
-(x86_64 and arm64) are on the [Releases](../../releases) page. Or install
-the newest one with a single command:
+Each release publishes prebuilt binaries for Windows, macOS (Apple silicon
+and Intel) and Linux (x86_64 and arm64) on the [Releases](../../releases)
+page. To install the newest one:
 
 ```bash
 # macOS, Linux (installs to ~/.local/bin)
@@ -68,25 +126,39 @@ curl -fsSL https://raw.githubusercontent.com/binderg/snapcut-core/main/install.s
 irm https://raw.githubusercontent.com/binderg/snapcut-core/main/install.ps1 | iex
 ```
 
-The binaries are not code-signed yet. On Windows, SmartScreen may warn the
-first time; choose "More info", then "Run anyway". The macOS install script
-is not affected (only browser downloads are quarantined); for a downloaded
-archive, run `xattr -d com.apple.quarantine ve` once.
+Then check it:
+
+```bash
+ve version
+```
+
+<details>
+<summary>Unsigned binaries, GPU, and building from source</summary>
+
+**Unsigned binaries.** The binaries are not code-signed yet. On Windows,
+SmartScreen may warn the first time; choose "More info", then "Run anyway".
+For a macOS archive downloaded in a browser, run
+`xattr -d com.apple.quarantine ve` once (the install script is not
+affected).
+
+**GPU.** Effects, transitions, transforms and text use the GPU (Vulkan,
+Metal or DirectX 12). Without a usable GPU the engine falls back to a
+software renderer, which works but is slow.
 
 **From source**, with Rust from [rustup.rs](https://rustup.rs) (the pinned
 toolchain installs itself):
 
 ```bash
+git clone https://github.com/binderg/snapcut-core
+cd snapcut-core
 cargo install --path crates/ve-cli
 ```
 
-Then `ve version` should print the engine version.
-
-Effects, transitions and transforms use the GPU (Vulkan, Metal or
-DirectX 12). Without a usable GPU the engine falls back to a software
-renderer, which works but is slow.
+</details>
 
 ## Quick start
+
+Cut the pauses out of a talking head and export it for YouTube:
 
 ```bash
 ve init my-edit --fps 30 --size 1920x1080   # a project is a folder
@@ -103,30 +175,108 @@ ve export --preset youtube-1080p -o final.mp4
 Changed your mind? `ve undo`. Every command takes `--dry-run` to show what
 it would change first, and `--help` for its options.
 
+A few more things to try:
+
+```bash
+ve text add "The Big Launch" --preset title --in pop --out fade:0.6s
+ve font add --google "Bebas Neue"
+ve transform clip_7f3a --scale 0.2 --x 0.4 --y -0.4   # logo in a corner
+ve export --format prores-4444 -o overlay.mov          # keeps transparency
+ve history                                             # who did what
+```
+
 ## Editing with an AI agent
 
-The agent interface is the CLI plus a skill file, not a plugin protocol.
+The agent interface is the CLI plus a skill file. No MCP server or special
+protocol is needed.
 [`skills/video-edit/SKILL.md`](skills/video-edit/SKILL.md) teaches an agent
-the edit loop, time formats, IDs, undo groups, how to check its cuts and a
+the edit loop, time formats, IDs, undo groups, how to check its cuts, and a
 talking-head recipe. For Claude Code, copy the folder into your skills:
 
 ```bash
 cp -r skills/video-edit ~/.claude/skills/
 ```
 
-Then ask it to tighten a video in a folder with a `project.otio`. Agents
-pass `--actor agent:<name>`, so `ve history` shows which edits were theirs.
+Then open a folder with a `project.otio` and ask it to "tighten this video."
+Agents pass `--actor agent:<name>`, so `ve history` shows which edits were
+theirs, and you can undo an agent's edit without losing your own.
 
-## Building on the engine
+## Building your own editor
 
-Every UI, script and plugin talks to one JSON-RPC 2.0 protocol, over a
-local socket or a WebSocket. A background process per project (started on
-demand by the CLI) serves it, and broadcasts every change as a JSON Patch so
-several clients stay in sync. `ve describe` prints the whole API as an
-OpenRPC document generated from the code.
+Every frontend talks to the same JSON-RPC 2.0 API:
+
+```
+  Your editor (any stack)      AI agent (CLI + skill)      Scripts, CI
+            \                          |                       /
+             '--------- JSON-RPC 2.0 over socket or WebSocket -'
+                                       |
+              SnapCut Core: timeline, render, analysis, history
+                                       |
+                Plugins: AI models, voices, effect packs, tools
+```
+
+- A background process per project (started on demand by the CLI) serves
+  the API and broadcasts every change, so a UI watching the project sees an
+  agent's edits land as they happen.
+- Mutating calls carry the revision they were based on, so two clients never
+  silently overwrite each other.
+- `ve describe` prints the full API as an OpenRPC document. Hand it to an AI
+  and ask it to scaffold an editor.
 
 The API reference is [`skills/ve-core/`](skills/ve-core/SKILL.md): how to
 connect, the project model, revisions and undo, events, and every method.
+
+## Plugins
+
+The core does the editing and nothing else. Everything beyond it is a
+plugin, kept apart from the engine, so the core stays small and stable while
+what you can build on it keeps growing.
+
+A plugin is a folder with a `plugin.json` and a program in any language. It
+can add commands (which become `ve` subcommands), analyzers, generators and
+packs of effects, run as a background job with progress and cancel, and call
+back into the engine like any client, with its edits undone as one step.
+API keys live in the OS keychain, never in the project. A plugin written
+once works in every editor built on the engine.
+
+**Available now**
+
+| Plugin | What it does |
+| --- | --- |
+| [`plugins/deepgram`](plugins/deepgram) | Speech to text with your own Deepgram key: words with exact times, speakers and confidence, for captions and cutting by text. |
+| [`plugins/gl-transitions`](plugins/gl-transitions) | 125 transitions from gl-transitions.com as an effect pack, each with its author's license. |
+
+```bash
+ve plugin install plugins/deepgram
+ve plugin secret set deepgram DEEPGRAM_API_KEY   # then paste your key
+ve transcribe asset_94b8
+ve captions --preset caption-highlight
+```
+
+**What plugins make possible.** Speech to text and text to speech, local or
+cloud. AI green screen and background removal. Depth maps for effects that
+know what is near and far. Noise removal, upscaling and stabilization.
+Generated b-roll, music and sound effects. A bridge to Blender for 3D, or
+motion graphics written in HTML. Pulling footage from stock libraries and
+cloud drives, and publishing to YouTube or TikTok. Each can run on a local
+model or call a cloud API, chosen per plugin.
+
+## What is not done yet
+
+- Tested mostly on Windows. CI runs the tests on macOS and Linux, but real
+  footage has mostly been cut on Windows.
+- No proxies yet, so long-GOP phone footage seeks slowly.
+- Playback in an editor plays short rendered chunks. A stretch the engine
+  has not rendered yet waits a second or two before it plays.
+- Exports with effects take several times longer than plain cuts.
+- Contact sheets ignore effects and transforms.
+- Plugins run with your user's permissions (no sandbox), so review a plugin
+  before installing it.
+- No typed JS/TS client package yet; frontends call the JSON-RPC API
+  directly.
+
+The full plan is the TODO list at the end of
+[`ARCHITECTURE.md`](ARCHITECTURE.md).
 
 ## Development
 
@@ -144,19 +294,24 @@ cargo clippy --workspace --all-targets
   against Python `opentimelineio`.
 - Design: [`ARCHITECTURE.md`](ARCHITECTURE.md). Changes: [`CHANGELOG.md`](CHANGELOG.md).
 
+<details>
+<summary>Crates</summary>
+
 | Crate | Job |
 | --- | --- |
 | `ve-model` | OTIO timeline types, exact rational time, stable IDs. No I/O. |
 | `ve-ops` | Edit commands as pure functions returning forward and inverse JSON Patch |
 | `ve-history` | Undo and redo, undo groups, actors, revisions |
 | `ve-media` | Probing and importing media |
-| `ve-render` | Resolver, FFmpeg filtergraph renderer, wgpu compositor, effects |
+| `ve-render` | Resolver, FFmpeg filtergraph renderer, wgpu compositor, effects, text |
 | `ve-export` | Export presets and encoder choice |
 | `ve-analyze` | Silence, scenes, loudness, levels, pitch |
-| `ve-plugin` | Plugin manifests (the host is not built yet) |
+| `ve-plugin` | Plugin manifests, discovery and the plugin host |
 | `ve-protocol` | Method registry, OpenRPC generation, error codes |
 | `ve-daemon` | The per-project server; wires every method |
 | `ve-cli` | The `ve` command |
+
+</details>
 
 ## License
 
