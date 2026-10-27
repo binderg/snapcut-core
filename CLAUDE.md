@@ -263,6 +263,14 @@ a URL or Google Fonts (one css2 request per weight/style with a plain
 user agent, which gets TTF; `ureq` is the engine's only HTTP client). The
 renderer watches registered folders (`text::use_fonts_dir`, rescan at most
 1/s) and `text::fonts_signature()` is in the text and frame cache keys.
+Text animations (`ve_model::text::{Animation, frame}`): `animate_in` /
+`animate_out` (fade, pop, zoom, slides, typewriter, words) give a
+`TextFrame` per moment (opacity/scale/offset added to the transform in
+`compose::text_layout`; `reveal` hides letters, `highlight` colors the
+spoken word from `words` timings in the clip's own source time, so trims
+and splits keep them). The renderer draws glyph by glyph
+(`swash.with_pixels`) so hidden letters keep their place; the look is in
+the text and frame cache keys.
 The CLI runs on an 8 MiB thread: debug clap overflowed Windows' 1 MiB main stack.
 Tracks (`ve-ops::tracks`): `track.add|remove|rename|move|list`, any number
 of video and audio tracks. Positions (`index`) count within a kind; for video

@@ -22,7 +22,7 @@ use std::time::{Duration, Instant, SystemTime};
 use cosmic_text::fontdb;
 
 use cosmic_text::{Align as CtAlign, Attrs, Buffer, Color, Family, FontSystem, Metrics, Shaping, Style, SwashCache, Weight};
-use ve_model::text::{Align, TextClip, rgba};
+use ve_model::text::{Align, TextClip, TextFrame, rgba};
 
 use crate::RenderError;
 
@@ -180,13 +180,20 @@ const CACHE_ENTRIES: usize = 64;
 
 /// `t` drawn for a `canvas_w x canvas_h` canvas, `k` times larger (so a
 /// clip scaled up by its transform stays sharp; it is drawn `1/k` size).
-pub fn render(t: &TextClip, canvas_w: u32, canvas_h: u32, k: f32) -> Result<Arc<TextImage>, RenderError> {
-    let key = format!("{} {canvas_w}x{canvas_h} k{k} fonts {}", serde_json::to_string(t).unwrap_or_default(), fonts_signature());
+/// `look` hides letters not revealed yet and picks the highlighted word
+/// (`ve_model::text::frame`); the layout never changes with it.
+pub fn render(t: &TextClip, canvas_w: u32, canvas_h: u32, k: f32, look: &TextFrame) -> Result<Arc<TextImage>, RenderError> {
+    let key = format!(
+        "{} {canvas_w}x{canvas_h} k{k} fonts {} {}",
+        serde_json::to_string(t).unwrap_or_default(),
+        fonts_signature(),
+        look.glyph_key()
+    );
     if let Some(hit) = cache().lock().ok().and_then(|c| c.get(&key).cloned()) {
         return Ok(hit);
     }
     t.style.check().map_err(|e| RenderError::Invalid(format!("text clip: {e}")))?;
-    let img = Arc::new(draw(t, canvas_w as f32 * k, canvas_h as f32 * k)?);
+    let img = Arc::new(draw(t, canvas_w as f32 * k, canvas_h as f32 * k, look)?);
     if let Ok(mut c) = cache().lock() {
         if c.len() >= CACHE_ENTRIES {
             c.clear();
@@ -249,7 +256,7 @@ impl Mask {
     }
 }
 
-fn draw(t: &TextClip, cw: f32, ch: f32) -> Result<TextImage, RenderError> {
+fn draw(t: &TextClip, cw: f32, ch: f32, look: &TextFrame) -> Result<TextImage, RenderError> {
     let s = &t.style;
     let px = (s.size as f32 * ch).max(1.0);
     let wrap = (s.width as f32 * cw).max(px);
@@ -308,23 +315,32 @@ fn draw(t: &TextClip, cw: f32, ch: f32) -> Result<TextImage, RenderError> {
     // Where layout point (0, 0) lands in the picture.
     let (ox, oy) = (margin + pad - x0, margin + pad);
 
+    // Glyph by glyph: letters not revealed yet are skipped (their place is
+    // kept), and the highlighted word goes to its own mask.
     let mut mask = Mask::new(w, h);
-    buf.draw(system, swash, Color::rgba(255, 255, 255, 255), |gx, gy, gw, gh, c| {
-        let cover = f32::from(c.a()) / 255.0;
-        if cover <= 0.0 {
-            return;
-        }
-        for yy in 0..gh as i32 {
-            for xx in 0..gw as i32 {
-                let (x, y) = ((gx + xx) as f32 + ox, (gy + yy) as f32 + oy);
-                if x >= 0.0 && y >= 0.0 && (x as usize) < w && (y as usize) < h {
-                    let i = y as usize * w + x as usize;
-                    mask.a[i] = mask.a[i].max(cover);
-                }
+    let mut lit = Mask::new(w, h);
+    let line_starts: Vec<usize> = std::iter::once(0).chain(t.text.match_indices('\n').map(|(i, _)| i + 1)).collect();
+    for run in buf.layout_runs() {
+        let base = line_starts.get(run.line_i).copied().unwrap_or(0);
+        for glyph in run.glyphs {
+            let at = base + glyph.start;
+            if look.reveal.is_some_and(|r| at >= r) {
+                continue;
             }
+            let target = if look.highlight.is_some_and(|(a, b)| a <= at && at < b) { &mut lit } else { &mut mask };
+            let pg = glyph.physical((0.0, run.line_y), 1.0);
+            swash.with_pixels(system, pg.cache_key, Color::rgba(255, 255, 255, 255), |gx, gy, c| {
+                let cover = f32::from(c.a()) / 255.0;
+                let (x, y) = ((pg.x + gx) as f32 + ox, (pg.y + gy) as f32 + oy);
+                if cover > 0.0 && x >= 0.0 && y >= 0.0 && (x as usize) < w && (y as usize) < h {
+                    let i = y as usize * w + x as usize;
+                    target.a[i] = target.a[i].max(cover);
+                }
+            });
         }
-    });
+    }
     drop(guard);
+    let both = Mask { w, h, a: mask.a.iter().zip(&lit.a).map(|(a, b)| a.max(*b)).collect() };
 
     // Straight-alpha layers, bottom to top: box, shadow, outline, fill.
     let mut out = vec![[0.0f32; 4]; w * h];
@@ -341,7 +357,7 @@ fn draw(t: &TextClip, cw: f32, ch: f32) -> Result<TextImage, RenderError> {
             }
         }
     }
-    let shape = mask.dilate(outline);
+    let shape = both.dilate(outline);
     let sc = rgba(&s.shadow_color);
     if shadow > 0.0 && sc[3] > 0.0 {
         let (dx, dy) = (shadow.round() as isize, shadow.round() as isize);
@@ -361,6 +377,12 @@ fn draw(t: &TextClip, cw: f32, ch: f32) -> Result<TextImage, RenderError> {
     let fill = rgba(&s.color);
     for (o, a) in out.iter_mut().zip(&mask.a) {
         over(o, fill, *a);
+    }
+    if let Some(hc) = &s.highlight {
+        let hc = rgba(hc);
+        for (o, a) in out.iter_mut().zip(&lit.a) {
+            over(o, hc, *a);
+        }
     }
     let rgba8 = out.iter().flat_map(|p| [byte(p[0]), byte(p[1]), byte(p[2]), byte(p[3])]).collect();
     Ok(TextImage { rgba: rgba8, width: w as u32, height: h as u32 })
@@ -389,7 +411,7 @@ mod tests {
     use ve_model::text::TextStyle;
 
     fn clip(text: &str, style: TextStyle) -> TextClip {
-        TextClip { text: text.into(), style }
+        TextClip { text: text.into(), style, animate_in: None, animate_out: None, words: Vec::new() }
     }
 
     fn alpha(img: &TextImage, x: u32, y: u32) -> u8 {
@@ -398,7 +420,7 @@ mod tests {
 
     #[test]
     fn draws_white_text_on_clear() {
-        let img = render(&clip("Hello", TextStyle::default()), 640, 360, 1.0).unwrap();
+        let img = render(&clip("Hello", TextStyle::default()), 640, 360, 1.0, &TextFrame::STILL).unwrap();
         // About 7% of 360 tall, and wider than tall.
         assert!(img.width > img.height && img.height > 25 && img.height < 120, "{}x{}", img.width, img.height);
         assert_eq!(alpha(&img, 0, 0), 0, "corners are clear");
@@ -410,7 +432,7 @@ mod tests {
     #[test]
     fn background_outline_and_wrapping() {
         let boxed = TextStyle { background: vec![0.0, 0.0, 1.0, 1.0], ..TextStyle::default() };
-        let img = render(&clip("Box", boxed), 640, 360, 1.0).unwrap();
+        let img = render(&clip("Box", boxed), 640, 360, 1.0, &TextFrame::STILL).unwrap();
         // The box fills the middle of the picture's edge rows inside the margin.
         let mid_y = img.height / 2;
         let blue_px = (0..img.width).filter(|&x| {
@@ -419,24 +441,38 @@ mod tests {
         });
         assert!(blue_px.count() > 10, "the box is drawn");
 
-        let plain = render(&clip("O", TextStyle::default()), 640, 360, 1.0).unwrap();
-        let outlined = render(&clip("O", TextStyle { outline: 0.15, ..TextStyle::default() }), 640, 360, 1.0).unwrap();
+        let plain = render(&clip("O", TextStyle::default()), 640, 360, 1.0, &TextFrame::STILL).unwrap();
+        let outlined = render(&clip("O", TextStyle { outline: 0.15, ..TextStyle::default() }), 640, 360, 1.0, &TextFrame::STILL).unwrap();
         let dark = outlined.rgba.chunks(4).filter(|p| p[3] > 200 && p[0] < 60).count();
         assert!(dark > 50, "a black outline: {dark}");
         assert!(outlined.width > plain.width, "the margin grows with the outline");
 
         let long = "word ".repeat(30);
-        let one = render(&clip("word", TextStyle::default()), 640, 360, 1.0).unwrap();
-        let wrapped = render(&clip(&long, TextStyle::default()), 640, 360, 1.0).unwrap();
+        let one = render(&clip("word", TextStyle::default()), 640, 360, 1.0, &TextFrame::STILL).unwrap();
+        let wrapped = render(&clip(&long, TextStyle::default()), 640, 360, 1.0, &TextFrame::STILL).unwrap();
         assert!(wrapped.width as f32 <= 640.0 * 0.8 + 100.0, "wraps at the width: {}", wrapped.width);
         assert!(wrapped.height > one.height * 2, "onto several lines");
     }
 
     #[test]
+    fn hidden_letters_keep_their_place_and_the_word_lights_up() {
+        let t = clip("Hello world", TextStyle { highlight: Some(vec![1.0, 1.0, 0.0]), ..TextStyle::default() });
+        let full = render(&t, 640, 360, 1.0, &TextFrame::STILL).unwrap();
+        let half = render(&t, 640, 360, 1.0, &TextFrame { reveal: Some(5), ..TextFrame::STILL }).unwrap();
+        assert_eq!((half.width, half.height), (full.width, full.height), "same box: nothing jumps");
+        let ink = |img: &TextImage| img.rgba.chunks(4).filter(|p| p[3] > 128).count();
+        assert!(ink(&half) * 3 < ink(&full) * 2, "fewer letters drawn: {} of {}", ink(&half), ink(&full));
+        let lit = render(&t, 640, 360, 1.0, &TextFrame { highlight: Some((6, 11)), ..TextFrame::STILL }).unwrap();
+        let yellow = lit.rgba.chunks(4).filter(|p| p[3] > 200 && p[0] > 200 && p[1] > 200 && p[2] < 60).count();
+        let white = lit.rgba.chunks(4).filter(|p| p[3] > 200 && p[2] > 200).count();
+        assert!(yellow > 50 && white > 50, "one word yellow, the rest white: {yellow} {white}");
+    }
+
+    #[test]
     fn scale_draws_larger_and_bad_styles_fail() {
-        let a = render(&clip("Hi", TextStyle::default()), 640, 360, 1.0).unwrap();
-        let b = render(&clip("Hi", TextStyle::default()), 640, 360, 2.0).unwrap();
+        let a = render(&clip("Hi", TextStyle::default()), 640, 360, 1.0, &TextFrame::STILL).unwrap();
+        let b = render(&clip("Hi", TextStyle::default()), 640, 360, 2.0, &TextFrame::STILL).unwrap();
         assert!((b.height as f32 / a.height as f32 - 2.0).abs() < 0.2, "{} vs {}", a.height, b.height);
-        assert!(render(&clip("x", TextStyle { size: 0.0, ..TextStyle::default() }), 640, 360, 1.0).is_err());
+        assert!(render(&clip("x", TextStyle { size: 0.0, ..TextStyle::default() }), 640, 360, 1.0, &TextFrame::STILL).is_err());
     }
 }

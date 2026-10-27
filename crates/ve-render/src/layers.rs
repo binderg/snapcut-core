@@ -326,7 +326,7 @@ fn frame(ctx: &Ctx<'_>, p: &Plan, at: Q, detail: bool) -> Result<Frame> {
 const SILENT_DB: f64 = -100.0;
 
 fn layer(ctx: &Ctx<'_>, track: &str, track_index: usize, seg: &Segment, at: Q, detail: bool) -> Result<Layer> {
-    let (rect, xf, asset, alpha) = match compose::text_picture(seg, &ctx.canvas)? {
+    let (rect, xf, asset, alpha) = match compose::text_picture(seg, at, &ctx.canvas)? {
         // Text is always see-through around its letters.
         Some((_, w, h)) => {
             let (rect, xf) = compose::text_layout(seg, at, (w, h), &ctx.canvas);

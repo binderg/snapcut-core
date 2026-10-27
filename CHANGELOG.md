@@ -61,6 +61,9 @@ not final (the command is `ve`).
   (`text.add`, `text.set`, `ve text`). Stored as OTIO
   `GeneratorReference` (`ve.text`). Burned-in captions from the transcript
   on their own track (`text.captions`, `ve captions`). GPU only.
+- Text animations: entrances and exits (fade, pop, zoom, four slides,
+  typewriter, word by word), and the spoken word highlighted in captions
+  (`text.captions` with `highlight`; `ve text add --in pop --out fade`).
 - Project fonts in `<project>/fonts/`: `font.add` from a file, a URL or
   Google Fonts by family name (`ve font add --google "Bebas Neue"`),
   `font.list`, `font.remove`. Picked up while the engine runs.

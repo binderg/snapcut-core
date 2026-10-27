@@ -16,6 +16,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::otio::{Clip, MediaReference};
+use crate::time::Q;
+use crate::transcript::Seconds;
 
 /// `generator_kind` of text clips.
 pub const TEXT_KIND: &str = "ve.text";
@@ -28,6 +30,200 @@ pub struct TextClip {
     pub text: String,
     #[serde(flatten)]
     pub style: TextStyle,
+    /// How it appears at the clip's start.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub animate_in: Option<Animation>,
+    /// How it leaves at the clip's end.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub animate_out: Option<Animation>,
+    /// When each word of `text` (split at whitespace, in order) is spoken, in
+    /// the clip's own time (0 is where the clip was made; trims and splits keep
+    /// it). Captions fill this in; with `highlight` in the style the word
+    /// being spoken is drawn in that color.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub words: Vec<WordTime>,
+}
+
+/// One word's time in a text clip.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct WordTime {
+    pub start: Seconds,
+    pub end: Seconds,
+}
+
+/// An entrance or exit.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Animation {
+    pub kind: AnimationKind,
+    /// How long it takes. Default 0.4 s; at most half the clip.
+    #[serde(default = "default_animation_duration")]
+    pub duration: Seconds,
+}
+
+fn default_animation_duration() -> Seconds {
+    Seconds(Q::new(2, 5))
+}
+
+/// What an entrance does (an exit plays it backwards).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Hash)]
+#[serde(rename_all = "kebab-case")]
+pub enum AnimationKind {
+    /// Opacity from 0.
+    Fade,
+    /// Grows from half size with a little overshoot, fading in.
+    Pop,
+    /// Shrinks from 1.4x, fading in.
+    Zoom,
+    /// Rises into place from a little below, fading in.
+    SlideUp,
+    /// Drops into place from a little above.
+    SlideDown,
+    /// Moves in from the right, toward the left.
+    SlideLeft,
+    /// Moves in from the left, toward the right.
+    SlideRight,
+    /// Letters appear one after another.
+    Typewriter,
+    /// Words appear one after another.
+    Words,
+}
+
+impl AnimationKind {
+    pub const ALL: [AnimationKind; 9] = [
+        AnimationKind::Fade,
+        AnimationKind::Pop,
+        AnimationKind::Zoom,
+        AnimationKind::SlideUp,
+        AnimationKind::SlideDown,
+        AnimationKind::SlideLeft,
+        AnimationKind::SlideRight,
+        AnimationKind::Typewriter,
+        AnimationKind::Words,
+    ];
+}
+
+/// How a text clip looks at one moment, on top of its style and transform.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TextFrame {
+    /// Multiplies the clip's opacity.
+    pub opacity: f64,
+    /// Multiplies the clip's scale.
+    pub scale: f64,
+    /// Added to the clip's position, in canvas widths / heights.
+    pub dx: f64,
+    pub dy: f64,
+    /// Draw only text before this byte (letters or words still to come stay
+    /// invisible but keep their place).
+    pub reveal: Option<usize>,
+    /// Byte range of the word to draw in the highlight color.
+    pub highlight: Option<(usize, usize)>,
+}
+
+impl TextFrame {
+    pub const STILL: TextFrame = TextFrame { opacity: 1.0, scale: 1.0, dx: 0.0, dy: 0.0, reveal: None, highlight: None };
+
+    /// What decides the glyph picture (not the placement), for cache keys.
+    pub fn glyph_key(&self) -> String {
+        format!("{:?} {:?}", self.reveal, self.highlight)
+    }
+}
+
+/// Byte ranges of the words of `text` (split at whitespace).
+pub fn word_ranges(text: &str) -> Vec<(usize, usize)> {
+    let mut out = Vec::new();
+    let mut start = None;
+    for (i, c) in text.char_indices() {
+        match (c.is_whitespace(), start) {
+            (true, Some(s)) => {
+                out.push((s, i));
+                start = None;
+            }
+            (false, None) => start = Some(i),
+            _ => {}
+        }
+    }
+    if let Some(s) = start {
+        out.push((s, text.len()));
+    }
+    out
+}
+
+fn to_f64(q: Q) -> f64 {
+    *q.numer() as f64 / *q.denom() as f64
+}
+
+/// The text clip `t` at `local` seconds into a clip `length` long, whose own
+/// time (for word timings) is `own` there.
+pub fn frame(t: &TextClip, local: Q, length: Q, own: Q) -> TextFrame {
+    let mut f = TextFrame::STILL;
+    let half = length / Q::from_integer(2);
+    let zero = Q::from_integer(0);
+    // Progress 0..1 into the entrance, and out of the exit (1 = fully shown).
+    let progress = |a: &Animation, into: Q| -> f64 {
+        let d = a.duration.0.min(half);
+        if d <= zero { 1.0 } else { to_f64((into / d).clamp(zero, Q::from_integer(1))) }
+    };
+    let ease = |name: &str, x: f64| crate::curve::Ease::parse(name).map_or(x, |e| e.apply(x));
+    for (anim, into) in [(t.animate_in.as_ref(), local), (t.animate_out.as_ref(), length - local)] {
+        let Some(a) = anim else { continue };
+        let p = progress(a, into);
+        if p >= 1.0 {
+            continue;
+        }
+        let e = ease("ease-out", p);
+        let slide = 0.08 * (1.0 - e);
+        match a.kind {
+            AnimationKind::Fade => f.opacity *= e,
+            AnimationKind::Pop => {
+                f.scale *= 0.5 + 0.5 * ease("cubic-bezier(0.34, 1.56, 0.64, 1)", p);
+                f.opacity *= (p * 3.0).min(1.0);
+            }
+            AnimationKind::Zoom => {
+                f.scale *= 1.4 - 0.4 * e;
+                f.opacity *= e;
+            }
+            AnimationKind::SlideUp => {
+                f.dy += slide;
+                f.opacity *= e;
+            }
+            AnimationKind::SlideDown => {
+                f.dy -= slide;
+                f.opacity *= e;
+            }
+            AnimationKind::SlideLeft => {
+                f.dx += slide;
+                f.opacity *= e;
+            }
+            AnimationKind::SlideRight => {
+                f.dx -= slide;
+                f.opacity *= e;
+            }
+            AnimationKind::Typewriter => {
+                let chars: Vec<usize> = t.text.char_indices().map(|(i, _)| i).collect();
+                let n = (p * chars.len() as f64).floor() as usize;
+                let at = chars.get(n).copied().unwrap_or(t.text.len());
+                f.reveal = Some(f.reveal.map_or(at, |r| r.min(at)));
+            }
+            AnimationKind::Words => {
+                let words = word_ranges(&t.text);
+                let n = (p * words.len() as f64).floor() as usize;
+                let at = words.get(n).map_or(t.text.len(), |w| w.0);
+                f.reveal = Some(f.reveal.map_or(at, |r| r.min(at)));
+            }
+        }
+    }
+    if t.style.highlight.is_some() && !t.words.is_empty() {
+        let ranges = word_ranges(&t.text);
+        // The word being spoken: the last one started, until the next starts.
+        if let Some(i) = t.words.iter().rposition(|w| w.start.0 <= own)
+            && let Some(r) = ranges.get(i)
+        {
+            f.highlight = Some(*r);
+        }
+    }
+    f
 }
 
 /// How text looks. Every field has a default, so `{}` is plain white text.
@@ -60,6 +256,9 @@ pub struct TextStyle {
     pub background: Vec<f64>,
     /// Space between the text and the box edge, as a fraction of `size`.
     pub padding: f64,
+    /// Color of the word being spoken (needs word timings, which captions have).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub highlight: Option<Vec<f64>>,
 }
 
 impl Default for TextStyle {
@@ -79,6 +278,7 @@ impl Default for TextStyle {
             shadow_color: vec![0.0, 0.0, 0.0, 0.6],
             background: vec![0.0, 0.0, 0.0, 0.0],
             padding: 0.3,
+            highlight: None,
         }
     }
 }
@@ -113,7 +313,8 @@ impl TextStyle {
         if !(100..=900).contains(&self.weight) {
             return Err(format!("weight is {}; use 100 to 900 (400 regular, 700 bold)", self.weight));
         }
-        for (name, c) in [("color", &self.color), ("outline_color", &self.outline_color), ("shadow_color", &self.shadow_color), ("background", &self.background)] {
+        let highlight = self.highlight.clone().unwrap_or_else(|| vec![0.0, 0.0, 0.0]);
+        for (name, c) in [("color", &self.color), ("outline_color", &self.outline_color), ("shadow_color", &self.shadow_color), ("background", &self.background), ("highlight", &highlight)] {
             if !(3..=4).contains(&c.len()) || c.iter().any(|v| !(0.0..=1.0).contains(v)) {
                 return Err(format!("{name} must be [r, g, b] or [r, g, b, a] with values from 0 to 1"));
             }
@@ -188,9 +389,53 @@ mod tests {
         assert!(bad.check().unwrap_err().contains("color"));
     }
 
+    fn clip(text: &str) -> TextClip {
+        TextClip { text: text.into(), style: TextStyle::default(), animate_in: None, animate_out: None, words: Vec::new() }
+    }
+
+    #[test]
+    fn animations_shape_the_start_and_end() {
+        let s = |x: i64| Q::new(x, 10);
+        let anim = |kind| Some(Animation { kind, duration: Seconds(s(4)) });
+        let t = TextClip { animate_in: anim(AnimationKind::Fade), animate_out: anim(AnimationKind::SlideDown), ..clip("Hello there") };
+        let len = s(30);
+        assert_eq!(frame(&t, s(0), len, s(0)).opacity, 0.0);
+        let mid = frame(&t, s(2), len, s(2)).opacity;
+        assert!(mid > 0.5 && mid < 1.0, "ease-out is past halfway at the middle: {mid}");
+        assert_eq!(frame(&t, s(15), len, s(15)), TextFrame::STILL);
+        let leaving = frame(&t, s(28), len, s(28));
+        assert!(leaving.dy < 0.0 && leaving.opacity < 1.0, "slides up out as the exit plays backwards: {leaving:?}");
+
+        let pop = TextClip { animate_in: anim(AnimationKind::Pop), ..clip("Hi") };
+        let peak = (1..40).map(|i| frame(&pop, Q::new(i, 100), len, s(0)).scale).fold(0.0, f64::max);
+        assert!(peak > 1.0, "pop overshoots: {peak}");
+
+        let tw = TextClip { animate_in: anim(AnimationKind::Typewriter), ..clip("abcd") };
+        assert_eq!(frame(&tw, s(0), len, s(0)).reveal, Some(0));
+        assert_eq!(frame(&tw, s(2), len, s(0)).reveal, Some(2));
+        assert_eq!(frame(&tw, s(4), len, s(0)).reveal, None);
+        let words = TextClip { animate_in: anim(AnimationKind::Words), ..clip("one two three four") };
+        assert_eq!(frame(&words, s(2), len, s(0)).reveal, Some(8), "two of four words");
+        // A short clip gives each animation at most half of it.
+        let short = TextClip { animate_in: anim(AnimationKind::Fade), ..clip("x") };
+        assert_eq!(frame(&short, s(1), s(2), s(0)).opacity, 1.0);
+    }
+
+    #[test]
+    fn highlight_follows_the_spoken_word() {
+        let w = |a: i64, b: i64| WordTime { start: Seconds(Q::new(a, 10)), end: Seconds(Q::new(b, 10)) };
+        let mut t = clip("So\ntoday we");
+        t.words = vec![w(0, 3), w(4, 9), w(10, 12)];
+        assert_eq!(frame(&t, Q::new(5, 10), Q::from_integer(2), Q::new(5, 10)).highlight, None, "needs a highlight color");
+        t.style.highlight = Some(vec![1.0, 0.8, 0.0]);
+        assert_eq!(frame(&t, Q::new(5, 10), Q::from_integer(2), Q::new(5, 10)).highlight, Some((3, 8)));
+        assert_eq!(frame(&t, Q::new(11, 10), Q::from_integer(2), Q::new(11, 10)).highlight, Some((9, 11)));
+        assert_eq!(word_ranges(" a  bc\nd"), [(1, 2), (4, 6), (7, 8)]);
+    }
+
     #[test]
     fn round_trips_through_a_generator_reference() {
-        let t = TextClip { text: "Hello".into(), style: TextStyle::caption() };
+        let t = TextClip { text: "Hello".into(), style: TextStyle::caption(), animate_in: None, animate_out: None, words: Vec::new() };
         let r = MediaReference::Generator(GeneratorReference::text(&t));
         let v = serde_json::to_value(&r).unwrap();
         assert_eq!(v["OTIO_SCHEMA"], "GeneratorReference.1");

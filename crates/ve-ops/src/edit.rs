@@ -1505,6 +1505,10 @@ pub struct TextChange {
     pub style: serde_json::Map<String, serde_json::Value>,
     /// Start from the default style before applying `style`.
     pub reset_style: bool,
+    /// New entrance; `Some(None)` removes it.
+    pub animate_in: Option<Option<ve_model::text::Animation>>,
+    /// New exit; `Some(None)` removes it.
+    pub animate_out: Option<Option<ve_model::text::Animation>>,
 }
 
 /// Change the words or style of a text clip.
@@ -1536,6 +1540,19 @@ pub fn set_text(tl: &Timeline, clip: &Id, change: &TextChange) -> Result<(Timeli
     }
     if let Some(t) = &change.text {
         obj.insert("text".into(), serde_json::Value::String(t.clone()));
+        // Word timings belong to the old words.
+        obj.remove("words");
+    }
+    for (key, anim) in [("animate_in", &change.animate_in), ("animate_out", &change.animate_out)] {
+        match anim {
+            Some(Some(a)) => {
+                obj.insert(key.into(), serde_json::to_value(a).map_err(|e| EditError::new(e.to_string()))?);
+            }
+            Some(None) => {
+                obj.remove(key);
+            }
+            None => {}
+        }
     }
     let next: ve_model::text::TextClip = serde_json::from_value(params).map_err(|e| EditError::new(format!("text style: {e}")))?;
     next.style.check().map_err(EditError::new)?;

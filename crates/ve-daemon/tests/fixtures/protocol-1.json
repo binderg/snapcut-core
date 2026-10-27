@@ -2213,6 +2213,18 @@
             "object"
           ]
         },
+        "animate_in": {
+          "required": false,
+          "types": [
+            "object"
+          ]
+        },
+        "animate_out": {
+          "required": false,
+          "types": [
+            "object"
+          ]
+        },
         "at": {
           "required": false,
           "types": [
@@ -2295,6 +2307,12 @@
             "object"
           ]
         },
+        "animate_in": {
+          "required": false,
+          "types": [
+            "object"
+          ]
+        },
         "base_rev": {
           "required": true,
           "types": [
@@ -2311,6 +2329,12 @@
           "required": false,
           "types": [
             "string"
+          ]
+        },
+        "highlight": {
+          "required": false,
+          "types": [
+            "array"
           ]
         },
         "style": {
@@ -2356,6 +2380,18 @@
       "deprecated": false,
       "params": {
         "actor": {
+          "required": false,
+          "types": [
+            "object"
+          ]
+        },
+        "animate_in": {
+          "required": false,
+          "types": [
+            "object"
+          ]
+        },
+        "animate_out": {
           "required": false,
           "types": [
             "object"

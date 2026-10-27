@@ -837,7 +837,7 @@ fn still_images_get_a_default_length_and_no_media_limit() {
 fn text_clips_place_split_and_trim() {
     use ve_model::text::{TextClip, TextStyle};
     let tl = insert_all(&project());
-    let text = |s: &str| TextClip { text: s.into(), style: TextStyle::default() };
+    let text = |s: &str| TextClip { text: s.into(), style: TextStyle::default(), animate_in: None, animate_out: None, words: Vec::new() };
     let add = edit::AddText {
         items: vec![edit::TextItem { text: text("Title"), start: sec(1), duration: sec(2), transform: None }],
         new_track_name: Some("Text".into()),

@@ -300,6 +300,12 @@ enum Command {
         /// Look over the caption default: `--style size=0.07 --style color=[1,1,0]`.
         #[arg(long = "style", value_name = "FIELD=VALUE")]
         style: Vec<String>,
+        /// Color the word being spoken, e.g. `--highlight [1,0.85,0]`.
+        #[arg(long)]
+        highlight: Option<String>,
+        /// Entrance for each caption, e.g. `--in pop:0.15s`.
+        #[arg(long = "in", value_name = "KIND[:DURATION]")]
+        animate_in: Option<String>,
     },
     /// Undo the last step (one edit, or a whole group).
     Undo,
@@ -561,6 +567,13 @@ enum TextCmd {
         /// Center position, canvas heights from the center; positive is down.
         #[arg(long, allow_hyphen_values = true)]
         y: Option<f64>,
+        /// Entrance: KIND[:DURATION], e.g. `pop`, `fade:0.6s`. Kinds: fade, pop, zoom, slide-up,
+        /// slide-down, slide-left, slide-right, typewriter, words.
+        #[arg(long = "in", value_name = "KIND[:DURATION]")]
+        animate_in: Option<String>,
+        /// Exit: the same kinds, played backwards.
+        #[arg(long = "out", value_name = "KIND[:DURATION]")]
+        animate_out: Option<String>,
     },
     /// `ve text set clip_7f3a --text "New words" --style color=[1,0.8,0]`. Move or fade it with `ve transform`.
     Set {
@@ -572,7 +585,27 @@ enum TextCmd {
         /// Start from the default look before applying `--style`.
         #[arg(long)]
         reset_style: bool,
+        /// `--in none` removes the entrance.
+        /// Entrance: KIND[:DURATION], e.g. `pop`, `fade:0.6s`. Kinds: fade, pop, zoom, slide-up,
+        /// slide-down, slide-left, slide-right, typewriter, words.
+        #[arg(long = "in", value_name = "KIND[:DURATION]")]
+        animate_in: Option<String>,
+        /// Exit: the same kinds, played backwards.
+        #[arg(long = "out", value_name = "KIND[:DURATION]")]
+        animate_out: Option<String>,
     },
+}
+
+/// `--in pop` / `--in fade:0.6s` / `--in none` to the protocol's animation value.
+fn anim_arg(s: Option<&String>) -> Option<Value> {
+    let s = s?.trim();
+    if s == "none" {
+        return Some(Value::Null);
+    }
+    Some(match s.split_once(':') {
+        Some((kind, dur)) => json!({ "kind": kind.trim(), "duration": dur.trim() }),
+        None => json!({ "kind": s }),
+    })
 }
 
 #[derive(Subcommand)]
@@ -1069,18 +1102,35 @@ fn plan(cmd: &Command, json_output: bool) -> Plan {
         }
         Command::Font(FontCmd::List { system }) => q("font.list", json!({ "system": system })),
         Command::Font(FontCmd::Rm { file }) => q("font.remove", json!({ "file": file })),
-        Command::Text(TextCmd::Add { text, at, duration, track, overwrite, style, x, y }) => m(
+        Command::Text(TextCmd::Add { text, at, duration, track, overwrite, style, x, y, animate_in, animate_out }) => m(
             "text.add",
-            json!({ "text": text, "at": at, "duration": duration, "track": track, "overwrite": overwrite, "style": param_map(style, json_output), "x": x, "y": y }),
+            json!({
+                "text": text, "at": at, "duration": duration, "track": track, "overwrite": overwrite,
+                "style": param_map(style, json_output), "x": x, "y": y,
+                "animate_in": anim_arg(animate_in.as_ref()).filter(|v| !v.is_null()),
+                "animate_out": anim_arg(animate_out.as_ref()).filter(|v| !v.is_null()),
+            }),
         ),
-        Command::Text(TextCmd::Set { clip, text, style, reset_style }) => {
-            m("text.set", json!({ "clip": clip, "text": text, "style": param_map(style, json_output), "reset_style": reset_style }))
+        Command::Text(TextCmd::Set { clip, text, style, reset_style, animate_in, animate_out }) => {
+            let mut p = json!({ "clip": clip, "text": text, "style": param_map(style, json_output), "reset_style": reset_style });
+            // Only send what was given: a missing key keeps the animation, null removes it.
+            if let Some(v) = anim_arg(animate_in.as_ref()) {
+                p["animate_in"] = v;
+            }
+            if let Some(v) = anim_arg(animate_out.as_ref()) {
+                p["animate_out"] = v;
+            }
+            m("text.set", p)
         }
-        Command::Captions { span, track, y, style } => {
+        Command::Captions { span, track, y, style, highlight, animate_in } => {
             let mut p = span_params(span);
             p["track"] = json!(track);
             p["y"] = json!(y);
             p["style"] = param_map(style, json_output);
+            if let Some(h) = highlight {
+                p["highlight"] = serde_json::from_str(h).unwrap_or_else(|_| usage_error(format!("--highlight `{h}`: use a color like [1,0.85,0]"), json_output));
+            }
+            p["animate_in"] = anim_arg(animate_in.as_ref()).filter(|v| !v.is_null()).unwrap_or(Value::Null);
             m("text.captions", p)
         }
         Command::Transition(TransitionCmd::Add { clip, at, track, kind, duration, align, params }) => {

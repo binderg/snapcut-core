@@ -8,7 +8,8 @@ use serde::Serialize;
 use serde_json::{Map, Value};
 use ve_model::Id;
 use ve_model::meta::Transform;
-use ve_model::text::{TextClip, TextStyle};
+use ve_model::text::{Animation, TextClip, TextStyle, WordTime};
+use ve_model::transcript::Seconds;
 use ve_model::time::Q;
 use ve_ops::EditReport;
 use ve_ops::edit::{self, AddText, TEXT_SECONDS, TextChange, TextItem};
@@ -75,6 +76,13 @@ mutation_params! {
         /// (0.35 sits low, where captions go).
         #[serde(default)]
         pub y: Option<f64>,
+        /// Entrance: `{"kind": "pop", "duration": "0.4s"}`. Kinds: fade, pop, zoom, slide-up,
+        /// slide-down, slide-left, slide-right, typewriter, words.
+        #[serde(default)]
+        pub animate_in: Option<Animation>,
+        /// Exit, the same kinds played backwards.
+        #[serde(default)]
+        pub animate_out: Option<Animation>,
     }
 }
 
@@ -85,7 +93,14 @@ pub fn add(p: &mut OpenProject, a: AddParams) -> Result<Committed<EditReport>, R
     if duration <= Q::from_integer(0) {
         return Err(RpcError::invalid_params("duration must be more than zero"));
     }
-    let item = TextItem { text: TextClip { text: a.text.clone(), style: style(TextStyle::default(), a.style.as_ref())? }, start, duration, transform: position(a.x, a.y)? };
+    let text = TextClip {
+        text: a.text.clone(),
+        style: style(TextStyle::default(), a.style.as_ref())?,
+        animate_in: a.animate_in.clone(),
+        animate_out: a.animate_out.clone(),
+        words: Vec::new(),
+    };
+    let item = TextItem { text, start, duration, transform: position(a.x, a.y)? };
     let req = AddText { items: vec![item], track: a.track.clone(), new_track_name: Some("Text".into()), overwrite: a.overwrite, clear_text: false };
     commit(p, a.mutation(), "text.add", |tl| edit::add_text(tl, &req).map_err(edit_err))
 }
@@ -103,11 +118,27 @@ mutation_params! {
         /// Start from the default look before applying `style`.
         #[serde(default)]
         pub reset_style: bool,
+        /// New entrance (`{"kind": "fade"}`); `null` removes it.
+        #[serde(default, deserialize_with = "nullable")]
+        pub animate_in: Option<Option<Animation>>,
+        /// New exit; `null` removes it.
+        #[serde(default, deserialize_with = "nullable")]
+        pub animate_out: Option<Option<Animation>>,
     }
 }
 
+fn nullable<'de, D: serde::Deserializer<'de>, T: serde::Deserialize<'de>>(d: D) -> Result<Option<Option<T>>, D::Error> {
+    <Option<T> as serde::Deserialize>::deserialize(d).map(Some)
+}
+
 pub fn set(p: &mut OpenProject, a: SetParams) -> Result<Committed<EditReport>, RpcError> {
-    let change = TextChange { text: a.text.clone(), style: a.style.clone().unwrap_or_default(), reset_style: a.reset_style };
+    let change = TextChange {
+        text: a.text.clone(),
+        style: a.style.clone().unwrap_or_default(),
+        reset_style: a.reset_style,
+        animate_in: a.animate_in.clone(),
+        animate_out: a.animate_out.clone(),
+    };
     commit(p, a.mutation(), "text.set", |tl| edit::set_text(tl, &a.clip, &change).map_err(edit_err))
 }
 
@@ -131,6 +162,12 @@ mutation_params! {
         /// Vertical position, canvas heights from the center (default 0.36, near the bottom).
         #[serde(default)]
         pub y: Option<f64>,
+        /// Color of the word being spoken (`[1, 0.85, 0]`), the CapCut style. Same as `style.highlight`.
+        #[serde(default)]
+        pub highlight: Option<Vec<f64>>,
+        /// Entrance for each caption (`{"kind": "pop", "duration": "0.15s"}`).
+        #[serde(default)]
+        pub animate_in: Option<Animation>,
     }
 }
 
@@ -150,11 +187,27 @@ pub fn captions(p: &mut OpenProject, a: CaptionsParams) -> Result<Committed<Capt
         let why = if missing.is_empty() { "no words play in the range" } else { "the audio in range has no transcript yet (a speech-to-text plugin makes one)" };
         return Err(RpcError::invalid_params(format!("no captions to make: {why}")));
     }
-    let look = style(TextStyle::caption(), a.style.as_ref())?;
+    let mut look = style(TextStyle::caption(), a.style.as_ref())?;
+    if a.highlight.is_some() {
+        look.highlight.clone_from(&a.highlight);
+        look.check().map_err(RpcError::invalid_params)?;
+    }
     let place = position(None, Some(a.y.unwrap_or(0.36)))?;
     let items: Vec<TextItem> = cues
         .iter()
-        .map(|c| TextItem { text: TextClip { text: c.lines.join("\n"), style: look.clone() }, start: c.start, duration: c.end - c.start, transform: place.clone() })
+        .map(|c| TextItem {
+            text: TextClip {
+                text: c.lines.join("\n"),
+                style: look.clone(),
+                animate_in: a.animate_in.clone(),
+                animate_out: None,
+                // Word times in the clip's own time: 0 is the caption's start.
+                words: c.words.iter().map(|&(s, e)| WordTime { start: Seconds::new(s - c.start), end: Seconds::new(e - c.start) }).collect(),
+            },
+            start: c.start,
+            duration: c.end - c.start,
+            transform: place.clone(),
+        })
         .collect();
     let count = items.len();
     let req = AddText { items, track: a.track.clone(), new_track_name: Some("Captions".into()), overwrite: false, clear_text: true };

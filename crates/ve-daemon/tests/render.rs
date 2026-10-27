@@ -403,3 +403,46 @@ async fn project_fonts() {
     assert!(call(&r, "font.remove", json!({"file": "../project.otio"})).await["error"].is_object());
     assert_eq!(ok(&r, "font.list", json!({})).await["project"], json!([]));
 }
+
+/// Text animations (entrance and exit, letters appearing) and the caption
+/// word highlight, read back through `render.layers` and frames.
+#[tokio::test]
+async fn text_animations_and_highlight() {
+    let dir = scratch("text-anim");
+    make_talk(&dir.join("talk.mp4"));
+    let r = ve_daemon::build_registry();
+    ok(&r, "project.init", json!({"path": dir.join("edit"), "fps": "25", "width": 320, "height": 180})).await;
+    let asset = ok(&r, "media.import", json!({"paths": [dir.join("talk.mp4")], "base_rev": 0})).await["assets"][0]["id"].clone();
+    ok(&r, "edit.insert", json!({"asset": asset, "base_rev": 1})).await;
+    let pop = json!({"kind": "pop", "duration": "0.4s"});
+    let fade = json!({"kind": "fade", "duration": "0.4s"});
+    let added = ok(&r, "text.add", json!({"text": "Pop!", "at": "1s", "duration": "2s", "style": {"size": 0.2}, "animate_in": pop, "animate_out": fade, "base_rev": 2})).await;
+    let clip = added["created"][0]["id"].clone();
+    let layer = async |at: &str| ok(&r, "render.layers", json!({"at": at})).await["layers"][1].clone();
+    let start = layer("f26").await;
+    let held = layer("2s").await;
+    let end = layer("f74").await;
+    assert!(start["opacity"].as_f64().unwrap() < 1.0 && start["rect"]["w"].as_f64() < held["rect"]["w"].as_f64(), "pops in: {start} vs {held}");
+    assert_eq!(held["opacity"], 1.0);
+    assert!(end["opacity"].as_f64().unwrap() < 0.5, "fades out: {end}");
+
+    // Typewriter: fewer letters early on; the bad kind is refused.
+    ok(&r, "text.set", json!({"clip": clip, "text": "Typed out", "animate_in": {"kind": "typewriter", "duration": "0.8s"}, "animate_out": null, "base_rev": 3})).await;
+    let png = |f: &Value| image::load_from_memory(&base64::engine::general_purpose::STANDARD.decode(f["data"].as_str().unwrap()).unwrap()).unwrap().to_rgb8();
+    let white = |img: &image::RgbImage| img.pixels().filter(|p| p[0] > 230 && p[1] > 230 && p[2] > 230).count();
+    let early = png(&ok(&r, "render.frame", json!({"at": "f30", "width": 320, "format": "png"})).await);
+    let late = png(&ok(&r, "render.frame", json!({"at": "2s", "width": 320, "format": "png"})).await);
+    early.save(dir.join("typewriter.png")).unwrap();
+    assert!(white(&early) * 2 < white(&late), "letters still coming: {} vs {}", white(&early), white(&late));
+    let resp = call(&r, "text.set", json!({"clip": clip, "animate_in": {"kind": "wobble"}, "base_rev": 4})).await;
+    assert_eq!(resp["error"]["code"], -32602, "{resp}");
+
+    // Captions with the spoken word highlighted.
+    let w = |s: &str, e: &str, t: &str| json!({"start": s, "end": e, "text": t});
+    ok(&r, "transcript.set", json!({"asset": asset, "words": [w("0.1s", "0.5s", "One"), w("0.6s", "1.0s", "two"), w("1.1s", "1.4s", "three")]})).await;
+    ok(&r, "text.captions", json!({"highlight": [1, 0.85, 0], "style": {"size": 0.12}, "base_rev": 4})).await;
+    let shot = png(&ok(&r, "render.frame", json!({"at": "0.8s", "width": 320, "format": "png"})).await);
+    shot.save(dir.join("highlight.png")).unwrap();
+    let yellow = shot.pixels().filter(|p| p[0] > 200 && p[1] > 170 && p[2] < 60).count();
+    assert!(yellow > 20, "the spoken word is yellow: {yellow}");
+}

@@ -362,12 +362,15 @@ pub(crate) struct Cue {
     pub end: Q,
     pub speaker: Option<String>,
     pub lines: Vec<String>,
+    /// Timeline start and end of each word, in order.
+    pub words: Vec<(Q, Q)>,
 }
 
 /// Group timed words into captions (see [`render_cues`] for the rules).
 /// A caption never runs into the next one.
 fn cues(words: &[Line]) -> Vec<Cue> {
     let mut cues: Vec<(Q, Q, Option<String>, Vec<String>)> = Vec::new();
+    let mut times: Vec<Vec<(Q, Q)>> = Vec::new();
     let mut prev: Option<&Line> = None;
     for w in words {
         let fits = |c: &(Q, Q, Option<String>, Vec<String>)| {
@@ -385,20 +388,26 @@ fn cues(words: &[Line]) -> Vec<Cue> {
         };
         if new_cue {
             cues.push((w.start, w.end, w.speaker.clone(), vec![w.text.clone()]));
+            times.push(vec![(w.start, w.end)]);
         } else if let Some(c) = cues.last_mut() {
             c.1 = w.end;
             c.3.push(w.text.clone());
+            if let Some(t) = times.last_mut() {
+                t.push((w.start, w.end));
+            }
         }
         prev = Some(w);
     }
     let starts: Vec<Q> = cues.iter().map(|c| c.0).collect();
     cues.into_iter()
+        .zip(times)
         .enumerate()
-        .map(|(i, (start, end, speaker, words))| Cue {
+        .map(|(i, ((start, end, speaker, words), times))| Cue {
             start,
             end: starts.get(i + 1).map_or(end, |&n| end.min(n)),
             speaker,
             lines: wrap(&words.join(" ")),
+            words: times,
         })
         .collect()
 }

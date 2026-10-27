@@ -35,6 +35,7 @@ of the canvas, so a clip looks the same at any render size.
 | `shadow_color` | `[0, 0, 0, 0.6]` | |
 | `background` | `[0, 0, 0, 0]` | Box behind the text; alpha 0 draws none |
 | `padding` | 0.3 | Space between the text and the box edge, as a fraction of `size` |
+| `highlight` | none | Color of the word being spoken, for clips with word timings ([Animations](#animations)) |
 
 **Placement.** The picture is the text box (text plus padding), centered on
 the canvas. Move it with `x` / `y` on `text.add`, or with the clip's
@@ -43,6 +44,31 @@ transform (`edit.set_transform`): `x` in canvas widths from the center,
 `scale` scales around the box's center and stays sharp.
 `render.layers` reports a text clip's words as `text`; text never hides
 what is under it.
+
+## Animations
+
+A text clip can have an entrance (`animate_in`) and an exit
+(`animate_out`): `{"kind": "pop", "duration": "0.4s"}` (duration defaults
+to 0.4 s and is at most half the clip). They play at the clip's start and
+end, follow trims, and add to the clip's transform (a sliding title can
+still sit in a corner).
+
+| `kind` | Entrance (an exit plays it backwards) |
+| --- | --- |
+| `fade` | Opacity from 0 |
+| `pop` | Grows from half size with a little overshoot |
+| `zoom` | Shrinks into place from 1.4x |
+| `slide-up`, `slide-down`, `slide-left`, `slide-right` | Moves into place from a little away, fading in |
+| `typewriter` | Letters appear one after another |
+| `words` | Words appear one after another |
+
+Letters and words still to come keep their place, so nothing shifts as
+they appear. `render.layers` reports the animated opacity and rectangle.
+
+**Word highlight.** A text clip with word timings (`words`, which
+`text.captions` fills in from the transcript) and a `highlight` color in
+its style draws the word being spoken in that color, the CapCut style:
+`text.captions` with `"highlight": [1, 0.85, 0]`.
 
 ## Fonts
 
@@ -97,6 +123,7 @@ to a sans-serif.
 | `overwrite` | false | With `track`: replace what is under the clip (else refused when the track is busy there) |
 | `style` | `{}` | Fields from the table above |
 | `x`, `y` | 0 | Center position (a transform with only x/y) |
+| `animate_in`, `animate_out` | | Entrance and exit ([Animations](#animations)) |
 | + `base_rev`, `dry_run`, `actor` | | |
 
 Text never pushes other clips. The result is an edit report:
@@ -115,9 +142,10 @@ Text never pushes other clips. The result is an edit report:
 | `text` | | New words |
 | `style` | | Fields to change; `null` puts one back to its default |
 | `reset_style` | false | Start from the default look before applying `style` |
+| `animate_in`, `animate_out` | | New entrance or exit; `null` removes it |
 | + `base_rev`, `dry_run`, `actor` | | |
 
-Unknown style fields are refused, with the list of fields. Position, size
+New `text` drops the old word timings. Unknown style fields are refused, with the list of fields. Position, size
 on screen, rotation, opacity and blend belong to the transform:
 `edit.set_transform`.
 
@@ -134,6 +162,8 @@ speaker change, a pause of 0.7 s or more, or after a sentence).
 | `track` | | A video track: its text clips in the range are replaced first, so running it again after editing refreshes the captions. Default: a new `Captions` track on top (or the topmost video track free over every caption) |
 | `style` | | Fields over the caption default: bold, size 0.055, outline 0.12, width 0.85 |
 | `y` | 0.36 | Vertical position (near the bottom) |
+| `highlight` | | Color of the word being spoken, e.g. `[1, 0.85, 0]` |
+| `animate_in` | | Entrance for every caption, e.g. `{"kind": "pop", "duration": "0.15s"}` |
 | + `base_rev`, `dry_run`, `actor` | | |
 
 ```json
