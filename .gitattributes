@@ -1,0 +1,4 @@
+# Read by bash on every runner, Windows included, where a CRLF checkout
+# would leave a \r on every line.
+*.sh text eol=lf
+.github/ffmpeg/*.env text eol=lf
