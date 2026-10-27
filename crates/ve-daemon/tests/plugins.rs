@@ -116,7 +116,11 @@ async fn discovery_describe_and_calls() {
     assert_eq!(out["env_id"], "testplug");
     assert_eq!(out["init"]["plugin"]["id"], "testplug");
     assert_eq!(out["init"]["protocol"], 1);
-    assert_eq!(out["init"]["project"].as_str().map(PathBuf::from), Some(root.clone()));
+    // Compare real paths: CI temp dirs differ in spelling only (RUNNER~1 on
+    // Windows, /var vs /private/var on macOS).
+    let real = |p: &std::path::Path| std::fs::canonicalize(p).unwrap();
+    let project_dir = PathBuf::from(out["init"]["project"].as_str().unwrap());
+    assert_eq!(real(&project_dir), real(&root));
     let list = ok(&r, "plugin.list", json!({})).await;
     assert_eq!(find(&list["plugins"], "id", "testplug")["running"], true);
 

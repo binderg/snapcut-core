@@ -11,6 +11,10 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  # Full debug info for every test binary filled the Linux runner's disk
+  # (ld died with a bus error). Line tables keep backtraces readable.
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  CARGO_INCREMENTAL: 0
 
 jobs:
   test:
