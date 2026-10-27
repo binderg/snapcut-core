@@ -359,3 +359,47 @@ async fn text_clips_and_captions() {
     let ex = ok(&r, "render.export", json!({"preset": "draft-540p", "from": "0s", "to": "1s"})).await;
     assert!(ex["size_bytes"].as_u64().unwrap() > 0);
 }
+
+/// A font file the OS ships, for font tests (none: the test skips).
+fn some_font_file() -> Option<PathBuf> {
+    ["C:/Windows/Fonts/cour.ttf", "C:/Windows/Fonts/times.ttf", "/System/Library/Fonts/Supplemental/Courier New.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf"]
+        .iter()
+        .map(PathBuf::from)
+        .find(|p| p.is_file())
+}
+
+/// Project fonts: added from a file, listed, used by a text clip, removed.
+#[tokio::test]
+async fn project_fonts() {
+    let Some(font) = some_font_file() else { return };
+    let dir = scratch("fonts");
+    let r = ve_daemon::build_registry();
+    ok(&r, "project.init", json!({"path": dir.join("edit"), "fps": "25", "width": 320, "height": 180})).await;
+    let added = ok(&r, "font.add", json!({"path": font})).await;
+    let family = added["families"][0].as_str().unwrap().to_owned();
+    let file = added["files"][0]["file"].as_str().unwrap().to_owned();
+    assert!(dir.join("edit/fonts").join(&file).is_file(), "copied into the project: {added}");
+    // The same file again is a no-op; something that is not a font is refused.
+    assert_eq!(ok(&r, "font.add", json!({"path": font})).await["files"][0]["existing"], true);
+    fs::write(dir.join("notafont.ttf"), "hello").unwrap();
+    let resp = call(&r, "font.add", json!({"path": dir.join("notafont.ttf")})).await;
+    assert!(resp["error"]["message"].as_str().unwrap().contains("not a font"), "{resp}");
+    let resp = call(&r, "font.add", json!({})).await;
+    assert!(resp["error"]["message"].as_str().unwrap().contains("one of"), "{resp}");
+    let listed = ok(&r, "font.list", json!({"system": true})).await;
+    assert_eq!(listed["project"][0]["faces"][0]["family"], family.as_str());
+    assert!(listed["system"].as_array().unwrap().len() > 1);
+
+    // A clip in that font looks different from the default sans-serif.
+    let png = |f: &Value| base64::engine::general_purpose::STANDARD.decode(f["data"].as_str().unwrap()).unwrap();
+    ok(&r, "text.add", json!({"text": "Fonts!", "style": {"font": family, "size": 0.25}, "base_rev": 0})).await;
+    let custom = png(&ok(&r, "render.frame", json!({"at": "1s", "width": 320, "format": "png"})).await);
+    let clip = ok(&r, "project.summary", json!({})).await["text"].as_str().unwrap().split_whitespace().find(|w| w.starts_with("clip_")).unwrap().to_owned();
+    ok(&r, "text.set", json!({"clip": clip, "style": {"font": "sans-serif"}, "base_rev": 1})).await;
+    let plain = png(&ok(&r, "render.frame", json!({"at": "1s", "width": 320, "format": "png"})).await);
+    assert_ne!(custom, plain, "the font changes the picture");
+
+    assert_eq!(ok(&r, "font.remove", json!({"file": file})).await["removed"], true);
+    assert!(call(&r, "font.remove", json!({"file": "../project.otio"})).await["error"].is_object());
+    assert_eq!(ok(&r, "font.list", json!({})).await["project"], json!([]));
+}

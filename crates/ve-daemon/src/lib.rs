@@ -15,6 +15,7 @@ pub mod commit;
 pub mod edit;
 pub mod events;
 pub mod frames;
+pub mod fonts;
 pub mod fx;
 pub mod jobs;
 pub mod layers;
@@ -255,6 +256,9 @@ pub fn registry(session: Arc<Session>) -> Arc<Registry> {
     }
     on_project!("transcript.set", "Store an asset's transcript (words with media times, speakers); replaces any earlier one", false, transcript::set);
     on_project!("transcript.get", "An asset's transcript, or the words that play on the timeline in timeline time (words or readable text)", false, transcript::get);
+    on_project!("font.add", "Add a font to the project's fonts/ folder from a file, a URL or Google Fonts", false, fonts::add);
+    on_project!("font.list", "Fonts in the project (and with system: true, installed ones)", false, |p: &mut OpenProject, a: fonts::ListParams| Ok(fonts::list(p, a)));
+    on_project!("font.remove", "Delete a font file from the project's fonts/ folder", false, fonts::remove);
     on_project!("transcript.list", "Assets that have a transcript", false, |p: &mut OpenProject, _: NoParams| transcript::list(p));
     on_project!("transcript.remove", "Delete an asset's transcript", false, transcript::remove);
 

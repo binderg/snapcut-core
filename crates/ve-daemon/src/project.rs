@@ -248,6 +248,7 @@ pub fn open(root: &Path) -> Result<OpenProject> {
         disk,
         _lock: lock,
     };
+    crate::fonts::dir(&project.root);
     project.load_history();
     if ids_added > 0 || relinked > 0 || hints > 0 {
         project.save()?;

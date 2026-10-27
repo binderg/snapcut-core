@@ -58,6 +58,9 @@ schemas: `system.describe`.
 | `effect.set` | yes | Change params, keyframes or stack position | [effects.md](effects.md) |
 | `effect.remove` | yes | Remove an effect | [effects.md](effects.md) |
 | `transition.add` | yes | Put a transition on a cut | [effects.md](effects.md) |
+| `font.add` | | Add a font to the project from a file, a URL or Google Fonts | [text.md](text.md) |
+| `font.list` | | The project's fonts (and installed ones) | [text.md](text.md) |
+| `font.remove` | | Delete a font from the project | [text.md](text.md) |
 | `text.add` | yes | Put a text clip (title, label, lower third) on a free video track | [text.md](text.md) |
 | `text.set` | yes | Change a text clip's words or look | [text.md](text.md) |
 | `text.captions` | yes | Caption clips from the transcript, on their own track | [text.md](text.md) |

@@ -283,6 +283,9 @@ enum Command {
     /// Text clips (titles, labels): `ve text add "Hello" --at 5s --duration 3s`.
     #[command(subcommand)]
     Text(TextCmd),
+    /// The project's fonts: `ve font add Brand.ttf`, `ve font add --google "Bebas Neue"`, `ve font list`.
+    #[command(subcommand)]
+    Font(FontCmd),
     /// Caption clips from the transcript, timed to the edited timeline:
     /// `ve captions` (again after editing: `ve captions --track Captions`).
     Captions {
@@ -506,6 +509,30 @@ enum FxCmd {
         #[arg(long)]
         dry_run: bool,
     },
+}
+
+#[derive(Subcommand)]
+enum FontCmd {
+    /// Copy a font into the project's fonts/ folder, from a file, `--url`, or `--google "Family"`.
+    Add {
+        /// A .ttf/.otf/.ttc file.
+        path: Option<PathBuf>,
+        #[arg(long)]
+        url: Option<String>,
+        /// A Google Fonts family name: every weight and italic it has.
+        #[arg(long)]
+        google: Option<String>,
+        /// Overwrite a font file of the same name.
+        #[arg(long)]
+        replace: bool,
+    },
+    /// Fonts in the project; `--system` also lists installed families.
+    List {
+        #[arg(long)]
+        system: bool,
+    },
+    /// Delete a font file from the project's fonts/ folder.
+    Rm { file: String },
 }
 
 #[derive(Subcommand)]
@@ -1037,6 +1064,11 @@ fn plan(cmd: &Command, json_output: bool) -> Plan {
             m("effect.set", p)
         }
         Command::Effect(EffectCmd::Rm { id }) => m("effect.remove", json!({ "id": id })),
+        Command::Font(FontCmd::Add { path, url, google, replace }) => {
+            q("font.add", json!({ "path": path.as_deref().map(absolute), "url": url, "google": google, "replace": replace }))
+        }
+        Command::Font(FontCmd::List { system }) => q("font.list", json!({ "system": system })),
+        Command::Font(FontCmd::Rm { file }) => q("font.remove", json!({ "file": file })),
         Command::Text(TextCmd::Add { text, at, duration, track, overwrite, style, x, y }) => m(
             "text.add",
             json!({ "text": text, "at": at, "duration": duration, "track": track, "overwrite": overwrite, "style": param_map(style, json_output), "x": x, "y": y }),
@@ -1855,6 +1887,37 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         | Command::Text(_)
         | Command::Undo
         | Command::Redo => print_commit(&result),
+        Command::Font(FontCmd::Add { .. }) => {
+            for f in result["files"].as_array().into_iter().flatten() {
+                let faces: Vec<String> = f["faces"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|x| format!("{} {}{}", x["family"].as_str().unwrap_or("?"), x["weight"], if x["italic"] == true { " italic" } else { "" }))
+                    .collect();
+                let note = if f["existing"] == true { "  (already there)" } else { "" };
+                println!("fonts/{}  {}{note}", f["file"].as_str().unwrap_or("?"), faces.join(", "));
+            }
+            let fams: Vec<&str> = result["families"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+            println!("use with: --style font=\"{}\"", fams.first().copied().unwrap_or("?"));
+        }
+        Command::Font(FontCmd::List { .. }) => {
+            let project = result["project"].as_array().cloned().unwrap_or_default();
+            if project.is_empty() {
+                println!("no project fonts (ve font add adds one)");
+            }
+            for f in &project {
+                let fam = f["faces"][0]["family"].as_str().unwrap_or("?");
+                println!("fonts/{}  {fam}", f["file"].as_str().unwrap_or("?"));
+            }
+            for fam in result["system"].as_array().into_iter().flatten() {
+                println!("system  {}", fam.as_str().unwrap_or("?"));
+            }
+        }
+        Command::Font(FontCmd::Rm { .. }) => {
+            let state = if result["removed"] == true { "removed" } else { "not found:" };
+            println!("{state} fonts/{}", result["file"].as_str().unwrap_or("?"));
+        }
         Command::Captions { .. } => {
             print_commit(&result);
             println!("{} captions", result["captions"]);

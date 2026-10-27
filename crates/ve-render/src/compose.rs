@@ -382,7 +382,7 @@ pub fn frame_keys(tl: &Timeline, from: i64, to: i64, width: u32, format: ImageFo
         put(&head);
         let mut layer = |put: &mut dyn FnMut(&str), seg: &Segment| -> Result<()> {
             match &seg.text {
-                Some(t) => put(&format!("text {}", serde_json::to_string(t.as_ref()).unwrap_or_default())),
+                Some(t) => put(&format!("text {} fonts {}", serde_json::to_string(t.as_ref()).unwrap_or_default(), crate::text::fonts_signature())),
                 None => put(&format!("file {} frame {} rate {}", file_id(&seg.path), source_frame(seg, at), seg.media_rate)),
             }
             if let Some(t) = transform_at(seg, at) {

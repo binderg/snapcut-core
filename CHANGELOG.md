@@ -61,6 +61,9 @@ not final (the command is `ve`).
   (`text.add`, `text.set`, `ve text`). Stored as OTIO
   `GeneratorReference` (`ve.text`). Burned-in captions from the transcript
   on their own track (`text.captions`, `ve captions`). GPU only.
+- Project fonts in `<project>/fonts/`: `font.add` from a file, a URL or
+  Google Fonts by family name (`ve font add --google "Bebas Neue"`),
+  `font.list`, `font.remove`. Picked up while the engine runs.
 
 - WGSL effect and transition runtime with a manifest, JSON Schema params,
   validation with errors on the author's line, and a GPU test render.

@@ -1086,6 +1086,69 @@
         "revision"
       ]
     },
+    "font.add": {
+      "deprecated": false,
+      "params": {
+        "google": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "path": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "replace": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "url": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        }
+      },
+      "result": [
+        "families",
+        "files"
+      ]
+    },
+    "font.list": {
+      "deprecated": false,
+      "params": {
+        "system": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        }
+      },
+      "result": [
+        "project",
+        "system"
+      ]
+    },
+    "font.remove": {
+      "deprecated": false,
+      "params": {
+        "file": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        }
+      },
+      "result": [
+        "file",
+        "removed"
+      ]
+    },
     "fx.define": {
       "deprecated": false,
       "params": {

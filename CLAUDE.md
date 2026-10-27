@@ -74,7 +74,7 @@ JSON-RPC 2.0 protocol. Primary use case: an agent editing real footage
   adds the wgpu compositor and pipes composited frames into the FFmpeg encoder so
   preview and export share one graph again.
 - **Default short audio crossfades on every cut**; edit ops must express J/L cuts.
-- **Project = folder** (`project.otio` + `effects/` + `plugins/` + `transcripts/`). Caches and
+- **Project = folder** (`project.otio` + `effects/` + `plugins/` + `transcripts/` + `fonts/`). Caches and
   proxies go in the OS cache dir (etcetera), never the project folder.
 - **SaaS seams kept open:** media addressed by URI (`file://` now), protocol
   returns bytes/asset refs (CLI writes files, protocol doesn't), BYOK secrets via
@@ -257,6 +257,12 @@ picks the topmost free video track or makes one; never pushes clips.
 (`transcript::timeline_cues`) onto a `Captions` track; with `track` it
 replaces that track's text clips in range. CLI `ve text add|set`,
 `ve captions`. Text+ / motion graphics are generator plugins, not core.
+Fonts (decided Oct 27 2026): project fonts in `<project>/fonts/`
+(`ve-daemon::fonts`, `font.add|list|remove`, CLI `ve font`), from a file,
+a URL or Google Fonts (one css2 request per weight/style with a plain
+user agent, which gets TTF; `ureq` is the engine's only HTTP client). The
+renderer watches registered folders (`text::use_fonts_dir`, rescan at most
+1/s) and `text::fonts_signature()` is in the text and frame cache keys.
 The CLI runs on an 8 MiB thread: debug clap overflowed Windows' 1 MiB main stack.
 Tracks (`ve-ops::tracks`): `track.add|remove|rename|move|list`, any number
 of video and audio tracks. Positions (`index`) count within a kind; for video

@@ -21,7 +21,7 @@ of the canvas, so a clip looks the same at any render size.
 
 | Field | Default | |
 | --- | --- | --- |
-| `font` | `sans-serif` | Family name (`"Arial"`, `"Inter"`), or `sans-serif`, `serif`, `monospace`. Installed fonts only; an unknown family falls back to a sans-serif |
+| `font` | `sans-serif` | Family name (`"Bebas Neue"`, `"Arial"`), or `sans-serif`, `serif`, `monospace`. Project fonts ([Fonts](#fonts)) or installed ones; an unknown family falls back to a sans-serif |
 | `size` | 0.07 | Letter size: the font's em as a fraction of the canvas height (0.005 to 1) |
 | `weight` | 400 | 100 (thin) to 900 (black); 700 is bold |
 | `italic` | false | |
@@ -43,6 +43,48 @@ transform (`edit.set_transform`): `x` in canvas widths from the center,
 `scale` scales around the box's center and stays sharp.
 `render.layers` reports a text clip's words as `text`; text never hides
 what is under it.
+
+## Fonts
+
+A style's `font` names a family from the project's own fonts or the ones
+installed on the machine. Project fonts live in `<project>/fonts/` and
+travel with the project, so it renders the same anywhere (a server has
+almost no installed fonts). Adding or replacing a file there while the
+engine runs is picked up within a second; cached frames never show an old
+font.
+
+## `font.add`
+
+Give one of:
+
+| Param | |
+| --- | --- |
+| `path` | A font file on this machine (`.ttf`, `.otf`, `.ttc`, `.otc`) |
+| `url` | A font file to download |
+| `google` | A Google Fonts family by name (`"Bebas Neue"`): every weight and italic it has, as TrueType files |
+| `replace` | Overwrite a file of the same name with other content (else refused) |
+
+```json
+{"files": [{"file": "BebasNeue-400.ttf", "faces": [{"family": "Bebas Neue", "weight": 400, "italic": false}]}],
+ "families": ["Bebas Neue"]}
+```
+
+`existing: true` marks a file that was already there with the same
+content. A file that is not a font is refused before anything is written.
+Google Fonts and URLs need internet access; WOFF/WOFF2 web fonts are not
+read, but Google Fonts sends TrueType to the engine.
+
+## `font.list`
+
+`{"system": true}` also lists installed families. Result: `{"project":
+[{"file", "faces"}], "system": ["Arial", ...]}`. A project using a system
+font may look different on a machine without it.
+
+## `font.remove`
+
+`{"file": "BebasNeue-400.ttf"}` deletes that file from `fonts/`
+(`removed: false` when it was not there). Text using the family falls back
+to a sans-serif.
 
 ## `text.add` (edits)
 

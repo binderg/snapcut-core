@@ -71,6 +71,7 @@ futures = "0.3.34"
 interprocess = { version = "2.4.6", features = ["tokio"] }
 # WebSocket transport on the daemon. tower-http joins it once the daemon serves
 # the UI page and media files.
+ureq = "3.4.2"                  # font downloads (font.add url/google); rustls, MIT/Apache
 axum = { version = "0.8.9", default-features = false, features = ["ws", "tokio", "http1", "query"] }
 fs4 = { version = "1.1.0", features = ["sync"] }
 notify = "8.2.0"

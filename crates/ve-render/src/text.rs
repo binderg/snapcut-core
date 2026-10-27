@@ -7,9 +7,19 @@
 //! The picture is the text box (layout box plus padding) with the same
 //! margin on every side for outline, shadow and ink that leaves the box, so
 //! its center is the text box's center and alignment never shifts it.
+//!
+//! Fonts: the system's, plus every font file in the folders given to
+//! [`use_fonts_dir`] (a project's `fonts/`). Those folders are rescanned at
+//! most once a second, so fonts added or replaced while the engine runs
+//! are picked up; [`fonts_signature`] changes with them, and frame keys
+//! include it so cached frames never show an old font.
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant, SystemTime};
+
+use cosmic_text::fontdb;
 
 use cosmic_text::{Align as CtAlign, Attrs, Buffer, Color, Family, FontSystem, Metrics, Shaping, Style, SwashCache, Weight};
 use ve_model::text::{Align, TextClip, rgba};
@@ -36,6 +46,129 @@ fn fonts() -> &'static Mutex<Fonts> {
     F.get_or_init(|| Mutex::new(Fonts { system: FontSystem::new(), swash: SwashCache::new() }))
 }
 
+/// Font folders added with [`use_fonts_dir`] and what was loaded from them.
+#[derive(Default)]
+struct Dirs {
+    dirs: Vec<PathBuf>,
+    /// File -> (size, modified time, faces loaded from it).
+    loaded: HashMap<PathBuf, (u64, Option<SystemTime>, Vec<fontdb::ID>)>,
+    scanned: Option<Instant>,
+    signature: String,
+}
+
+fn dirs() -> &'static Mutex<Dirs> {
+    static D: OnceLock<Mutex<Dirs>> = OnceLock::new();
+    D.get_or_init(Default::default)
+}
+
+/// How often font folders are looked at again.
+const RESCAN: Duration = Duration::from_secs(1);
+
+/// File extensions read as fonts.
+pub const FONT_EXTENSIONS: [&str; 4] = ["ttf", "otf", "ttc", "otc"];
+
+fn is_font_file(p: &Path) -> bool {
+    p.extension().and_then(|e| e.to_str()).is_some_and(|e| FONT_EXTENSIONS.contains(&e.to_ascii_lowercase().as_str()))
+}
+
+/// Use the fonts in `dir` (and keep watching it) besides the system's.
+pub fn use_fonts_dir(dir: &Path) {
+    if let Ok(mut d) = dirs().lock() {
+        if !d.dirs.iter().any(|x| x == dir) {
+            d.dirs.push(dir.to_owned());
+        }
+        d.scanned = None;
+    }
+}
+
+/// Load new or changed font files from the folders, drop removed ones.
+fn refresh(system: &mut FontSystem) {
+    let Ok(mut d) = dirs().lock() else { return };
+    if d.scanned.is_some_and(|t| t.elapsed() < RESCAN) {
+        return;
+    }
+    d.scanned = Some(Instant::now());
+    let mut seen: Vec<(PathBuf, u64, Option<SystemTime>)> = Vec::new();
+    for dir in d.dirs.clone() {
+        for e in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+            let path = e.path();
+            if !is_font_file(&path) {
+                continue;
+            }
+            if let Ok(m) = e.metadata() {
+                seen.push((path, m.len(), m.modified().ok()));
+            }
+        }
+    }
+    seen.sort();
+    let changed: Vec<PathBuf> = d
+        .loaded
+        .iter()
+        .filter(|(p, (len, time, _))| !seen.iter().any(|(q, l, t)| q == *p && l == len && t == time))
+        .map(|(p, _)| p.clone())
+        .collect();
+    for p in changed {
+        if let Some((_, _, ids)) = d.loaded.remove(&p) {
+            for id in ids {
+                system.db_mut().remove_face(id);
+            }
+        }
+    }
+    for (path, len, time) in &seen {
+        if d.loaded.contains_key(path) {
+            continue;
+        }
+        let ids = system.db_mut().load_font_source(fontdb::Source::File(path.clone()));
+        d.loaded.insert(path.clone(), (*len, *time, ids.to_vec()));
+    }
+    d.signature = seen.iter().map(|(p, l, t)| format!("{}:{l}:{t:?}", p.display())).collect::<Vec<_>>().join("|");
+}
+
+/// Changes whenever a font folder's files change ([`use_fonts_dir`]).
+pub fn fonts_signature() -> String {
+    if let Ok(mut f) = fonts().lock() {
+        refresh(&mut f.system);
+    }
+    dirs().lock().map(|d| blake3::hash(d.signature.as_bytes()).to_hex()[..16].to_owned()).unwrap_or_default()
+}
+
+/// One face in a font file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Face {
+    pub family: String,
+    /// 100 to 900.
+    pub weight: u16,
+    pub italic: bool,
+}
+
+/// The faces in font file bytes; empty when they are not a font.
+pub fn faces_in(bytes: &[u8]) -> Vec<Face> {
+    let mut db = fontdb::Database::new();
+    db.load_font_data(bytes.to_vec());
+    db.faces()
+        .map(|f| Face {
+            family: f.families.first().map(|(n, _)| n.clone()).unwrap_or_default(),
+            weight: f.weight.0,
+            italic: f.style != fontdb::Style::Normal,
+        })
+        .collect()
+}
+
+/// Every font family installed on the system, sorted.
+pub fn system_families() -> Vec<String> {
+    let Ok(f) = fonts().lock() else { return Vec::new() };
+    let mut out: Vec<String> = f
+        .system
+        .db()
+        .faces()
+        .filter(|face| matches!(face.source, fontdb::Source::File(ref p) | fontdb::Source::SharedFile(ref p, _) if !dirs().lock().is_ok_and(|d| d.loaded.contains_key(p))))
+        .filter_map(|face| face.families.first().map(|(n, _)| n.clone()))
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
 /// Rendered text by everything that decides its pixels. Small: text
 /// changes rarely within a render, and each entry is one picture.
 fn cache() -> &'static Mutex<HashMap<String, Arc<TextImage>>> {
@@ -48,7 +181,7 @@ const CACHE_ENTRIES: usize = 64;
 /// `t` drawn for a `canvas_w x canvas_h` canvas, `k` times larger (so a
 /// clip scaled up by its transform stays sharp; it is drawn `1/k` size).
 pub fn render(t: &TextClip, canvas_w: u32, canvas_h: u32, k: f32) -> Result<Arc<TextImage>, RenderError> {
-    let key = format!("{} {canvas_w}x{canvas_h} k{k}", serde_json::to_string(t).unwrap_or_default());
+    let key = format!("{} {canvas_w}x{canvas_h} k{k} fonts {}", serde_json::to_string(t).unwrap_or_default(), fonts_signature());
     if let Some(hit) = cache().lock().ok().and_then(|c| c.get(&key).cloned()) {
         return Ok(hit);
     }
@@ -122,6 +255,7 @@ fn draw(t: &TextClip, cw: f32, ch: f32) -> Result<TextImage, RenderError> {
     let wrap = (s.width as f32 * cw).max(px);
     let mut guard = fonts().lock().map_err(|_| RenderError::Invalid("text: font system poisoned".into()))?;
     let Fonts { system, swash } = &mut *guard;
+    refresh(system);
     if system.db().is_empty() {
         return Err(RenderError::Invalid("text clips need fonts, and this system has none installed".into()));
     }
