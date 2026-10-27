@@ -539,7 +539,7 @@ The method registry and JSON Schema generation start in Phase 1 even though the 
 
 **Decisions**
 
-- [ ] Product name and CLI binary name (`ve` is a placeholder; the metadata namespace follows it).
+- [x] Product name (decided Oct 27, 2026): SnapCut Core for the engine, SnapCut Pro for the desktop editor. The CLI binary is still `ve` and the metadata namespace follows it; renaming them is not decided.
 - [x] License: MIT OR Apache-2.0 (decided Oct 25, 2026), the Rust ecosystem default, so anyone can build on the engine, including commercial frontends.
 - [x] The project is a folder (`project.otio` + `effects/` + `plugins/` + `transcripts/`); caches live in the OS cache dir.
 - [x] `ve-model` implements the OTIO schema directly with `serde` (no binding), checked against Python `opentimelineio`.
@@ -583,6 +583,107 @@ chunk. Removing that wait for good needs two things:
   shipping its DLLs. It is not the main cost of GPU export (that reads in
   order); profile export separately (RGBA pipes, synchronous readback, CPU
   RGBA to YUV).
+
+**Easy to build on (packaging and SDK).** The engine is meant to be a base
+other people and companies build editors on, so getting started has to take
+minutes, not a Rust toolchain. Today it means building from source and
+installing ffmpeg by hand.
+
+- [ ] **Prebuilt downloads** for Windows, macOS and Linux: one `ve`
+  executable (or a small installer) per platform that runs with nothing else
+  installed. CI already builds and publishes `ve` on a `v*` tag; what is
+  missing is bundling FFmpeg (next item).
+- [ ] **FFmpeg comes with it:** an LGPL build bundled or fetched on first run
+  from a build we pin, never ffmpeg-sidecar's GPL download. Users can still
+  point the engine at their own FFmpeg (for x264/x265). Not decided: bundle
+  vs. fetch, and code signing.
+- [ ] **One-line install** through the usual channels (for example winget,
+  Homebrew, a shell script). Which ones: not decided.
+- [ ] **A typed JS/TS client** generated from the OpenRPC document (so it
+  cannot drift), published as a package, that starts or connects to the
+  daemon and calls methods over the WebSocket. Other languages later.
+- [ ] **Starter examples and a quickstart:** for example "a 9:16 captions
+  editor in an afternoon": spawn the engine, open a project, edit, preview,
+  export, with the steps a company follows to embed it in its own app.
+
+**Plugin index (community plugins).** Plugins written once should work in
+every editor built on the engine (voices such as ElevenLabs, transcription
+providers, effect packs). It is an index, not a library we maintain, on the
+model of Obsidian's community plugins: each plugin lives in its author's
+repo and its author maintains it; we maintain the list and keep the plugin
+API stable. Comes after the one-line install (nobody contributes plugins to
+an engine they cannot install).
+
+- [ ] **First-party seed plugins:** 3 to 5 that show the range (Deepgram is
+  done; then ElevenLabs TTS, one effect pack, one more provider). These are
+  the only plugins we maintain ourselves.
+- [ ] **The index repo:** one JSON list (id, name, author, repo, description).
+  Getting listed is a pull request, checked lightly: it installs, does what
+  it says, no obvious malware.
+- [ ] **Health check:** CI installs every listed plugin against the current
+  engine on a schedule and marks the ones that fail as broken or
+  unmaintained. We never fix third-party plugins; their authors do.
+- [ ] **Compatibility before install:** the editor and `ve plugin install`
+  read the manifest's `engine` range and `protocol` and warn before
+  installing a plugin that does not match.
+- [ ] **Trust:** process plugins run with the user's permissions, so the index
+  says to review a plugin before installing it until untrusted plugins run
+  sandboxed (see "Sandboxing" under "Plugin system").
+
+**Template rendering (an idea, not decided).** Shotstack's main use: one
+template plus rows of data, rendered in bulk into personalized videos. Here
+that could be a project with named placeholders (a clip's media, a title's
+text, a color, a duration) filled from each row and exported, with no
+change to the saved template. It adds new protocol surface, so the shape is
+decided before building.
+
+- [ ] Decide how placeholders are marked in the project (likely in
+  `metadata.ve`) and how a row fills them.
+- [ ] A batch export that renders one output per row, as a job with
+  progress, and reports per-row failures without stopping the batch.
+
+**Media from URLs (for a hosted service).** Media is `file://` only today.
+A hosted service built on the engine (a separate program, outside the core)
+can download files into the project folder before calling the engine, which
+needs no engine change. Reading straight from cloud URLs is a later
+optimization.
+
+- [ ] Start with download-first in the hosted service; no engine change.
+- [ ] Later, if downloads become the bottleneck: accept `https://` (and
+  cloud storage) URIs in `media.import`, read through a local cache in the
+  OS cache dir, keyed by content hash like local files.
+
+**Analysis assets (what is in the footage).** The plugin table lists
+"markers + analysis assets" as an analyzer's output, but only markers and
+transcripts exist. Object detectors, face trackers and segmenters (SAM3 and
+the like) need richer data than a marker: per-frame boxes, track ids,
+labels and confidence. As with transcripts, core owns the shape and plugins
+convert vendor output into it. Shape not decided yet.
+
+- [ ] A detections asset per source asset, in media time, stored by file
+  hash like `transcripts/`, with `set|get|list|remove` and a `get` that maps
+  onto the timeline.
+- [ ] A first detector plugin that fills it and adds markers an agent can
+  search and cut on.
+
+**Jobs on big machines.**
+
+- [ ] Make the number of jobs that run at once settable (today
+  `MAX_RUNNING` in `ve-daemon::jobs` is fixed at 2), for example with an
+  environment variable like the other daemon settings, so a server with
+  many cores or GPUs can run more exports in parallel.
+
+**Match the project to the footage.** The frame rate and canvas size are set
+once at `ve init --fps --size`; no method changes them afterward. Resolve
+asks to match the timeline to the first clip dropped on it.
+
+- [ ] `project.set_format` (`fps`, `size`, with `base_rev` and `dry_run`),
+  first for an empty timeline only, since clip positions are exact time on
+  the old frame grid. Re-snapping existing clips to a new rate (cuts,
+  links, transition handles, keyframes, captions) is a later decision.
+- [ ] A way to ask for it on import (for example `ve import --match`, or a
+  result field saying the first clip's rate and size differ from the
+  project's), so an agent or editor can offer the switch.
 
 **Ready to ship (robustness and the features editors expect).** What a
 CapCut-class editor still needs from the core, beyond the sections above.

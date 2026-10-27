@@ -431,6 +431,19 @@ Next, in order:
    (`skills/video-edit/SKILL.md`, every command in it run as written).
 
 Not done yet, and what the gate still needs (suggested order, not decided):
+- Easy to build on: prebuilt `ve` downloads per platform with an LGPL FFmpeg
+  included, a one-line install, a typed JS/TS client generated from OpenRPC,
+  and starter examples (ARCHITECTURE.md, TODO, "Easy to build on").
+- Plugin index, after the one-line install: a community list of plugins
+  that live in their authors' repos (we maintain the list and the plugin
+  API, not the plugins), 3 to 5 first-party seed plugins, and CI that flags
+  broken ones (ARCHITECTURE.md, TODO, "Plugin index").
+- Template rendering (idea, shape not decided): a project with placeholders
+  filled from rows of data and exported in bulk, like Shotstack
+  (ARCHITECTURE.md, TODO, "Template rendering").
+- Media from URLs: a hosted service downloads into the project folder first
+  (no engine change); reading cloud URLs directly comes later
+  (ARCHITECTURE.md, TODO, "Media from URLs").
 - Ready to ship (ARCHITECTURE.md, TODO, "Ready to ship"): text layer in
   core (needs a decision: `cosmic-text`), speed ramps, masks and track
   mattes, audio keyframes/pan/fades/ducking, LUTs and the 601/709 choice,
