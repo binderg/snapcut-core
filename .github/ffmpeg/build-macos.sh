@@ -67,6 +67,7 @@ fetch "$FFMPEG_SRC_URL" "$FFMPEG_SRC_SHA256" ffmpeg
   ./configure --prefix="$prefix" \
     --pkg-config-flags=--static \
     --extra-cflags="-I$prefix/include" --extra-ldflags="-L$prefix/lib" \
+    --extra-libs=-liconv \
     --disable-autodetect --disable-shared --enable-static \
     --disable-ffplay --disable-doc --disable-debug \
     --enable-videotoolbox --enable-audiotoolbox --enable-zlib --enable-bzlib --enable-iconv \
