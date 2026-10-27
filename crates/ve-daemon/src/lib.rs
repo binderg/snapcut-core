@@ -283,6 +283,7 @@ pub fn registry(session: Arc<Session>) -> Arc<Registry> {
     on_project!("edit.delete", "Remove clips and leave gaps", true, edit::delete);
     on_project!("edit.set_speed", "Change a clip's speed (exact ratio); writes OTIO LinearTimeWarp too", true, edit::set_speed);
     on_project!("edit.set_volume", "Set a clip's audio gain in dB", true, edit::set_volume);
+    r.method("text.presets", "Built-in title looks (style, place, animation) for text.add and text.captions", false, |_: NoParams| Ok(text::presets()));
     on_project!("text.add", "Put a text clip (title, label) on a video track; never pushes other clips", true, text::add);
     on_project!("text.set", "Change a text clip's words or look", true, text::set);
     on_project!("text.captions", "Caption clips from the transcript, timed to the edited timeline, on their own track", true, text::captions);

@@ -306,6 +306,9 @@ enum Command {
         /// Entrance for each caption, e.g. `--in pop:0.15s`.
         #[arg(long = "in", value_name = "KIND[:DURATION]")]
         animate_in: Option<String>,
+        /// `caption` (default) or `caption-highlight` (pops in, spoken word in yellow).
+        #[arg(long)]
+        preset: Option<String>,
     },
     /// Undo the last step (one edit, or a whole group).
     Undo,
@@ -543,10 +546,16 @@ enum FontCmd {
 
 #[derive(Subcommand)]
 enum TextCmd {
+    /// The built-in title looks.
+    Presets,
     /// `ve text add "Big news" --at 00:00:05:00 --duration 3s --style size=0.1 --style weight=700 --y -0.3`.
     /// Goes on a free video track (a new `Text` track if none); never pushes other clips.
     Add {
         text: String,
+        /// A title look: title, subtitle, lower-third, name-tag, headline, quote, typewriter,
+        /// caption, caption-highlight (`ve text presets`). Other flags override it.
+        #[arg(long)]
+        preset: Option<String>,
         #[arg(long)]
         at: Option<String>,
         #[arg(long)]
@@ -578,6 +587,9 @@ enum TextCmd {
     /// `ve text set clip_7f3a --text "New words" --style color=[1,0.8,0]`. Move or fade it with `ve transform`.
     Set {
         clip: String,
+        /// Take a preset's look and animations (not its position).
+        #[arg(long)]
+        preset: Option<String>,
         #[arg(long)]
         text: Option<String>,
         #[arg(long = "style", value_name = "FIELD=VALUE")]
@@ -1102,17 +1114,18 @@ fn plan(cmd: &Command, json_output: bool) -> Plan {
         }
         Command::Font(FontCmd::List { system }) => q("font.list", json!({ "system": system })),
         Command::Font(FontCmd::Rm { file }) => q("font.remove", json!({ "file": file })),
-        Command::Text(TextCmd::Add { text, at, duration, track, overwrite, style, x, y, animate_in, animate_out }) => m(
+        Command::Text(TextCmd::Presets) => q("text.presets", json!({})),
+        Command::Text(TextCmd::Add { text, preset, at, duration, track, overwrite, style, x, y, animate_in, animate_out }) => m(
             "text.add",
             json!({
-                "text": text, "at": at, "duration": duration, "track": track, "overwrite": overwrite,
+                "text": text, "preset": preset, "at": at, "duration": duration, "track": track, "overwrite": overwrite,
                 "style": param_map(style, json_output), "x": x, "y": y,
                 "animate_in": anim_arg(animate_in.as_ref()).filter(|v| !v.is_null()),
                 "animate_out": anim_arg(animate_out.as_ref()).filter(|v| !v.is_null()),
             }),
         ),
-        Command::Text(TextCmd::Set { clip, text, style, reset_style, animate_in, animate_out }) => {
-            let mut p = json!({ "clip": clip, "text": text, "style": param_map(style, json_output), "reset_style": reset_style });
+        Command::Text(TextCmd::Set { clip, preset, text, style, reset_style, animate_in, animate_out }) => {
+            let mut p = json!({ "clip": clip, "preset": preset, "text": text, "style": param_map(style, json_output), "reset_style": reset_style });
             // Only send what was given: a missing key keeps the animation, null removes it.
             if let Some(v) = anim_arg(animate_in.as_ref()) {
                 p["animate_in"] = v;
@@ -1122,8 +1135,9 @@ fn plan(cmd: &Command, json_output: bool) -> Plan {
             }
             m("text.set", p)
         }
-        Command::Captions { span, track, y, style, highlight, animate_in } => {
+        Command::Captions { span, track, y, style, highlight, animate_in, preset } => {
             let mut p = span_params(span);
+            p["preset"] = json!(preset);
             p["track"] = json!(track);
             p["y"] = json!(y);
             p["style"] = param_map(style, json_output);
@@ -1934,9 +1948,14 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         | Command::Track(_)
         | Command::Effect(_)
         | Command::Transition(_)
-        | Command::Text(_)
+        | Command::Text(TextCmd::Add { .. } | TextCmd::Set { .. })
         | Command::Undo
         | Command::Redo => print_commit(&result),
+        Command::Text(TextCmd::Presets) => {
+            for p in result["presets"].as_array().into_iter().flatten() {
+                println!("{:18} {}", p["name"].as_str().unwrap_or("?"), p["description"].as_str().unwrap_or(""));
+            }
+        }
         Command::Font(FontCmd::Add { .. }) => {
             for f in result["files"].as_array().into_iter().flatten() {
                 let faces: Vec<String> = f["faces"]

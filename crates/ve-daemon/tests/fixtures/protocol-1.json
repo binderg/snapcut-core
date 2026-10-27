@@ -2255,6 +2255,12 @@
             "boolean"
           ]
         },
+        "preset": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
         "style": {
           "required": false,
           "types": [
@@ -2337,6 +2343,12 @@
             "array"
           ]
         },
+        "preset": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
         "style": {
           "required": false,
           "types": [
@@ -2376,6 +2388,13 @@
         "revision"
       ]
     },
+    "text.presets": {
+      "deprecated": false,
+      "params": {},
+      "result": [
+        "presets"
+      ]
+    },
     "text.set": {
       "deprecated": false,
       "params": {
@@ -2413,6 +2432,12 @@
           "required": false,
           "types": [
             "boolean"
+          ]
+        },
+        "preset": {
+          "required": false,
+          "types": [
+            "string"
           ]
         },
         "reset_style": {

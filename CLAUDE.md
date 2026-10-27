@@ -271,6 +271,11 @@ spoken word from `words` timings in the clip's own source time, so trims
 and splits keep them). The renderer draws glyph by glyph
 (`swash.with_pixels`) so hidden letters keep their place; the look is in
 the text and frame cache keys.
+Presets (`ve_model::text::presets`, `text.presets`): named style + place +
+animations; call fields win. Generic families are set to installed fonts
+(`text::generic_families`; cosmic-text's defaults are Linux names that
+matched nothing on Windows). `compose::FRAME_KEY_VERSION` is 2 (bump when
+drawing changes without the frame key changing).
 The CLI runs on an 8 MiB thread: debug clap overflowed Windows' 1 MiB main stack.
 Tracks (`ve-ops::tracks`): `track.add|remove|rename|move|list`, any number
 of video and audio tracks. Positions (`index`) count within a kind; for video

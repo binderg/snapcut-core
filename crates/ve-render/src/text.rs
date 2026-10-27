@@ -43,7 +43,34 @@ struct Fonts {
 /// Fonts load once per process (reading every installed font takes a moment).
 fn fonts() -> &'static Mutex<Fonts> {
     static F: OnceLock<Mutex<Fonts>> = OnceLock::new();
-    F.get_or_init(|| Mutex::new(Fonts { system: FontSystem::new(), swash: SwashCache::new() }))
+    F.get_or_init(|| {
+        let mut system = FontSystem::new();
+        generic_families(system.db_mut());
+        Mutex::new(Fonts { system, swash: SwashCache::new() })
+    })
+}
+
+/// Installed families to try for `sans-serif`, `serif` and `monospace`, in
+/// order (Windows, macOS, Linux). The font library's own defaults are Linux
+/// names, which on other systems match nothing, so weight and italic were
+/// lost to an arbitrary fallback.
+const SANS: [&str; 9] = ["Arial", "Helvetica Neue", "Helvetica", "Segoe UI", "Liberation Sans", "DejaVu Sans", "Noto Sans", "Open Sans", "Roboto"];
+const SERIF: [&str; 7] = ["Times New Roman", "Georgia", "Times", "Liberation Serif", "DejaVu Serif", "Noto Serif", "Cambria"];
+const MONO: [&str; 8] = ["Consolas", "Menlo", "Courier New", "SF Mono", "DejaVu Sans Mono", "Liberation Mono", "Noto Sans Mono", "Courier"];
+
+fn generic_families(db: &mut fontdb::Database) {
+    let have: std::collections::HashSet<String> = db.faces().flat_map(|f| f.families.iter().map(|(n, _)| n.clone())).collect();
+    let installed = |names: &[&str]| names.iter().find(|n| have.contains(**n)).map(|n| (*n).to_owned());
+    let (sans, serif, mono) = (installed(&SANS), installed(&SERIF), installed(&MONO));
+    if let Some(n) = sans {
+        db.set_sans_serif_family(n);
+    }
+    if let Some(n) = serif {
+        db.set_serif_family(n);
+    }
+    if let Some(n) = mono {
+        db.set_monospace_family(n);
+    }
 }
 
 /// Font folders added with [`use_fonts_dir`] and what was loaded from them.
@@ -468,6 +495,19 @@ mod tests {
         assert!(yellow > 50 && white > 50, "one word yellow, the rest white: {yellow} {white}");
     }
 
+    /// The generic names reach installed fonts, so weight and italic apply.
+    #[test]
+    fn generic_families_resolve_to_installed_fonts() {
+        let f = fonts().lock().unwrap();
+        let db = f.system.db();
+        for fam in [fontdb::Family::SansSerif, fontdb::Family::Serif, fontdb::Family::Monospace] {
+            let q = fontdb::Query { families: &[fam], ..Default::default() };
+            assert!(db.query(&q).is_some(), "{fam:?} ({}) has no installed face", db.family_name(&fam));
+        }
+        let bold = db.query(&fontdb::Query { families: &[fontdb::Family::SansSerif], weight: fontdb::Weight(800), ..Default::default() });
+        assert!(bold.and_then(|id| db.face(id)).is_some_and(|f| f.weight.0 >= 600), "a heavy sans-serif face");
+    }
+
     #[test]
     fn scale_draws_larger_and_bad_styles_fail() {
         let a = render(&clip("Hi", TextStyle::default()), 640, 360, 1.0, &TextFrame::STILL).unwrap();
@@ -476,3 +516,4 @@ mod tests {
         assert!(render(&clip("x", TextStyle { size: 0.0, ..TextStyle::default() }), 640, 360, 1.0, &TextFrame::STILL).is_err());
     }
 }
+

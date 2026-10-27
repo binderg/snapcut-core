@@ -61,6 +61,12 @@ not final (the command is `ve`).
   (`text.add`, `text.set`, `ve text`). Stored as OTIO
   `GeneratorReference` (`ve.text`). Burned-in captions from the transcript
   on their own track (`text.captions`, `ve captions`). GPU only.
+- Title presets (`text.presets`, `preset` on `text.add`, `text.set` and
+  `text.captions`, `ve text add --preset lower-third`): title, subtitle,
+  lower-third, name-tag, headline, quote, typewriter, caption,
+  caption-highlight. `sans-serif`, `serif` and `monospace` now resolve to
+  installed fonts on every system (before, weight and italic could be
+  lost on Windows and macOS).
 - Text animations: entrances and exits (fade, pop, zoom, four slides,
   typewriter, word by word), and the spoken word highlighted in captions
   (`text.captions` with `highlight`; `ve text add --in pop --out fade`).

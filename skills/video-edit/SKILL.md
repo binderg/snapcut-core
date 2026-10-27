@@ -87,6 +87,7 @@ Exit codes: 0 ok, 2 bad arguments (the message says what), 3 stale revision,
 | Insert over existing material | `… --overwrite` |
 | Media moved or renamed ("missing" in renders) | `ve relink` lists missing files; `ve relink --folder D:/footage` finds them by content; `ve relink asset_… D:/new/take3.mp4` points one |
 | Image (logo, title card, photo) | `ve import logo.png`, then `ve insert asset_… --duration 3s` (default 5 s); PNG transparency is kept |
+| Ready-made title looks | `ve text presets`; `ve text add "The Big Launch" --preset title`, `--preset lower-third`, `headline`, `name-tag`, `quote`, `typewriter`; flags override the preset; captions: `ve captions --preset caption-highlight` |
 | Title or label | `ve text add "Big news" --at 00:00:05:00 --duration 3s --style size=0.1 --style weight=700 --y -0.3` (goes on a free track, pushes nothing); change with `ve text set clip_… --text "…" --style color=[1,0.8,0]` |
 | Brand or Google font | `ve font add --google "Bebas Neue"` (or `ve font add Brand.ttf`), then `--style "font=Bebas Neue"`; fonts are kept in the project's `fonts/` folder |
 | Animate a title in or out | `ve text add "Hi" --in pop --out fade:0.6s` (also zoom, slide-up/down/left/right, typewriter, words); `ve text set clip_… --in none` removes it |

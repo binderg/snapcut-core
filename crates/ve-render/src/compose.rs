@@ -323,7 +323,7 @@ pub fn frame_in(tl: &Timeline, at: Q, width: u32, format: ImageFormat, fx: &Regi
 
 /// Bump when anything about how a frame is drawn changes, so cached frames
 /// from an older engine are not reused.
-pub const FRAME_KEY_VERSION: u32 = 1;
+pub const FRAME_KEY_VERSION: u32 = 2;
 
 /// A hash of everything that decides the pixels of the frame at `at`, for
 /// the frame cache: the canvas, and per video track the source file (by

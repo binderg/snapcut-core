@@ -61,6 +61,7 @@ schemas: `system.describe`.
 | `font.add` | | Add a font to the project from a file, a URL or Google Fonts | [text.md](text.md) |
 | `font.list` | | The project's fonts (and installed ones) | [text.md](text.md) |
 | `font.remove` | | Delete a font from the project | [text.md](text.md) |
+| `text.presets` | | Built-in title looks (no project) | [text.md](text.md) |
 | `text.add` | yes | Put a text clip (title, label, lower third) on a free video track | [text.md](text.md) |
 | `text.set` | yes | Change a text clip's words or look | [text.md](text.md) |
 | `text.captions` | yes | Caption clips from the transcript, on their own track | [text.md](text.md) |

@@ -373,6 +373,123 @@ impl Clip {
     }
 }
 
+/// A named title look: style, place and animation, applied by `text.add`
+/// (and `text.set`, `text.captions`) with `preset`; fields the caller sets
+/// win.
+#[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
+pub struct Preset {
+    pub name: &'static str,
+    pub description: &'static str,
+    pub style: TextStyle,
+    /// Center position, canvas widths / heights from the center.
+    pub x: f64,
+    pub y: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub animate_in: Option<Animation>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub animate_out: Option<Animation>,
+}
+
+fn anim(kind: AnimationKind, ms: i64) -> Option<Animation> {
+    Some(Animation { kind, duration: Seconds(Q::new(ms, 1000)) })
+}
+
+/// The built-in presets.
+pub fn presets() -> Vec<Preset> {
+    let d = TextStyle::default;
+    vec![
+        Preset {
+            name: "title",
+            description: "Big bold centered title with a soft shadow; zooms in, fades out",
+            style: TextStyle { size: 0.11, weight: 800, shadow: 0.06, ..d() },
+            x: 0.0,
+            y: 0.0,
+            animate_in: anim(AnimationKind::Zoom, 500),
+            animate_out: anim(AnimationKind::Fade, 400),
+        },
+        Preset {
+            name: "subtitle",
+            description: "Smaller line to sit under a title; fades in",
+            style: TextStyle { size: 0.055, weight: 500, shadow: 0.06, ..d() },
+            x: 0.0,
+            y: 0.1,
+            animate_in: anim(AnimationKind::Fade, 600),
+            animate_out: anim(AnimationKind::Fade, 400),
+        },
+        Preset {
+            name: "lower-third",
+            description: "Name or label on a dark plate, bottom left; slides in from the left",
+            style: TextStyle { size: 0.045, weight: 700, align: Align::Left, width: 0.5, background: vec![0.0, 0.0, 0.0, 0.65], padding: 0.45, ..d() },
+            x: -0.22,
+            y: 0.33,
+            animate_in: anim(AnimationKind::SlideRight, 400),
+            animate_out: anim(AnimationKind::Fade, 300),
+        },
+        Preset {
+            name: "name-tag",
+            description: "Dark text on a light plate, bottom left; pops in",
+            style: TextStyle { size: 0.04, weight: 600, color: vec![0.08, 0.08, 0.08, 1.0], background: vec![1.0, 1.0, 1.0, 0.92], padding: 0.4, ..d() },
+            x: -0.3,
+            y: 0.35,
+            animate_in: anim(AnimationKind::Pop, 350),
+            animate_out: anim(AnimationKind::Fade, 300),
+        },
+        Preset {
+            name: "headline",
+            description: "Black heavy text on a yellow plate at the top; drops in",
+            style: TextStyle { size: 0.07, weight: 900, color: vec![0.0, 0.0, 0.0, 1.0], background: vec![1.0, 0.85, 0.0, 1.0], padding: 0.35, ..d() },
+            x: 0.0,
+            y: -0.32,
+            animate_in: anim(AnimationKind::SlideDown, 400),
+            animate_out: anim(AnimationKind::Fade, 300),
+        },
+        Preset {
+            name: "quote",
+            description: "Italic serif quotation with a shadow, centered; fades in slowly",
+            style: TextStyle { font: "serif".into(), size: 0.06, italic: true, width: 0.7, shadow: 0.05, ..d() },
+            x: 0.0,
+            y: 0.0,
+            animate_in: anim(AnimationKind::Fade, 800),
+            animate_out: anim(AnimationKind::Fade, 600),
+        },
+        Preset {
+            name: "typewriter",
+            description: "Monospace text typed out letter by letter",
+            style: TextStyle { font: "monospace".into(), size: 0.05, align: Align::Left, ..d() },
+            x: 0.0,
+            y: 0.0,
+            animate_in: anim(AnimationKind::Typewriter, 1200),
+            animate_out: anim(AnimationKind::Fade, 300),
+        },
+        Preset {
+            name: "caption",
+            description: "Bold outlined captions near the bottom (the text.captions default)",
+            style: TextStyle::caption(),
+            x: 0.0,
+            y: 0.36,
+            animate_in: None,
+            animate_out: None,
+        },
+        Preset {
+            name: "caption-highlight",
+            description: "Captions that pop in with the spoken word in yellow (needs word timings, as text.captions makes)",
+            style: TextStyle { highlight: Some(vec![1.0, 0.85, 0.0, 1.0]), size: 0.065, ..TextStyle::caption() },
+            x: 0.0,
+            y: 0.34,
+            animate_in: anim(AnimationKind::Pop, 150),
+            animate_out: None,
+        },
+    ]
+}
+
+/// A built-in preset by name, or why not.
+pub fn preset(name: &str) -> Result<Preset, String> {
+    presets().into_iter().find(|p| p.name == name).ok_or_else(|| {
+        let names: Vec<&str> = presets().iter().map(|p| p.name).collect();
+        format!("no preset `{name}`; presets are {}", names.join(", "))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -431,6 +548,15 @@ mod tests {
         assert_eq!(frame(&t, Q::new(5, 10), Q::from_integer(2), Q::new(5, 10)).highlight, Some((3, 8)));
         assert_eq!(frame(&t, Q::new(11, 10), Q::from_integer(2), Q::new(11, 10)).highlight, Some((9, 11)));
         assert_eq!(word_ranges(" a  bc\nd"), [(1, 2), (4, 6), (7, 8)]);
+    }
+
+    #[test]
+    fn presets_are_valid_and_found() {
+        for p in presets() {
+            p.style.check().unwrap_or_else(|e| panic!("{}: {e}", p.name));
+            assert_eq!(preset(p.name).unwrap(), p);
+        }
+        assert!(preset("sparkle").unwrap_err().contains("lower-third"));
     }
 
     #[test]

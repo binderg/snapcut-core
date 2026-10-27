@@ -21,7 +21,7 @@ of the canvas, so a clip looks the same at any render size.
 
 | Field | Default | |
 | --- | --- | --- |
-| `font` | `sans-serif` | Family name (`"Bebas Neue"`, `"Arial"`), or `sans-serif`, `serif`, `monospace`. Project fonts ([Fonts](#fonts)) or installed ones; an unknown family falls back to a sans-serif |
+| `font` | `sans-serif` | Family name (`"Bebas Neue"`, `"Arial"`), or `sans-serif`, `serif`, `monospace` (an installed Arial/Helvetica, Times New Roman/Georgia, Consolas/Menlo or their Linux equivalents). Project fonts ([Fonts](#fonts)) or installed ones; an unknown family falls back to a sans-serif |
 | `size` | 0.07 | Letter size: the font's em as a fraction of the canvas height (0.005 to 1) |
 | `weight` | 400 | 100 (thin) to 900 (black); 700 is bold |
 | `italic` | false | |
@@ -44,6 +44,30 @@ transform (`edit.set_transform`): `x` in canvas widths from the center,
 `scale` scales around the box's center and stays sharp.
 `render.layers` reports a text clip's words as `text`; text never hides
 what is under it.
+
+## Presets
+
+Named title looks: a style, a place and animations. `text.add` and
+`text.captions` take `preset`; what the call sets itself (`style` fields,
+`x`, `y`, animations) wins. `text.set` with `preset` takes its look and
+animations, not its place.
+
+| Preset | Look |
+| --- | --- |
+| `title` | Big bold centered title with a soft shadow; zooms in, fades out |
+| `subtitle` | Smaller line to sit under a title; fades in |
+| `lower-third` | Name or label on a dark plate, bottom left; slides in from the left |
+| `name-tag` | Dark text on a light plate, bottom left; pops in |
+| `headline` | Black heavy text on a yellow plate at the top; drops in |
+| `quote` | Italic serif quotation with a shadow, centered; fades in slowly |
+| `typewriter` | Monospace text typed out letter by letter |
+| `caption` | Bold outlined captions near the bottom (the `text.captions` default) |
+| `caption-highlight` | Captions that pop in with the spoken word in yellow |
+
+## `text.presets` (no project needed)
+
+`{"presets": [{"name": "title", "description": "...", "style": {...}, "x": 0.0,
+"y": 0.0, "animate_in": {"kind": "zoom", "duration": "0.500s"}, "animate_out": {...}}, ...]}`
 
 ## Animations
 
@@ -117,6 +141,7 @@ to a sans-serif.
 | Param | Default | |
 | --- | --- | --- |
 | `text` | required | The words. `\n` starts a new line; long lines wrap at `width` |
+| `preset` | | A title look to start from ([Presets](#presets)) |
 | `at` | timeline start | Timeline start |
 | `duration` | 3 s | Length |
 | `track` | | A video track by name or ID. Without it: the topmost video track that is free over the clip, else a new video track `Text` on top |
@@ -140,6 +165,7 @@ Text never pushes other clips. The result is an edit report:
 | --- | --- | --- |
 | `clip` | required | A text clip |
 | `text` | | New words |
+| `preset` | | Take a preset's look and animations (not its place) |
 | `style` | | Fields to change; `null` puts one back to its default |
 | `reset_style` | false | Start from the default look before applying `style` |
 | `animate_in`, `animate_out` | | New entrance or exit; `null` removes it |
@@ -159,6 +185,7 @@ speaker change, a pause of 0.7 s or more, or after a sentence).
 | Param | Default | |
 | --- | --- | --- |
 | `from`, `to` | whole timeline | Timeline range |
+| `preset` | `caption` | Look to start from; `caption-highlight` pops each caption in with the spoken word in yellow |
 | `track` | | A video track: its text clips in the range are replaced first, so running it again after editing refreshes the captions. Default: a new `Captions` track on top (or the topmost video track free over every caption) |
 | `style` | | Fields over the caption default: bold, size 0.055, outline 0.12, width 0.85 |
 | `y` | 0.36 | Vertical position (near the bottom) |
