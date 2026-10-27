@@ -57,7 +57,7 @@ Shotstack you can build your own editor, automation or video service on.
 | **Bring your own frontend** | Every UI, script and plugin is a client of one JSON-RPC API over a local socket or WebSocket. Changes stream to every client as JSON Patch. `ve describe` prints the whole API as OpenRPC, generated from the code. |
 | **Lean core, open edges** | No AI models, voices or 3D in the core, ever. They come as plugins, in any language, local or cloud. |
 | **Open formats** | Projects are [OpenTimelineIO](https://opentimeline.io) files, so a cut made here opens in DaVinci Resolve, Premiere or Avid. Effects are WGSL shaders with a JSON Schema for their parameters. |
-| **Exact** | Time is stored as exact fractions, never floats. Renders are frame- and sample-exact, with a short crossfade on every audio cut so nothing clicks. |
+| **Plugins connect anything** | LLMs, speech to text, text to speech, 3D renderers like Blender, AI depth maps, background removal, stock libraries, publishing. A plugin is a folder with a `plugin.json` and a program in any language, running a local model or calling a cloud API, your choice per plugin. Its commands become `ve` subcommands, it runs as a job with progress and cancel, and its edits undo as one step. API keys stay in the OS keychain. Write a plugin once and it works in every editor built on the engine. See [Plugins](#plugins). |
 
 ## What it does
 
