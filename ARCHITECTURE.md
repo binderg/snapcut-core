@@ -566,6 +566,27 @@ The method registry and JSON Schema generation start in Phase 1 even though the 
 
 ## TODO
 
+**Alpha, in order (Oct 28 2026).** What has to be done before an alpha;
+each item's details are in its section below.
+
+1. Robust audio, the "wrong audio" part: sample-rate and drift test, fades
+   as items and volume keyframes, then ducking ("Robust audio").
+2. `project.set_format` and match-on-import ("Match the project to the
+   footage").
+3. Crash recovery and a daemon soak test ("Ready to ship").
+4. Proxies on import, or faster seeking for long-GOP phone footage
+   ("Real-time playback").
+5. Decide BT.601 vs BT.709 for untagged HD (leaning 709 for HD, what
+   players assume) ("Ready to ship", Color).
+6. Install checked on clean Windows, macOS and Linux machines, and code
+   signing or clear SmartScreen/Gatekeeper steps ("Easy to build on").
+7. Run the gate for real: an agent with only the skill cuts a real
+   10-minute talking head (once early to find bugs, once as the final check).
+
+After alpha: VST3/CLAP host plugins, JS client, plugin index, templates,
+URL media, detections, speed ramps, masks, compound clips, LUTs, GPU export
+speed.
+
 **Real-time playback (the critical path for a CapCut-like feel).** Today
 playback plays short MP4 chunks. They are kept by content and built ahead of
 the playhead (and ahead of everything else where an edit just changed
@@ -643,6 +664,20 @@ an engine they cannot install).
 - [ ] **Trust:** process plugins run with the user's permissions, so the index
   says to review a plugin before installing it until untrusted plugins run
   sandboxed (see "Sandboxing" under "Plugin system").
+- [ ] **Paid plugins** (Oct 28 2026: allowed in the index, labelled paid;
+  sellers link to their own store, licence keys can use `secrets`). Known
+  gap: an effect pack's folder (shader included) is copied into the
+  project's `effects/` on first use, so sharing a project gives its paid
+  video effects away. Plugin audio effects (`runtime: "process"`) do not
+  leak (only the manifest is copied; the work needs the plugin). Fix when
+  someone wants to sell a video pack: e.g. a pack flag to render from the
+  installed pack instead of copying, against the "projects are
+  self-contained" rule. A project opened without a plugin it needs should
+  say which plugin and where to get it.
+- [ ] **Pack dependencies:** an effect pack may need other plugins (a
+  `process` effect needs the plugin that provides its `method`; a pack may
+  build on another pack). The manifest should declare them (`requires`),
+  and install and `fx.list` should report what is missing.
 
 **Template rendering (an idea, not decided).** Shotstack's main use: one
 template plus rows of data, rendered in bulk into personalized videos. Here
