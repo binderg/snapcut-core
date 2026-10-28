@@ -496,7 +496,12 @@ impl Graph {
                 for e in &p.seg.effects {
                     let f = fx.require(&e.effect, FxKind::Audio).map_err(|err| RenderError::Invalid(format!("{} on {}: {err}", e.id, p.seg.clip)))?;
                     let name = self.label("fx");
-                    let _ = write!(ch, ",{}", afx::chain(&f, &e.params, &e.keyframes, local, len, &name));
+                    let _ = write!(ch, ",{}", afx::chain(&f, &e.params, &e.keyframes, local, len, p.seg.clip_duration, &name));
+                }
+                if !p.seg.volume_keys.is_empty() {
+                    let keys = [("db".to_owned(), p.seg.volume_keys.clone())].into_iter().collect();
+                    let name = self.label("vk");
+                    let _ = write!(ch, ",{}", afx::chain(afx::gain_curve(), &serde_json::Map::new(), &keys, local, len, p.seg.clip_duration, &name));
                 }
                 if p.seg.volume_db != 0.0 {
                     let _ = write!(ch, ",volume={}dB", p.seg.volume_db);

@@ -161,3 +161,68 @@ fn every_builtin_shapes_the_sound_without_breaking_it() {
     let comp = effects::add(&tl, &clip, "core.audio/compressor@1", json!({"threshold": -30, "ratio": 8}).as_object().cloned().unwrap(), None).unwrap().0;
     assert!(plain - rms_db(&comp, span.0, span.1, &work) > 6.0, "compressor turns a loud tone down");
 }
+
+#[test]
+fn fades_follow_the_clip_edges_through_splits() {
+    let work = dir("afx-fade");
+    let (tl, clip) = timeline(&work);
+    let plain = rms_db(&tl, Q::new(4, 5), Q::new(6, 5), &work);
+    let both = json!({"in": 0.5, "out": 0.5}).as_object().cloned().unwrap();
+    let (faded, _) = effects::add(&tl, &clip, "core.audio/fade@1", both, None).unwrap();
+    let start = rms_db(&faded, Q::from_integer(0), Q::new(1, 20), &work);
+    let middle = rms_db(&faded, Q::new(4, 5), Q::new(6, 5), &work);
+    let end = rms_db(&faded, Q::new(39, 20), Q::from_integer(2), &work);
+    assert!(start < plain - 20.0, "the first 50 ms are near silence: {start:.1} vs {plain:.1} dB");
+    assert!((middle - plain).abs() < 0.2, "the middle is untouched: {middle:.1} vs {plain:.1} dB");
+    assert!(end < plain - 20.0, "the last 50 ms are near silence: {end:.1} vs {plain:.1} dB");
+    // Halfway into the fade-in, an equal-power curve is at sin(pi/4): -3 dB.
+    let quarter = rms_db(&faded, Q::new(6, 25), Q::new(13, 50), &work);
+    assert!((plain - quarter - 3.0).abs() < 0.6, "halfway in: {quarter:.1} vs {plain:.1} dB");
+
+    // Split in the middle: no fade at the cut, fades kept at the outer edges.
+    let split = edit::split(&faded, &edit::Split { at: Q::from_integer(1), clips: Vec::new(), tracks: Vec::new(), linked: true }).unwrap().0;
+    let at_cut = rms_db(&split, Q::new(9, 10), Q::new(11, 10), &work);
+    assert!((at_cut - plain).abs() < 0.5, "no dip at the cut: {at_cut:.1} vs {plain:.1} dB");
+    assert!(rms_db(&split, Q::new(39, 20), Q::from_integer(2), &work) < plain - 20.0, "the fade-out stays at the end");
+
+    // Trim the end by half a second: the fade-out moves with it.
+    let right = split
+        .tracks
+        .children
+        .iter()
+        .find_map(|c| match c {
+            Composable::Track(t) if t.name == "A1" => t.children.iter().rev().find_map(|c| match c {
+                Composable::Clip(c) => ve_ops::lane::clip_id(c).cloned(),
+                _ => None,
+            }),
+            _ => None,
+        })
+        .unwrap();
+    let trim = edit::Trim { clip: right, in_delta: None, out_delta: Some(Q::new(-1, 2)), roll: false, linked: true };
+    let trimmed = edit::trim(&split, &trim).unwrap().0;
+    let new_end = rms_db(&trimmed, Q::new(29, 20), Q::new(3, 2), &work);
+    assert!(new_end < plain - 20.0, "the fade-out ends at the new end: {new_end:.1} vs {plain:.1} dB");
+}
+
+#[test]
+fn volume_keyframes_ride_the_gain() {
+    let work = dir("afx-volume-keys");
+    let (tl, clip) = timeline(&work);
+    let plain = rms_db(&tl, Q::new(1, 5), Q::new(4, 5), &work);
+    let rate = tl.output_rate();
+    let k = |t: Q, v: f64| effects::keyframe(t, json!(v), None, rate);
+    let keys = vec![k(Q::from_integer(1), 0.0), k(Q::new(3, 2), -12.0)];
+    let set = edit::SetVolume { clip: clip.clone(), db: Some(-3.0), keyframes: Some(keys), linked: true };
+    let ridden = edit::set_volume(&tl, &set).unwrap().0;
+    let early = rms_db(&ridden, Q::new(1, 5), Q::new(4, 5), &work);
+    let late = rms_db(&ridden, Q::new(8, 5), Q::new(19, 10), &work);
+    assert!((plain - early - 3.0).abs() < 0.3, "before the keys only the gain: {early:.1} vs {plain:.1} dB");
+    assert!((plain - late - 15.0).abs() < 0.5, "after them gain plus keyframes: {late:.1} vs {plain:.1} dB");
+    let f = ve_render::layers::at(&ridden, fr(45), &Registry::for_project(None)).unwrap();
+    assert!((f.audio[0].gain_db - -15.0).abs() < 0.01, "render.layers reports the gain at the frame: {}", f.audio[0].gain_db);
+
+    // Removing them.
+    let cleared = edit::set_volume(&ridden, &edit::SetVolume { clip, db: None, keyframes: Some(Vec::new()), linked: true }).unwrap().0;
+    let late = rms_db(&cleared, Q::new(8, 5), Q::new(19, 10), &work);
+    assert!((plain - late - 3.0).abs() < 0.3, "{late:.1} vs {plain:.1} dB");
+}

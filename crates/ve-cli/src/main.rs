@@ -215,13 +215,49 @@ enum Command {
         #[arg(long)]
         no_ripple: bool,
     },
-    /// Audio gain in dB: `ve volume clip_7f3a -6`.
+    /// Audio gain in dB: `ve volume clip_7f3a -6`. Volume over time:
+    /// `ve volume clip_7f3a --key 0s=0 --key 2s=-12` (dB added to the gain,
+    /// times from the clip's start; replaces the clip's volume keyframes).
     Volume {
         clip: String,
         #[arg(allow_hyphen_values = true)]
-        db: f64,
+        db: Option<f64>,
+        /// `TIME=DB[:EASE]` keyframe. Repeatable.
+        #[arg(long = "key", value_name = "TIME=DB", allow_hyphen_values = true)]
+        keys: Vec<String>,
+        /// Remove the clip's volume keyframes.
+        #[arg(long)]
+        clear_keys: bool,
         #[arg(long)]
         unlinked: bool,
+    },
+    /// Lower music under speech: `ve duck A2` (listens to the other audio
+    /// tracks), `ve duck A2 --under A1 --depth -15`. Writes volume keyframes
+    /// on the music clips; run it again after big edits.
+    Duck {
+        /// Music tracks to lower.
+        #[arg(required = true)]
+        tracks: Vec<String>,
+        /// Voice tracks to listen to. Default: every other audio track.
+        #[arg(long, value_delimiter = ',')]
+        under: Vec<String>,
+        /// dB down while someone speaks.
+        #[arg(long, default_value_t = -12.0, allow_hyphen_values = true)]
+        depth: f64,
+        /// Level that counts as speech.
+        #[arg(long, default_value = "-35dB", allow_hyphen_values = true)]
+        threshold: String,
+        /// Ramp down before speech.
+        #[arg(long, default_value = "0.2s")]
+        attack: String,
+        /// Ramp back up after speech.
+        #[arg(long, default_value = "0.5s")]
+        release: String,
+        /// Pauses shorter than this stay ducked.
+        #[arg(long, default_value = "0.5s")]
+        min_gap: String,
+        #[command(flatten)]
+        span: Span,
     },
     /// Which audio stream a clip plays and how its channels reach stereo:
     /// `ve audio clip_7f3a --channels left` (a lav on the left side only),
@@ -1057,7 +1093,29 @@ fn plan(cmd: &Command, json_output: bool) -> Plan {
         Command::Speed { clip, speed, unlinked, no_ripple } => {
             m("edit.set_speed", json!({ "clip": clip, "speed": speed, "linked": !unlinked, "ripple": !no_ripple }))
         }
-        Command::Volume { clip, db, unlinked } => m("edit.set_volume", json!({ "clip": clip, "db": db, "linked": !unlinked })),
+        Command::Volume { clip, db, keys, clear_keys, unlinked } => {
+            let mut p = json!({ "clip": clip, "db": db, "linked": !unlinked });
+            if !keys.is_empty() || *clear_keys {
+                let named: Vec<String> = keys.iter().map(|k| format!("volume@{k}")).collect();
+                p["keyframes"] = key_map(&named, &[], json_output).get("volume").cloned().unwrap_or_else(|| json!([]));
+            }
+            m("edit.set_volume", p)
+        }
+        Command::Duck { tracks, under, depth, threshold, attack, release, min_gap, span } => {
+            let mut p = span_params(span);
+            for (k, v) in [
+                ("tracks", json!(tracks)),
+                ("under", json!(under)),
+                ("depth", json!(depth)),
+                ("threshold", json!(threshold)),
+                ("attack", json!(attack)),
+                ("release", json!(release)),
+                ("min_gap", json!(min_gap)),
+            ] {
+                p[k] = v;
+            }
+            m("edit.duck", p)
+        }
         Command::Unlink { clip } => m("edit.unlink", json!({ "clip": clip })),
         Command::Transform { clip, x, y, scale, rotation, opacity, crop_left, crop_right, crop_top, crop_bottom, keys, clear, blend, reset } => {
             let mut p = json!({ "clip": clip, "reset": reset });
@@ -1338,6 +1396,7 @@ fn runs_as_job(cmd: &Command) -> bool {
             | Command::Analyze(_)
             | Command::Measure(_)
             | Command::Normalize { .. }
+            | Command::Duck { .. }
     )
 }
 
@@ -1962,6 +2021,15 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 f(&result["expected_lufs"]),
                 f(&result["expected_true_peak_dbtp"])
             );
+            for w in result["warnings"].as_array().into_iter().flatten() {
+                println!("warning: {}", w.as_str().unwrap_or("?"));
+            }
+            print_commit(&result);
+        }
+        Command::Duck { .. } => {
+            let n = result["speech"].as_array().map_or(0, Vec::len);
+            let c = result["clips"].as_array().map_or(0, Vec::len);
+            println!("{n} stretch(es) of speech; volume keyframes on {c} music clip(s)");
             for w in result["warnings"].as_array().into_iter().flatten() {
                 println!("warning: {}", w.as_str().unwrap_or("?"));
             }

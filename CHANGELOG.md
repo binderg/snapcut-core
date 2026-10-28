@@ -39,6 +39,11 @@ not final (the command is `ve`).
   channels 0 and 1 with a warning instead of failing. Measurements,
   `media.extract_audio` and transcripts take a `stream` (each stream has its
   own transcript).
+- Audio fades and automation: the `core.audio/fade` effect fades a clip in
+  and out at its edges (equal-power; follows trims, splits and speed).
+  `edit.set_volume` takes `keyframes` (dB added to the gain over time), and
+  `edit.duck` (`ve duck A2`) lowers music under speech by writing them.
+  A test now checks long 44.1 kHz and AAC sources stay in sync to the end.
 - Plugin audio effects (`runtime: "process"`): an effect in a plugin's
   pack names one of the plugin's commands, which processes the clip's
   audio from a raw f32 file into another. The clip is rendered through it

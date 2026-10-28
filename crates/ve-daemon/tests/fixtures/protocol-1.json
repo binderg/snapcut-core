@@ -239,6 +239,105 @@
         "revision"
       ]
     },
+    "edit.duck": {
+      "deprecated": false,
+      "params": {
+        "actor": {
+          "required": false,
+          "types": [
+            "object"
+          ]
+        },
+        "attack": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "background": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "base_rev": {
+          "required": true,
+          "types": [
+            "integer"
+          ]
+        },
+        "depth": {
+          "required": false,
+          "types": [
+            "number"
+          ]
+        },
+        "dry_run": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "from": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "min_gap": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "release": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "threshold": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "to": {
+          "required": false,
+          "types": [
+            "string"
+          ]
+        },
+        "tracks": {
+          "required": true,
+          "types": [
+            "array"
+          ]
+        },
+        "under": {
+          "required": false,
+          "types": [
+            "array"
+          ]
+        }
+      },
+      "result": [
+        "changed",
+        "clips",
+        "created",
+        "dry_run",
+        "duration",
+        "group",
+        "job_id",
+        "modified",
+        "patch",
+        "removed",
+        "revision",
+        "speech",
+        "state",
+        "warnings"
+      ]
+    },
     "edit.insert": {
       "deprecated": false,
       "params": {
@@ -793,7 +892,7 @@
           ]
         },
         "db": {
-          "required": true,
+          "required": false,
           "types": [
             "number"
           ]
@@ -802,6 +901,12 @@
           "required": false,
           "types": [
             "boolean"
+          ]
+        },
+        "keyframes": {
+          "required": false,
+          "types": [
+            "array"
           ]
         },
         "linked": {

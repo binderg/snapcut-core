@@ -307,7 +307,7 @@ fn what_is_heard() {
     (m.video, m.audio, m.audio_track) = (false, true, Some("A2".into()));
     tl = edit::insert(&tl, &m).unwrap().0;
     let bed = clip_on(&tl, "A2");
-    tl = edit::set_volume(&tl, &SetVolume { clip: bed.clone(), db: -18.0, linked: true }).unwrap().0;
+    tl = edit::set_volume(&tl, &SetVolume { clip: bed.clone(), db: Some(-18.0), keyframes: None, linked: true }).unwrap().0;
 
     let f = at(&tl, 30);
     assert_eq!(f.audible, ["A1", "A2"]);
@@ -318,7 +318,7 @@ fn what_is_heard() {
     assert_eq!((a2.clip.as_str(), a2.gain_db, a2.source_time, a2.link.as_deref()), (bed.as_str(), -18.0, fr(10), None));
 
     // Silenced at the floor: listed, not heard.
-    let quiet = edit::set_volume(&tl, &SetVolume { clip: bed.clone(), db: -100.0, linked: true }).unwrap().0;
+    let quiet = edit::set_volume(&tl, &SetVolume { clip: bed.clone(), db: Some(-100.0), keyframes: None, linked: true }).unwrap().0;
     let f = at(&quiet, 30);
     assert_eq!((f.audible.as_slice(), f.audio.len()), (["A1".to_owned()].as_slice(), 2));
     assert!(!f.audio[1].audible);

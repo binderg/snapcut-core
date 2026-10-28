@@ -459,7 +459,7 @@ pub fn preview_key_from(tl: &Timeline, span: Span, s: &EncodeSettings, frame_key
         for seg in &t.segments {
             h.update(
                 format!(
-                    "{} {} {} {} {} {} {:?} {:?} a:{} {}",
+                    "{} {} {} {} {} {} {:?} {:?} a:{} {} {}",
                     seg.path.display(),
                     seg.start - span.start,
                     seg.end - span.start,
@@ -469,7 +469,8 @@ pub fn preview_key_from(tl: &Timeline, span: Span, s: &EncodeSettings, frame_key
                     seg.head,
                     seg.tail,
                     seg.stream,
-                    seg.channels.label()
+                    seg.channels.label(),
+                    serde_json::to_string(&seg.volume_keys).unwrap_or_default()
                 )
                     .as_bytes(),
             );

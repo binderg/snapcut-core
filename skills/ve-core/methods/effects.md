@@ -68,6 +68,7 @@ Built-ins:
 | `core.audio/compressor@1` | audio | `threshold` -60..0 dBFS (-18), `ratio` 1..20 (3), `attack` ms (20), `release` ms (250), `makeup` 0..36 dB (0) |
 | `core.audio/noise_reduction@1` | audio | `amount` 0.01..97 dB (12), `floor` -80..-20 dB (-50): steady hiss and hum |
 | `core.audio/deesser@1` | audio | `intensity`, `max_reduction`, `frequency`, all 0..1 (0.5); not keyframeable |
+| `core.audio/fade@1` | audio | `in` 0..60 s (0), `out` 0..60 s (0): fade from silence after the clip's start and to silence before its end, equal-power curve. Measured from the clip's edges, so trims and speed changes keep it in place; a split keeps the fade-in on the left part and the fade-out on the right one |
 
 ## `fx.define`
 

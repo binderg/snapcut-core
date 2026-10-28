@@ -256,6 +256,12 @@ share an input only with the same stream and mapping). Insert puts each
 stream on its own audio track (adding tracks), all linked; `streams` picks.
 Measurements, `media.extract_audio` and transcripts take `stream`; stream 0
 keeps the old cache and transcript names (`<hash>.s<n>.json` for others).
+Fades and automation (Oct 28 2026): `core.audio/fade` (built-in effect,
+`in`/`out` from the clip's edges, written by `afx::fade_chain` as a
+per-sample `aeval`; split zeroes the cut side), `volume_keyframes` (dB added
+to `volume_db`, `afx::gain_curve`), `edit.duck` (`ve duck`, analyze.rs:
+silencedetect on the voice tracks alone, then `ve_ops::edit::duck` writes
+keyframes on the music clips). `ClipMeta.audio` is boxed (Composable size lint).
 Plugin audio effects (Oct 28 2026): `runtime: "process"` effects (manifest
 `method` = a plugin command; plain `string` params allowed) are pre-rendered
 per clip by `ve-render::plugin_fx::prepare` (called at the top of

@@ -91,7 +91,7 @@ dB down.
 | `note` | Why it is hidden when nothing covers it: `off the canvas`, `opacity 0` |
 | `link` | The clip's link group; a video layer and an audio clip with the same `link` came in together (picture and its sound). Different `source_time`s on a pair mean a J or L cut |
 | `disabled` (top level) | Video tracks turned off with `track.set`; never drawn |
-| `audio[].gain_db` | The clip's gain: `edit.set_volume`, plus what `edit.normalize` added. 0 is unity |
+| `audio[].gain_db` | The clip's gain at this frame: `edit.set_volume`, plus what `edit.normalize` added, plus its volume keyframes (ducking) at the frame. 0 is unity |
 | `audio[].speed` | Playback speed, when not 1 |
 | `audio[].stream`, `audio[].channels` | The audio stream of the file it plays and how its channels reach stereo ([edit.md](edit.md#editset_audio)) |
 | `audio[].effects` | Audio effects in stack order, each with every param's value at this frame, like `effects` on video layers ([effects.md](effects.md#audio-effects)) |

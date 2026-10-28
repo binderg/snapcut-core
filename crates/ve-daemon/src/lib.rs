@@ -372,6 +372,7 @@ pub fn registry(session: Arc<Session>) -> Arc<Registry> {
         |_: &Session, snap: &Snapshot, p| measure::pitch(snap, p));
     long!("analyze.scenes", "Find hard cuts in the timeline picture; writes `scene` markers", true, analyze::ScenesParams, analyze::scenes);
     long!("edit.normalize", "Measure the timeline's loudness and add one gain to its audio clips to hit a LUFS target", true, measure::NormalizeParams, measure::normalize);
+    long!("edit.duck", "Lower music tracks under speech on the voice tracks (writes volume keyframes)", true, analyze::DuckParams, analyze::duck);
 
     let s = session.clone();
     r.method("jobs.list", "Background jobs, oldest first, without their results", false, move |_: NoParams| {

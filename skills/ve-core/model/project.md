@@ -92,6 +92,7 @@ Edit results also give you each touched clip's `start` and `end` directly
 | `metadata.ve.clip.link` | Clips sharing a link (a file's picture and sound) are edited together unless a call says `linked: false` |
 | `metadata.ve.clip.speed` | Exact ratio `[num, den]`; `[3, 2]` is 1.5x. OTIO's `LinearTimeWarp` effect is written too, for other tools |
 | `metadata.ve.clip.volume_db` | Audio gain in dB (audio clips) |
+| `metadata.ve.clip.volume_keyframes` | Volume automation: dB added to `volume_db`, keyframes timed from the clip's start (`edit.set_volume`, `edit.duck`) |
 | `metadata.ve.clip.audio` | Audio clips: `{"stream": 1, "channels": "left"}`, which audio stream of the file plays and how its channels reach stereo ([../methods/edit.md](../methods/edit.md#editset_audio)). Absent means stream 0, `auto` |
 | Text clips | Media is `GeneratorReference.1` with `generator_kind: "ve.text"` and the words and style as `parameters` ([../methods/text.md](../methods/text.md)) |
 | `metadata.ve.clip.transform` | Picture placement (x, y, scale, rotation, opacity, crop), `blend` mode and keyframes ([../methods/edit.md](../methods/edit.md)) |

@@ -42,7 +42,8 @@ schemas: `system.describe`.
 | `edit.ripple_delete` | yes | Remove ranges, marker ranges or clips and close the gap | [edit.md](edit.md) |
 | `edit.delete` | yes | Remove clips, leave gaps | [edit.md](edit.md) |
 | `edit.set_speed` | yes | Change a clip's speed (exact ratio) | [edit.md](edit.md) |
-| `edit.set_volume` | yes | Set a clip's audio gain | [edit.md](edit.md) |
+| `edit.set_volume` | yes | Set a clip's audio gain and volume keyframes | [edit.md](edit.md) |
+| `edit.duck` | yes | Lower music tracks under speech (volume keyframes; job) | [edit.md](edit.md) |
 | `edit.set_audio` | yes | Choose a clip's audio stream and channel mapping | [edit.md](edit.md) |
 | `edit.set_transform` | yes | Position, scale, rotate, fade or crop a video clip's picture (keyframes) | [edit.md](edit.md) |
 | `edit.unlink` | yes | Break a clip's link with its partners | [edit.md](edit.md) |

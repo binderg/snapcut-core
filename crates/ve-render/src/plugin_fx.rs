@@ -193,7 +193,7 @@ fn process_segment(seg: &Segment, fx: &Registry, sample_rate: u32) -> Result<Seg
                 let chains: Vec<String> = head[i..j]
                     .iter()
                     .enumerate()
-                    .map(|(k, (f, e))| crate::afx::chain(f, &e.params, &e.keyframes, local, len, &format!("pfx{k}")))
+                    .map(|(k, (f, e))| crate::afx::chain(f, &e.params, &e.keyframes, local, len, seg.clip_duration, &format!("pfx{k}")))
                     .collect();
                 filter_raw(&cur, &next, &chains.join(","), n, sample_rate, &work)?;
                 i = j;

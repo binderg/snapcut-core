@@ -81,6 +81,9 @@ Exit codes: 0 ok, 2 bad arguments (the message says what), 3 stale revision,
 | Swap a clip with the one before it | `ve move clip_7f3a --to <other clip's start> --reorder` |
 | Speed | `ve speed clip_7f3a 3/2` (exact ratios; `1/2` is slow motion) |
 | Gain | `ve volume clip_7f3a -6` (dB) |
+| Fade sound in / out at a clip's edges | `ve effect add clip_7f3b core.audio/fade --param in=1 --param out=2` (seconds; on the audio clip, follows trims) |
+| Volume over time (dip one sentence) | `ve volume clip_7f3b --key 4s=0 --key 4.3s=-12 --key 6s=-12 --key 6.5s=0` (dB added to the gain, times from the clip's start) |
+| Music under speech | `ve duck A2` (lowers A2 wherever the other audio tracks talk; `--depth -15`, `--under A1`); run again after big edits |
 | Voice only in one ear (a lav recorded on one channel) | `ve measure levels --asset asset_94b8` shows which channel has sound; `ve audio clip_7f3a --channels left` (or `right`, `mono`, `2,3`) |
 | Several audio streams (OBS mic + desktop, two-mic camera) | `ve probe file.mkv` lists them (`a0 …, a1 …`); `ve insert` puts each on its own linked audio track; `ve insert asset_… --streams 0` takes only the mic |
 | Unlink video from its audio (later edits touch one side) | `ve unlink clip_7f3a` |

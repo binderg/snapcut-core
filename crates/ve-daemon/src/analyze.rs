@@ -234,3 +234,165 @@ impl crate::jobs::Background for ScenesParams {
         crate::render::span_secs(&s.timeline, self.from.as_ref(), self.to.as_ref())
     }
 }
+
+// --- edit.duck ---
+
+fn default_depth() -> f64 {
+    -12.0
+}
+
+fn default_attack() -> String {
+    "0.2s".into()
+}
+
+fn default_release() -> String {
+    "0.5s".into()
+}
+
+mutation_params! {
+    /// `edit.duck`: lower music under speech by writing volume keyframes on the music clips.
+    pub struct DuckParams {
+        /// Audio tracks to lower (the music), names or IDs.
+        pub tracks: Vec<String>,
+        /// Audio tracks to listen to for speech. Default: every other audio track.
+        #[serde(default)]
+        pub under: Vec<String>,
+        /// How far down while someone speaks, dB (default -12; -60 to below 0).
+        #[serde(default = "default_depth")]
+        pub depth: f64,
+        /// Level above which the voice tracks count as speech, e.g. `-35dB` (default).
+        #[serde(default = "default_threshold_db")]
+        pub threshold: String,
+        /// Ramp down before speech starts (default `0.2s`).
+        #[serde(default = "default_attack")]
+        pub attack: String,
+        /// Ramp back up after speech ends (default `0.5s`).
+        #[serde(default = "default_release")]
+        pub release: String,
+        /// Pauses shorter than this stay ducked (default `0.5s`).
+        #[serde(default = "default_min")]
+        pub min_gap: String,
+        /// Only clips overlapping this range change. Default: the whole timeline.
+        #[serde(default)]
+        pub from: Option<String>,
+        #[serde(default)]
+        pub to: Option<String>,
+        /// Run as a background job: answer `{job_id}` at once (see `jobs.*`).
+        #[serde(default)]
+        pub background: bool,
+    }
+}
+
+impl crate::jobs::Background for DuckParams {
+    fn background(&self) -> bool {
+        self.background
+    }
+    fn expected_secs(&self, s: &Snapshot) -> Option<f64> {
+        crate::render::span_secs(&s.timeline, self.from.as_ref(), self.to.as_ref())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct DuckResult {
+    /// Stretches of speech heard on the voice tracks (timecode, end exclusive).
+    pub speech: Vec<Finding>,
+    /// Music clips whose volume keyframes changed.
+    pub clips: Vec<ve_model::Id>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
+    #[serde(flatten)]
+    pub report: ve_ops::EditReport,
+}
+
+/// Hears speech on the voice tracks alone (every other audio track muted in
+/// a copy of the snapshot), then commits; an edit made meanwhile fails the
+/// commit with `stale_revision`.
+pub fn duck(s: &Session, snap: &Snapshot, a: DuckParams) -> Result<Committed<DuckResult>, RpcError> {
+    if a.base_rev != snap.revision {
+        return Err(RpcError::stale_revision(snap.revision));
+    }
+    if a.tracks.is_empty() {
+        return Err(RpcError::invalid_params("name the music track(s) to duck in `tracks`"));
+    }
+    let threshold = parse_db(&a.threshold)?;
+    let tl = &snap.timeline;
+    let rate = tl.output_rate();
+    let time = |field: &str, v: &str| -> Result<Q, RpcError> {
+        let t = parse_time(field, v, rate)?;
+        if t < Q::from_integer(0) {
+            return Err(RpcError::invalid_params(format!("{field} must be 0 or more")));
+        }
+        Ok(t)
+    };
+    let (attack, release, min_gap) = (time("attack", &a.attack)?, time("release", &a.release)?, time("min_gap", &a.min_gap)?);
+    if min_gap <= Q::from_integer(0) {
+        return Err(RpcError::invalid_params("min_gap must be positive"));
+    }
+    let find = |r: &String| ve_ops::tracks::find(tl, r).map_err(|e| RpcError::invalid_params(e.0));
+    let music: Vec<usize> = a.tracks.iter().map(find).collect::<Result<_, _>>()?;
+    let audio: Vec<usize> = tl
+        .tracks
+        .children
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| matches!(c, ve_model::Composable::Track(t) if t.kind == ve_model::otio::TrackKind::Audio))
+        .map(|(i, _)| i)
+        .collect();
+    let voice: Vec<usize> = if a.under.is_empty() {
+        audio.iter().copied().filter(|i| !music.contains(i)).collect()
+    } else {
+        a.under.iter().map(find).collect::<Result<_, _>>()?
+    };
+    if voice.is_empty() {
+        return Err(RpcError::invalid_params("no voice tracks to listen to; name them in `under`"));
+    }
+    if let Some(i) = voice.iter().find(|i| music.contains(i)) {
+        return Err(RpcError::invalid_params(format!("track {} is both music and voice", track_name(tl, *i))));
+    }
+    // The voice tracks alone.
+    let mut alone = tl.clone();
+    for &i in &audio {
+        if !voice.contains(&i)
+            && let ve_model::Composable::Track(t) = &mut alone.tracks.children[i]
+        {
+            t.enabled = false;
+        }
+    }
+    let sp = span(tl, a.from.as_ref(), a.to.as_ref())?;
+    let work = work_dir(snap);
+    let fx = ve_render::fx::Registry::for_project(Some(snap.root()));
+    let (quiet, warnings) = ve_analyze::silence(&alone, sp, threshold, min_gap, &work, &fx).map_err(render_error)?;
+    let mut speech: Vec<(Q, Q)> = Vec::new();
+    let mut at = sp.start;
+    for q in &quiet {
+        if q.start > at {
+            speech.push((at, q.start));
+        }
+        at = at.max(q.end);
+    }
+    if at < sp.end {
+        speech.push((at, sp.end));
+    }
+    let mut result = DuckResult {
+        speech: speech.iter().map(|&(a, b)| Finding { kind: "speech".into(), start: tc(a, rate), end: tc(b, rate), note: String::new() }).collect(),
+        clips: Vec::new(),
+        warnings,
+        report: ve_ops::edit::report_for(tl),
+    };
+    let op = ve_ops::edit::Duck { tracks: a.tracks.clone(), speech, depth_db: a.depth, attack, release, range: (sp.start, sp.end) };
+    s.with_project(|p| {
+        commit(p, a.mutation(), "edit.duck", |tl| {
+            let (next, report, clips) = ve_ops::edit::duck(tl, &op).map_err(|e| RpcError::invalid_params(e.0))?;
+            result.report = report;
+            result.clips = clips;
+            Ok((next, result))
+        })
+    })
+}
+
+fn track_name(tl: &ve_model::Timeline, i: usize) -> String {
+    match &tl.tracks.children[i] {
+        ve_model::Composable::Track(t) => t.name.clone(),
+        _ => i.to_string(),
+    }
+}

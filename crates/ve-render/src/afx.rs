@@ -182,11 +182,68 @@ fn value_at(p: &Param, values: &serde_json::Map<String, Value>, keys: &indexmap:
         .unwrap_or_else(|| p.default.clone())
 }
 
+/// The volume automation of a clip (`volume_keyframes`, dB added to its
+/// gain), as an `ffmpeg` effect with one animatable param so keyframes
+/// reach it like any effect's.
+pub fn gain_curve() -> &'static Fx {
+    static G: OnceLock<Fx> = OnceLock::new();
+    G.get_or_init(|| {
+        let m = serde_json::json!({
+            "id": "core.audio/volume_keyframes", "version": "1.0.0", "kind": "audio", "runtime": "ffmpeg",
+            "name": "Volume keyframes", "filter": "volume=volume={db}dB",
+            "params": {"type": "object", "properties": {"db": {"type": "number", "minimum": -100, "maximum": 30, "default": 0, "x-animatable": true}}}
+        });
+        Fx::new(serde_json::from_value(m).expect("manifest"), String::new(), crate::fx::Origin::Builtin, None).expect("volume keyframes effect")
+    })
+}
+
+/// `core.audio/fade`: gain from silence over `in` seconds after the clip's
+/// start and back to silence over `out` seconds before its end, per sample
+/// (quarter-sine, equal power). Its manifest's `filter` only declares the
+/// params; the times depend on the clip's edges, which a template cannot
+/// express. Piece time `t` is clip time `t + from`.
+fn fade_chain(fx: &Fx, values: &serde_json::Map<String, Value>, from: Q, clip: Q) -> String {
+    let get = |n: &str| {
+        let p = fx.params.iter().find(|p| p.name == n).expect("fade params");
+        p.clamp(values.get(n).and_then(Value::as_f64).or_else(|| p.default.as_f64()).unwrap_or(0.0))
+    };
+    let secs = |q: Q| *q.numer() as f64 / *q.denom() as f64;
+    let (fin, fout) = (get("in"), get("out"));
+    let (f, l) = (secs(from), secs(clip));
+    let mut g: Vec<String> = Vec::new();
+    if fin > 0.0 {
+        g.push(format!("sin(PI/2*clip((t+{f:.9})/{fin:.9},0,1))"));
+    }
+    if fout > 0.0 {
+        g.push(format!("sin(PI/2*clip(({l:.9}-t-{f:.9})/{fout:.9},0,1))"));
+    }
+    if g.is_empty() {
+        return "anull".into();
+    }
+    let g = g.join("*");
+    format!("aeval=exprs='val(0)*{g}|val(1)*{g}':c=same")
+}
+
+/// The built-in fade, measured from the clip's edges ([`fade_chain`]).
+pub const FADE: &str = ve_ops::lane::FADE;
+
 /// The filter chain for one use of `fx` on a clip: values at local time
 /// `from` (seconds since the clip starts), keyframes from there until
-/// `from + len` sent as commands. `name` makes the filter instances unique
-/// in the graph. Times in the chain count from 0 at `from`.
-pub fn chain(fx: &Fx, values: &serde_json::Map<String, Value>, keys: &indexmap::IndexMap<String, Vec<Keyframe>>, from: Q, len: Q, name: &str) -> String {
+/// `from + len` sent as commands. `clip` is the clip's length on the
+/// timeline. `name` makes the filter instances unique in the graph. Times in
+/// the chain count from 0 at `from`.
+pub fn chain(
+    fx: &Fx,
+    values: &serde_json::Map<String, Value>,
+    keys: &indexmap::IndexMap<String, Vec<Keyframe>>,
+    from: Q,
+    len: Q,
+    clip: Q,
+    name: &str,
+) -> String {
+    if fx.manifest.id == FADE {
+        return fade_chain(fx, values, from, clip);
+    }
     let t = parse(&fx.source).expect("audio effects are parsed when loaded");
     let param = |n: &str| fx.params.iter().find(|p| p.name == n);
     let mut filters: Vec<String> = Vec::new();
@@ -329,7 +386,7 @@ pub fn test(fx: &Fx) -> Result<(), FxError> {
         }
         values.insert(p.name.clone(), p.default.clone());
     }
-    let c = chain(fx, &values, &keys, Q::from_integer(0), Q::new(1, 2), "test");
+    let c = chain(fx, &values, &keys, Q::from_integer(0), Q::new(1, 2), Q::new(1, 2), "test");
     let out = Command::new(crate::ffmpeg::ffmpeg_path())
         .args(["-v", "error", "-hide_banner", "-f", "lavfi", "-i", "sine=f=440:r=48000:d=0.5", "-af"])
         .arg(format!("aformat=sample_fmts=fltp:channel_layouts=stereo,{c}"))

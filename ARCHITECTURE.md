@@ -306,7 +306,9 @@ Audio effects use the same manifest, registry, packs, `effect.*` methods and key
 
 **Validation** (`fx.define`, and the tests for built-ins): the template parses, every placeholder is a param, every filter is on the allow list, animatable params map to runtime options, and a test run of half a second of tone through the chain at the defaults (and with a command for each animatable param) succeeds and produces finite samples.
 
-**Built-ins** in `plugins/core/effects/` (compiled in, like the video ones): `core.audio/eq`, `core.audio/highpass`, `core.audio/compressor`, `core.audio/noise_reduction`, `core.audio/deesser`.
+**Built-ins** in `plugins/core/effects/` (compiled in, like the video ones): `core.audio/eq`, `core.audio/highpass`, `core.audio/compressor`, `core.audio/noise_reduction`, `core.audio/deesser`, `core.audio/fade`. The fade (decided Oct 28 2026) is an effect, not a clip field, with lengths measured from the clip's edges: its manifest only declares `in`/`out`, and `afx::chain` writes a per-sample `aeval` gain from the clip's length (templates cannot). A split sets the left part's `out` and the right part's `in` to 0.
+
+**Volume automation and ducking (Oct 28 2026).** `metadata.ve.clip.volume_keyframes` are dB added to `volume_db` (so `edit.normalize` composes with them), applied in the graph as an internal animatable `volume` effect (`afx::gain_curve`). `edit.duck` hears the voice tracks alone (other audio tracks disabled in a snapshot copy, `silencedetect`), then writes keyframes on the music clips (`ve_ops::edit::duck`), replacing theirs. Chosen over a live sidechain so the dips are visible, editable and an exact dB.
 
 **VST3 and CLAP are plugins, not core (decided Oct 28 2026; replaces the planned `ve-clap` crate).** A VST3 host and a CLAP host are each a process plugin that loads the user's installed plugins and offers them through the `process` runtime. Third-party audio plugins crash, hang and leak; in their own process a bad one takes down its host, not the daemon. No `unsafe` exception is needed in the engine, and a host plugin can open a VST's own window without the headless daemon having a UI. A VST's state is saved as a base64 blob param on the effect, so a project reopens with the same sound.
 
@@ -569,8 +571,8 @@ The method registry and JSON Schema generation start in Phase 1 even though the 
 **Alpha, in order (Oct 28 2026).** What has to be done before an alpha;
 each item's details are in its section below.
 
-1. Robust audio, the "wrong audio" part: sample-rate and drift test, fades
-   as items and volume keyframes, then ducking ("Robust audio").
+1. (done Oct 28 2026) Robust audio, the "wrong audio" part: sample-rate
+   and drift test, fades and volume keyframes, ducking ("Robust audio").
 2. `project.set_format` and match-on-import ("Match the project to the
    footage").
 3. Crash recovery and a daemon soak test ("Ready to ship").
@@ -746,14 +748,14 @@ Suggested order, not decided:
 - [x] **Channel layouts:** map and downmix mono, dual-mono (a lav on one
   side only), stereo, 5.1 and odd layouts predictably, with a per-clip
   channel choice (left only, right only, sum).
-- [ ] **Sample rates and drift:** mixed 44.1/48 kHz sources and VFR phone
+- [x] **Sample rates and drift** (Oct 28 2026: `ve-render/tests/audio_sync.rs`, a minute of 44.1 kHz clicks in a 48 kHz project, PCM exact to the sample and AAC within 1 ms, across a cut): mixed 44.1/48 kHz sources and VFR phone
   clips whose audio drifts from the picture. A test that checks sync at the
   end of a long clip, not only at the start.
-- [ ] **Keyframed volume and pan**, using the keyframe curves
+- [x] **Keyframed volume** (Oct 28 2026; pan still open), using the keyframe curves
   (`ve-model::curve`).
-- [ ] **Fades as first-class items**, not only the 20 ms cut crossfades and
+- [x] **Fades as first-class items** (Oct 28 2026, the `core.audio/fade` effect), not only the 20 ms cut crossfades and
   gap-edge fades.
-- [ ] **Ducking:** lower music under voice (sidechain on a chosen track, or
+- [x] **Ducking** (Oct 28 2026, `edit.duck` writing volume keyframes): lower music under voice (sidechain on a chosen track, or
   driven by speech ranges from the transcript or silence analysis).
 - [ ] **Sync by waveform:** line up a separate recorder track or a second
   camera with the main clip by matching audio. The matching can be a

@@ -1,0 +1,28 @@
+{
+  "id": "core.audio/fade",
+  "version": "1.0.0",
+  "kind": "audio",
+  "runtime": "ffmpeg",
+  "name": "Fade",
+  "description": "Fade the clip's sound in from silence at its start and out to silence at its end. Lengths are measured from the clip's edges, so trims, splits and speed changes keep the fades where they belong. Equal-power (quarter-sine) curve.",
+  "filter": "volume=volume={in},volume=volume={out}",
+  "params": {
+    "type": "object",
+    "properties": {
+      "in": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 60,
+        "default": 0,
+        "description": "Fade-in length from the clip's start, seconds. 0 for none."
+      },
+      "out": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 60,
+        "default": 0,
+        "description": "Fade-out length before the clip's end, seconds. 0 for none."
+      }
+    }
+  }
+}

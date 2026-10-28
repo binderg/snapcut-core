@@ -310,12 +310,17 @@ fn frame(ctx: &Ctx<'_>, p: &Plan, at: Q, detail: bool) -> Result<Frame> {
                 asset: ctx.assets.get(&seg.path).map(|(id, _)| id.clone()),
                 link: ctx.links.get(&seg.clip).cloned(),
                 source_time: seg.media_start + (at - seg.start) * seg.speed,
-                gain_db: seg.volume_db,
+                gain_db: seg.volume_db
+                    + if seg.volume_keys.is_empty() {
+                        0.0
+                    } else {
+                        crate::fx::interpolate(&seg.volume_keys, at - seg.clip_start).as_f64().unwrap_or(0.0)
+                    },
                 speed: seg.speed,
                 stream: seg.stream,
                 channels: seg.channels.clone(),
                 effects: if detail { effects_at(ctx, seg, at, Kind::Audio) } else { Vec::new() },
-                audible: seg.volume_db > SILENT_DB,
+                audible: seg.volume_db > SILENT_DB || !seg.volume_keys.is_empty(),
             });
         }
     }

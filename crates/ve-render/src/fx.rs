@@ -683,6 +683,7 @@ const AUDIO_BUILTINS: &[&str] = &[
     include_str!("../../../plugins/core/effects/audio-compressor/effect.json"),
     include_str!("../../../plugins/core/effects/audio-noise-reduction/effect.json"),
     include_str!("../../../plugins/core/effects/audio-deesser/effect.json"),
+    include_str!("../../../plugins/core/effects/audio-fade/effect.json"),
 ];
 
 /// The effects and transitions a project can use.
@@ -943,7 +944,7 @@ mod tests {
     #[test]
     fn builtins_load_and_validate() {
         let r = Registry::for_project(None);
-        assert_eq!(r.list.len(), 14);
+        assert_eq!(r.list.len(), 15);
         assert!(r.get("core.color/desaturate@1").is_some());
         assert!(r.get("core.color/desaturate@2").is_none());
         assert!(r.require("core.transition/wipe", Kind::Effect).is_err());
@@ -959,7 +960,7 @@ mod tests {
         let root = std::env::temp_dir().join(format!("ve-fx-reuse-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("effects")).unwrap();
-        assert_eq!(Registry::for_project(Some(&root)).list.len(), 14);
+        assert_eq!(Registry::for_project(Some(&root)).list.len(), 15);
         // A new effect folder shows up once the recheck window has passed, or at once after `forget`.
         let dir = root.join("effects").join("tint2");
         std::fs::create_dir_all(&dir).unwrap();

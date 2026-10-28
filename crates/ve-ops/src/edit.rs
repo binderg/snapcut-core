@@ -483,7 +483,7 @@ pub fn insert(tl: &Timeline, p: &Insert) -> Result<(Timeline, EditReport)> {
         let id = d.ids.fresh("clip");
         let range = TimeRange::new(at_rate(src_in, mrate), at_rate(dur, mrate));
         let mut clip = Clip::new(name.clone(), MediaReference::External(ExternalReference::new(asset.url.clone(), avail)), range);
-        let audio = stream.filter(|&k| k > 0).map(|stream| ClipAudio { stream, ..ClipAudio::default() });
+        let audio = stream.filter(|&k| k > 0).map(|stream| Box::new(ClipAudio { stream, ..ClipAudio::default() }));
         clip.metadata.ve.clip = Some(ClipMeta { link: link.clone(), audio, ..ClipMeta::new(id.clone()) });
         let mut ids = std::mem::replace(&mut d.ids, Ids::new(HashSet::new()));
         let l = d.lane(lane);
@@ -1327,16 +1327,27 @@ fn apply_speed(c: &mut Clip, speed: Q, id: &Id) {
 #[derive(Debug, Clone)]
 pub struct SetVolume {
     pub clip: Id,
-    /// Gain in dB, -100 to +30. 0 is unity.
-    pub db: f64,
+    /// Gain in dB, -100 to +30. 0 is unity. `None` keeps it.
+    pub db: Option<f64>,
+    /// Volume automation (dB added to the gain, times from the clip's
+    /// start), replacing what the clip had; empty removes it. `None` keeps it.
+    pub keyframes: Option<Vec<ve_model::meta::Keyframe>>,
     pub linked: bool,
 }
 
 /// Volume applies to the audio clips of the group (a video clip's linked audio).
 pub fn set_volume(tl: &Timeline, p: &SetVolume) -> Result<(Timeline, EditReport)> {
     let mut d = Doc::new(tl)?;
-    if !p.db.is_finite() || !(-100.0..=30.0).contains(&p.db) {
+    if p.db.is_none() && p.keyframes.is_none() {
+        return Err(EditError::new("nothing to change: give db or keyframes"));
+    }
+    if p.db.is_some_and(|db| !db.is_finite() || !(-100.0..=30.0).contains(&db)) {
         return Err(EditError::new("volume must be between -100 and +30 dB"));
+    }
+    for k in p.keyframes.iter().flatten() {
+        if !k.v.as_f64().is_some_and(|v| v.is_finite() && (-100.0..=30.0).contains(&v)) {
+            return Err(EditError::new(format!("volume keyframe values are dB from -100 to +30, not {}", k.v)));
+        }
     }
     let mut any = false;
     for (lane, id) in d.group(&p.clip, p.linked)? {
@@ -1345,7 +1356,13 @@ pub fn set_volume(tl: &Timeline, p: &SetVolume) -> Result<(Timeline, EditReport)
         }
         let (_, j) = d.locate(&id)?;
         let c = d.lane(lane).items[j].clip_mut().expect("located a clip");
-        c.metadata.ve.clip.get_or_insert_with(|| ClipMeta::new(id.clone())).volume_db = p.db;
+        let m = c.metadata.ve.clip.get_or_insert_with(|| ClipMeta::new(id.clone()));
+        if let Some(db) = p.db {
+            m.volume_db = db;
+        }
+        if let Some(keys) = &p.keyframes {
+            m.volume_keyframes = keys.clone();
+        }
         d.mark_changed(&id);
         any = true;
     }
@@ -1401,7 +1418,7 @@ pub fn set_audio(tl: &Timeline, p: &SetAudio) -> Result<(Timeline, EditReport)> 
         .find(|a| a.url == url)
         .and_then(|a| a.media.clone())
         .ok_or_else(|| EditError::new(format!("{target}: its media is not in the asset table")))?;
-    let mut audio = c.metadata.ve.clip.as_ref().and_then(|m| m.audio.clone()).unwrap_or_default();
+    let mut audio = c.metadata.ve.clip.as_ref().and_then(|m| m.audio.as_deref().cloned()).unwrap_or_default();
     if let Some(k) = p.stream {
         audio.stream = k;
     }
@@ -1413,7 +1430,7 @@ pub fn set_audio(tl: &Timeline, p: &SetAudio) -> Result<(Timeline, EditReport)> 
         EditError::new(format!("the media has {count} audio stream(s) (numbered from 0); there is no stream {}", audio.stream))
     })?;
     audio.channels.check(stream.channels).map_err(|e| EditError::new(format!("stream {}: {e}", audio.stream)))?;
-    c.metadata.ve.clip.get_or_insert_with(|| ClipMeta::new(target.clone())).audio = (!audio.is_default()).then_some(audio);
+    c.metadata.ve.clip.get_or_insert_with(|| ClipMeta::new(target.clone())).audio = (!audio.is_default()).then(|| Box::new(audio));
     d.mark_changed(&target);
     d.finish()
 }
@@ -1468,6 +1485,108 @@ pub fn add_gain(tl: &Timeline, range: Option<(Q, Q)>, db: f64) -> Result<(Timeli
     }
     if touched.is_empty() {
         return Err(EditError::new("no audio clips there to change the volume of"));
+    }
+    let (next, report) = d.finish()?;
+    Ok((next, report, touched))
+}
+
+/// [`duck`]: lower music under speech.
+#[derive(Debug, Clone)]
+pub struct Duck {
+    /// Audio tracks to lower (names or IDs).
+    pub tracks: Vec<String>,
+    /// Timeline ranges where someone speaks, `[start, end)`.
+    pub speech: Vec<(Q, Q)>,
+    /// How far down, dB (negative).
+    pub depth_db: f64,
+    /// Ramp down, ending as speech starts.
+    pub attack: Q,
+    /// Ramp back up, starting as speech ends.
+    pub release: Q,
+    /// Only clips overlapping this range change (whole clips).
+    pub range: (Q, Q),
+}
+
+/// Write volume keyframes on the clips of `tracks` so they sit `depth_db`
+/// lower while someone speaks, ramping down over `attack` before each
+/// stretch of speech and back up over `release` after it. Stretches closer
+/// than a ramp's length stay down between them. Replaces the volume
+/// keyframes of every clip it touches. Returns the clips changed.
+pub fn duck(tl: &Timeline, p: &Duck) -> Result<(Timeline, EditReport, Vec<Id>)> {
+    if !p.depth_db.is_finite() || !(-60.0..0.0).contains(&p.depth_db) {
+        return Err(EditError::new("depth must be below 0 dB and no lower than -60 dB"));
+    }
+    let zero = Q::from_integer(0);
+    if p.attack < zero || p.release < zero {
+        return Err(EditError::new("attack and release must be 0 or more"));
+    }
+    let mut d = Doc::new(tl)?;
+    let lanes: Vec<usize> = p.tracks.iter().map(|r| d.find_track(r)).collect::<Result<_>>()?;
+    if let Some(&l) = lanes.iter().find(|&&l| d.kind(l) != TrackKind::Audio) {
+        return Err(EditError::new(format!("track {} is not an audio track", d.track_name(l))));
+    }
+    // Speech stretches, merged where the ramps between them would meet.
+    let mut speech: Vec<(Q, Q)> = p.speech.iter().copied().filter(|(a, b)| b > a).collect();
+    speech.sort_by_key(|s| s.0);
+    let mut merged: Vec<(Q, Q)> = Vec::new();
+    for (a, b) in speech {
+        match merged.last_mut() {
+            Some(last) if a - p.attack <= last.1 + p.release => last.1 = last.1.max(b),
+            _ => merged.push((a, b)),
+        }
+    }
+    // The curve, as (time, dB) corners on the timeline.
+    let depth = (p.depth_db * 10.0).round() / 10.0;
+    let mut corners: Vec<(Q, f64)> = Vec::new();
+    for &(a, b) in &merged {
+        corners.extend([(a - p.attack, 0.0), (a, depth), (b, depth), (b + p.release, 0.0)]);
+    }
+    let level = |t: Q| -> f64 {
+        match corners.iter().position(|c| c.0 > t) {
+            None => corners.last().map_or(0.0, |c| c.1),
+            Some(0) => 0.0,
+            Some(i) => {
+                let (t0, v0) = corners[i - 1];
+                let (t1, v1) = corners[i];
+                if t1 == t0 {
+                    return v1;
+                }
+                let f = (t - t0) / (t1 - t0);
+                v0 + (v1 - v0) * (*f.numer() as f64 / *f.denom() as f64)
+            }
+        }
+    };
+    let rate = d.rate;
+    let mut touched = Vec::new();
+    for &l in &lanes {
+        let clips: Vec<(Id, Q, Q)> = d
+            .lane_ref(l)
+            .items
+            .iter()
+            .filter(|it| it.start < p.range.1 && it.end() > p.range.0)
+            .filter_map(|it| it.clip().and_then(clip_id).map(|id| (id.clone(), it.start, it.end())))
+            .collect();
+        for (id, start, end) in clips {
+            let mut points: Vec<Q> = vec![start];
+            points.extend(corners.iter().map(|c| c.0).filter(|&t| t > start && t < end));
+            points.push(end);
+            points.dedup();
+            let values: Vec<f64> = points.iter().map(|&t| (level(t) * 10.0).round() / 10.0).collect();
+            let keys: Vec<ve_model::meta::Keyframe> = if values.iter().all(|&v| v == 0.0) {
+                Vec::new()
+            } else {
+                points.iter().zip(&values).map(|(&t, &v)| crate::effects::keyframe(t - start, json!(v), None, rate)).collect()
+            };
+            let Some(j) = d.lane_ref(l).find_clip(&id) else { continue };
+            let c = d.lane(l).items[j].clip_mut().expect("found a clip");
+            let m = c.metadata.ve.clip.get_or_insert_with(|| ClipMeta::new(id.clone()));
+            if m.volume_keyframes == keys {
+                continue;
+            }
+            m.volume_keyframes = keys;
+            d.mark_changed(&id);
+            touched.push(id);
+        }
     }
     let (next, report) = d.finish()?;
     Ok((next, report, touched))

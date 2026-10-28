@@ -137,6 +137,10 @@ pub fn seconds_text(q: Q) -> String {
     format!("{}.{:03}s", ms / 1000, (ms % 1000).abs())
 }
 
+/// The built-in audio fade, whose lengths are
+/// measured from the clip's outer edges.
+pub const FADE: &str = "core.audio/fade";
+
 /// Plain gaps (no name, markers, metadata or effects) can be merged and dropped freely.
 fn is_plain_gap(g: &Gap) -> bool {
     g.name.is_empty() && g.markers.is_empty() && g.metadata.is_empty() && g.effects.is_empty() && g.enabled && g.color.is_none()
@@ -234,6 +238,10 @@ impl Lane {
                 let (keep, give) = partition_markers(std::mem::take(&mut l.markers), media_split);
                 l.markers = keep;
                 r.markers = give;
+                for k in r.metadata.ve.clip.iter_mut().flat_map(|m| m.volume_keyframes.iter_mut()) {
+                    let s = k.t.seconds() - delta;
+                    set_seconds(&mut k.t, s);
+                }
                 let transform_keys = r.metadata.ve.clip.as_mut().and_then(|m| m.transform.as_mut()).map(|t| &mut t.keyframes);
                 for keys in transform_keys.into_iter().flat_map(|k| k.values_mut()) {
                     for k in keys.iter_mut() {
@@ -248,6 +256,14 @@ impl Lane {
                             set_seconds(&mut k.t, s);
                         }
                     }
+                }
+                // Fades belong to the clip's outer edges: the cut gets neither.
+                let fade = |e: &ve_model::meta::EffectInstance| e.effect.split('@').next() == Some(FADE);
+                for e in l.metadata.ve.effects.iter_mut().filter(|e| fade(e)) {
+                    e.params.insert("out".into(), 0.into());
+                }
+                for e in r.metadata.ve.effects.iter_mut().filter(|e| fade(e)) {
+                    e.params.insert("in".into(), 0.into());
                 }
                 if let Some(m) = r.metadata.ve.clip.as_mut() {
                     m.id = ids.fresh("clip");

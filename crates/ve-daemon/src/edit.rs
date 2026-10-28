@@ -266,19 +266,33 @@ pub fn set_speed(p: &mut OpenProject, a: SetSpeedParams) -> Result<Committed<Edi
 }
 
 mutation_params! {
-    /// `edit.set_volume`: gain for a clip's audio (a video clip's linked audio).
+    /// `edit.set_volume`: gain for a clip's audio (a video clip's linked audio), and volume
+    /// automation over time.
     pub struct SetVolumeParams {
         pub clip: Id,
-        /// Gain in dB, -100 to +30; 0 is unchanged.
-        pub db: f64,
+        /// Gain in dB, -100 to +30; 0 is unchanged. Default: keep it.
+        #[serde(default)]
+        pub db: Option<f64>,
+        /// Volume automation: dB added to the gain, keyframes timed from the clip's start
+        /// (`[{"at": "0s", "value": 0}, {"at": "0.3s", "value": -12}]`), replacing what the clip
+        /// had; `[]` removes it. Default: keep it.
+        #[serde(default)]
+        pub keyframes: Option<Vec<crate::fx::KeyframeArg>>,
         #[serde(default = "yes")]
         pub linked: bool,
     }
 }
 
 pub fn set_volume(p: &mut OpenProject, a: SetVolumeParams) -> Result<Committed<EditReport>, RpcError> {
+    let keyframes = match &a.keyframes {
+        Some(k) => {
+            let map: std::collections::BTreeMap<String, Vec<crate::fx::KeyframeArg>> = [("volume".to_owned(), k.clone())].into_iter().collect();
+            Some(crate::fx::keyframes(p, &map)?.shift_remove("volume").unwrap_or_default())
+        }
+        None => None,
+    };
     commit(p, a.mutation(), "edit.set_volume", |tl| {
-        edit::set_volume(tl, &SetVolume { clip: a.clip.clone(), db: a.db, linked: a.linked }).map_err(edit_err)
+        edit::set_volume(tl, &SetVolume { clip: a.clip.clone(), db: a.db, keyframes: keyframes.clone(), linked: a.linked }).map_err(edit_err)
     })
 }
 

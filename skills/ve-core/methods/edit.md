@@ -157,6 +157,47 @@ speed`). Writes OTIO's `LinearTimeWarp` too. Audio is pitch-corrected
 `{"clip": id, "db": -6, "linked": true}`. Sets (not adds) the gain of the
 clip's audio, -100 to +30 dB. On a video clip it applies to its linked audio.
 
+`keyframes` adds volume automation: dB **added to** the gain over time,
+keyframes timed from the clip's start, replacing what the clip had (`[]`
+removes it). Give `db`, `keyframes` or both.
+
+```json
+{"clip": "clip_7f3b", "keyframes": [{"at": "4s", "value": 0}, {"at": "5s", "value": -12, "ease": "ease-in-out"}]}
+```
+
+Because keyframes add to the gain, `edit.normalize` still works on top of
+them. They are stored as `metadata.ve.clip.volume_keyframes`, move with the
+right part when a clip is split, and `render.layers` reports the gain at the
+frame with them included. For fading in and out at a clip's edges, use the
+`core.audio/fade` effect instead ([effects.md](effects.md#audio-effects)):
+it follows trims, which keyframes timed from the start do not.
+
+## `edit.duck` (job)
+
+Lower music under speech. Listens to the voice tracks on their own, finds
+where someone speaks, and writes volume keyframes on the music clips: down
+`depth` dB while speaking, ramping over `attack` before and `release` after.
+
+| Param | Default | |
+| --- | --- | --- |
+| `tracks` | required | Music tracks to lower (names or IDs) |
+| `under` | every other audio track | Voice tracks to listen to |
+| `depth` | -12 | dB down while someone speaks (-60 to below 0) |
+| `threshold` | `-35dB` | Level that counts as speech; raise it (`-30dB`) when the voice track has room noise |
+| `attack`, `release` | `0.2s`, `0.5s` | Ramp down before speech, back up after |
+| `min_gap` | `0.5s` | Pauses shorter than this stay ducked |
+| `from`, `to` | whole timeline | Only clips overlapping this range change (whole clips) |
+| + `base_rev`, `dry_run`, `actor`, `background` | | |
+
+```json
+{"speech": [{"kind": "speech", "start": "00:00:00:00", "end": "00:00:01:00", "note": ""}],
+ "clips": ["clip_c0de"], "revision": 6, "...": "the usual edit report"}
+```
+
+It replaces the volume keyframes of every music clip it touches, so run it
+again after big edits (or edit the keyframes with `edit.set_volume`). One
+undo step.
+
 ## `edit.set_audio`
 
 Which audio stream of its file an audio clip plays, and how that stream's

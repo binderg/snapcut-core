@@ -119,3 +119,59 @@ async fn measure_a_known_tone() {
     near(&capped["expected_true_peak_dbtp"], -6.0, 0.1);
     assert!(capped["warnings"][0].as_str().unwrap().contains("limiter"), "{capped}");
 }
+
+fn wav(path: &Path, expr: &str) {
+    let st = Command::new("ffmpeg")
+        .args(["-v", "error", "-y", "-f", "lavfi", "-i"])
+        .arg(format!("aevalsrc={expr}|{expr}:s=48000:d=4"))
+        .args(["-c:a", "pcm_s16le"])
+        .arg(path)
+        .status()
+        .expect("ffmpeg on PATH");
+    assert!(st.success());
+}
+
+/// Speech on A1 from 0 to 1 s and 3 to 4 s; music on A2 the whole time.
+/// `edit.duck` lowers A2 under the speech and leaves the pause alone.
+#[tokio::test]
+async fn duck_lowers_music_under_speech() {
+    let dir = scratch("duck");
+    wav(&dir.join("voice.wav"), r"0.2*sin(2*PI*300*t)*(lt(t\,1)+gte(t\,3))");
+    wav(&dir.join("music.wav"), "0.1*sin(2*PI*880*t)");
+    let r = ve_daemon::build_registry();
+    let root = dir.join("edit");
+    ok(&r, "project.init", json!({"path": root, "fps": "25", "width": 160, "height": 120})).await;
+    let assets = ok(&r, "media.import", json!({"paths": [dir.join("voice.wav"), dir.join("music.wav")], "base_rev": 0})).await;
+    let (voice, music) = (assets["assets"][0]["id"].clone(), assets["assets"][1]["id"].clone());
+    ok(&r, "edit.insert", json!({"asset": voice, "base_rev": 1})).await;
+    ok(&r, "track.add", json!({"kind": "audio", "base_rev": 2})).await;
+    ok(&r, "edit.insert", json!({"asset": music, "audio_track": "A2", "at": "0s", "base_rev": 3})).await;
+
+    let out = ok(&r, "edit.duck", json!({"tracks": ["A2"], "base_rev": 4})).await;
+    let speech: Vec<(&str, &str)> = out["speech"].as_array().unwrap().iter().map(|s| (s["start"].as_str().unwrap(), s["end"].as_str().unwrap())).collect();
+    assert_eq!(speech.len(), 2, "{out}");
+    assert_eq!(out["clips"].as_array().unwrap().len(), 1);
+
+    let gain = |at: &'static str| {
+        let r = r.clone();
+        async move {
+            let l = ok(&r, "render.layers", json!({"at": at})).await;
+            let a2 = l["audio"].as_array().unwrap().iter().find(|a| a["track"] == "A2").cloned().unwrap();
+            f(&a2["gain_db"])
+        }
+    };
+    assert!((gain("0.5s").await - -12.0).abs() < 0.01, "ducked under the first words");
+    assert!(gain("2s").await.abs() < 0.01, "back up in the pause");
+    assert!((gain("3.5s").await - -12.0).abs() < 0.01, "ducked again");
+
+    // And the mix hears it: music alone in the pause is louder than under the words would allow.
+    let pause = ok(&r, "measure.levels", json!({"from": "1.8s", "to": "2.2s"})).await;
+    let talk = ok(&r, "measure.levels", json!({"from": "0.4s", "to": "0.6s"})).await;
+    assert!(f(&pause["channels"][0]["rms_db"]) < f(&talk["channels"][0]["rms_db"]), "the voice still dominates while talking");
+
+    // A deeper duck replaces the keyframes; undo puts them back.
+    ok(&r, "edit.duck", json!({"tracks": ["A2"], "depth": -20, "base_rev": 5})).await;
+    assert!((gain("0.5s").await - -20.0).abs() < 0.01);
+    ok(&r, "history.undo", json!({"base_rev": 6})).await;
+    assert!((gain("0.5s").await - -12.0).abs() < 0.01);
+}

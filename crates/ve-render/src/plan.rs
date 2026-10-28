@@ -53,6 +53,8 @@ pub struct Segment {
     pub media_start: Q,
     pub speed: Q,
     pub volume_db: f64,
+    /// Volume automation: dB added to `volume_db`, clip-relative keyframes.
+    pub volume_keys: Vec<ve_model::meta::Keyframe>,
     /// Audio stream of the file (`a:N`). 0 for video segments.
     pub stream: u32,
     /// How the stream's channels reach stereo: `mono`, `left`, `[0, 2]`, `auto`
@@ -323,6 +325,7 @@ fn segment(
             media_start: src.start_time.seconds() + (s - start),
             speed: Q::from_integer(1),
             volume_db: 0.0,
+            volume_keys: Vec::new(),
             stream: 0,
             channels: Channels::default(),
             source_channels: (2, true),
@@ -355,7 +358,7 @@ fn segment(
         warnings.push(format!("{id} is on video track {} but its media has no picture", track.name));
         return Ok(None);
     }
-    let pick = clip.metadata.ve.clip.as_ref().and_then(|m| m.audio.clone()).unwrap_or_default();
+    let pick = clip.metadata.ve.clip.as_ref().and_then(|m| m.audio.as_deref().cloned()).unwrap_or_default();
     let mut source_channels = (2, true);
     if track.kind == TrackKind::Audio
         && let Some(m) = asset
@@ -387,6 +390,7 @@ fn segment(
         media_start: src.start_time.seconds() + (s - start) * speed,
         speed,
         volume_db: clip.metadata.ve.clip.as_ref().map_or(0.0, |m| m.volume_db),
+        volume_keys: clip.metadata.ve.clip.as_ref().map(|m| m.volume_keyframes.clone()).unwrap_or_default(),
         stream: pick.stream,
         channels: pick.channels,
         source_channels,

@@ -416,6 +416,10 @@ pub struct ClipMeta {
     pub speed: Q,
     #[serde(default)]
     pub volume_db: f64,
+    /// Volume automation: dB added to `volume_db` over time, keyframes timed
+    /// from the clip's start (ducking writes these). Empty means none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub volume_keyframes: Vec<Keyframe>,
     /// Clips that share a link ID (a video clip and its audio) are edited
     /// together: split, trim, move, speed and delete apply to the whole group
     /// unless a call asks for one clip only (that is how J/L cuts are made).
@@ -427,12 +431,12 @@ pub struct ClipMeta {
     pub transform: Option<Box<Transform>>,
     /// Which audio stream and channels the clip plays. Absent means stream 0, `auto`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub audio: Option<ClipAudio>,
+    pub audio: Option<Box<ClipAudio>>,
 }
 
 impl ClipMeta {
     pub fn new(id: Id) -> Self {
-        Self { id, speed: unit_speed(), volume_db: 0.0, link: None, transform: None, audio: None }
+        Self { id, speed: unit_speed(), volume_db: 0.0, volume_keyframes: Vec::new(), link: None, transform: None, audio: None }
     }
 }
 
