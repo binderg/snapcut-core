@@ -442,7 +442,9 @@ impl Graph {
         let mut i = 0;
         while i < pieces.len() {
             let mut j = i + 1;
-            while j < pieces.len() && pieces[j].seg.path == pieces[i].seg.path && media[j].0 >= media[j - 1].1 {
+            // One input feeds a run of pieces that read the same stream forward with the same channel mapping.
+            let same = |a: &Segment, b: &Segment| a.path == b.path && a.stream == b.stream && a.channels == b.channels;
+            while j < pieces.len() && same(pieces[j].seg, pieces[i].seg) && media[j].0 >= media[j - 1].1 {
                 j += 1;
             }
             // Matroska/WebM store timestamps in whole milliseconds, so a seek
@@ -459,8 +461,10 @@ impl Graph {
             let outs: Vec<String> = (0..n).map(|_| self.label("as")).collect();
             let mut head = format!(
                 // first_pts=0 pads a stream that starts late, so counted samples match media time.
-                "[{input}:a:0]aresample={sr}:async=1:first_pts=0,aformat=sample_fmts=fltp:channel_layouts=stereo,asetpts=N/SR/TB",
-                sr = c.sample_rate
+                "[{input}:a:{stream}]aresample={sr}:async=1:first_pts=0,{map},aformat=sample_fmts=fltp:channel_layouts=stereo,asetpts=N/SR/TB",
+                sr = c.sample_rate,
+                stream = pieces[i].seg.stream,
+                map = crate::plan::channel_filter(&pieces[i].seg.channels, pieces[i].seg.source_channels),
             );
             if n > 1 {
                 let _ = write!(head, ",asplit={n}");

@@ -5,6 +5,11 @@
       "type": "string",
       "description": "The asset to transcribe (its whole file)"
     },
+    "stream": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Which audio stream (from the asset's audio_streams). Default 0, the first"
+    },
     "language": {
       "type": "string",
       "description": "Language code (en, es, he, ...). Default: detect it"

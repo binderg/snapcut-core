@@ -63,6 +63,7 @@ fn timeline(work: &Path) -> (Timeline, Id) {
         duration: None,
         video: false,
         audio: true,
+        streams: None,
         overwrite: false,
     };
     let tl = edit::insert(&tl, &ins).unwrap().0;

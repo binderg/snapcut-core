@@ -8,7 +8,7 @@ Every `measure.*` method takes one of:
 
 | Params | Measures |
 | --- | --- |
-| `asset: "asset_..."` | That asset's file, whole, as it is on disk. Cached (see below) |
+| `asset: "asset_..."` | That asset's file, whole, as it is on disk, with its own channels (no downmix). Cached (see below). Add `stream` for an audio stream other than the first |
 | `from`, `to` (or nothing) | The timeline mix over that range: what plays after cuts, speed and volume, all tracks mixed |
 
 Sending `asset` together with `from`/`to` is an error. Times in results
@@ -22,7 +22,11 @@ where there was nothing to measure (silence).
 "series": {"step": "00:00:01:00", "lufs": [-14.0, -14.2, null, -13.8]}
 ```
 
-Every result has `source` (`{asset?, from, to}`), `cached` and `warnings`.
+Every result has `source` (`{asset?, stream?, from, to}`), `cached` and `warnings`.
+
+`measure.levels` on one stream shows which channels carry sound: a channel
+far below the others (or at the noise floor) is an unused input, and
+`edit.set_audio` with `channels` picks the ones that matter.
 
 **Cache.** Asset results are stored in `<OS cache>/ve/measure/<file hash>/`,
 keyed by method and settings, so the same file is measured once however many

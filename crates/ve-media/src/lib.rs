@@ -14,7 +14,7 @@ use std::process::Command;
 
 use serde::Deserialize;
 use serde_json::Value;
-use ve_model::meta::{Alpha, AudioInfo, ColorInfo, MediaInfo, VideoInfo};
+use ve_model::meta::{Alpha, AudioInfo, AudioStream, ColorInfo, MediaInfo, VideoInfo};
 use ve_model::time::Q;
 use ve_model::{Rate, RationalTime};
 
@@ -195,6 +195,7 @@ struct FfStream {
     nb_frames: Option<String>,
     sample_rate: Option<String>,
     channels: Option<u32>,
+    channel_layout: Option<String>,
     pix_fmt: Option<String>,
     bits_per_raw_sample: Option<String>,
     color_range: Option<String>,
@@ -217,12 +218,16 @@ struct SideData {
 #[derive(Deserialize, Default)]
 struct Tags {
     rotate: Option<String>,
+    language: Option<String>,
+    title: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
 struct Disposition {
     #[serde(default)]
     attached_pic: u8,
+    #[serde(default)]
+    default: u8,
 }
 
 /// Compact summary of ffprobe JSON. `None` when there is no usable stream.
@@ -232,6 +237,23 @@ pub fn summarize(ffprobe: &Value) -> Option<MediaInfo> {
     // Cover art in audio files shows up as a one-frame "video" stream.
     let v = p.streams.iter().find(|s| kind(s, "video") && s.disposition.attached_pic == 0);
     let a = p.streams.iter().find(|s| kind(s, "audio"));
+    let audio_streams: Vec<AudioStream> = p
+        .streams
+        .iter()
+        .filter(|s| kind(s, "audio"))
+        .enumerate()
+        // Every audio stream keeps its place, so `index` matches ffmpeg's `a:N`.
+        .map(|(i, s)| AudioStream {
+            index: i as u32,
+            codec: s.codec_name.clone(),
+            sample_rate: s.sample_rate.as_deref().and_then(|r| r.parse().ok()).unwrap_or(0),
+            channels: s.channels.unwrap_or(0),
+            layout: s.channel_layout.clone().filter(|l| !l.is_empty() && l != "unknown"),
+            language: s.tags.language.clone().filter(|l| !l.is_empty() && l != "und"),
+            title: s.tags.title.clone().filter(|t| !t.is_empty()),
+            default: s.disposition.default != 0,
+        })
+        .collect();
 
     let still = v.is_some_and(|s| is_still(&p.format, s));
     let video = v.and_then(|s| {
@@ -274,6 +296,7 @@ pub fn summarize(ffprobe: &Value) -> Option<MediaInfo> {
         duration: RationalTime { value: seconds * rate.as_ratio(), rate },
         video,
         audio,
+        audio_streams,
         size_bytes: p.format.size.as_deref().and_then(|s| s.parse().ok()).unwrap_or(0),
     })
 }

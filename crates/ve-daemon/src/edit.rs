@@ -7,11 +7,11 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ve_history::{OpenGroup, StepSummary};
-use ve_model::meta::MarkerSource;
+use ve_model::meta::{Channels, MarkerSource};
 use ve_model::otio::TrackKind;
 use ve_model::{Id, Timeline};
 use ve_ops::EditReport;
-use ve_ops::edit::{self, Delete, Insert, Move, RippleDelete, SetSpeed, SetVolume, Split, Trim};
+use ve_ops::edit::{self, Delete, Insert, Move, RippleDelete, SetAudio, SetSpeed, SetVolume, Split, Trim};
 use ve_ops::markers::{self, NewMarker};
 use ve_ops::tracks::{self, TrackPlace, TrackReport};
 use ve_ops::transform::{self, TransformChange, TransformReport};
@@ -66,6 +66,11 @@ mutation_params! {
         /// Include the sound (default true).
         #[serde(default = "yes")]
         pub audio: bool,
+        /// Audio streams to bring in (numbers from the asset's `audio_streams`). Default: every
+        /// stream, each on its own audio track (the first on the audio target, the rest on the
+        /// audio tracks after it, added if missing), all linked to the picture.
+        #[serde(default)]
+        pub streams: Option<Vec<u32>>,
         /// Overwrite what is at the position instead of pushing it later.
         #[serde(default)]
         pub overwrite: bool,
@@ -94,6 +99,7 @@ pub fn insert(p: &mut OpenProject, a: InsertParams) -> Result<Committed<EditRepo
             duration: media("duration", a.duration.as_ref())?,
             video: a.video,
             audio: a.audio,
+            streams: a.streams.clone(),
             overwrite: a.overwrite,
         };
         edit::insert(tl, &op).map_err(edit_err)
@@ -273,6 +279,28 @@ mutation_params! {
 pub fn set_volume(p: &mut OpenProject, a: SetVolumeParams) -> Result<Committed<EditReport>, RpcError> {
     commit(p, a.mutation(), "edit.set_volume", |tl| {
         edit::set_volume(tl, &SetVolume { clip: a.clip.clone(), db: a.db, linked: a.linked }).map_err(edit_err)
+    })
+}
+
+mutation_params! {
+    /// `edit.set_audio`: which audio stream an audio clip plays and how its channels reach the
+    /// stereo mix. A video clip stands for its linked audio clip when it has exactly one.
+    pub struct SetAudioParams {
+        pub clip: Id,
+        /// Audio stream number (from the asset's `audio_streams`). Default: unchanged.
+        #[serde(default)]
+        pub stream: Option<u32>,
+        /// `auto` (standard downmix; first two channels of unknown layouts), `left` or `right`
+        /// (that channel on both sides), `mono` (all channels averaged), or `[a, b]`: source
+        /// channels (from 0) for left and right (`[a]` feeds both). Default: unchanged.
+        #[serde(default)]
+        pub channels: Option<Channels>,
+    }
+}
+
+pub fn set_audio(p: &mut OpenProject, a: SetAudioParams) -> Result<Committed<EditReport>, RpcError> {
+    commit(p, a.mutation(), "edit.set_audio", |tl| {
+        edit::set_audio(tl, &SetAudio { clip: a.clip.clone(), stream: a.stream, channels: a.channels.clone() }).map_err(edit_err)
     })
 }
 

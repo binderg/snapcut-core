@@ -308,6 +308,12 @@
             "string"
           ]
         },
+        "streams": {
+          "required": false,
+          "types": [
+            "array"
+          ]
+        },
         "track": {
           "required": false,
           "types": [
@@ -519,6 +525,59 @@
           "required": false,
           "types": [
             "array"
+          ]
+        }
+      },
+      "result": [
+        "changed",
+        "created",
+        "dry_run",
+        "duration",
+        "group",
+        "modified",
+        "patch",
+        "removed",
+        "revision"
+      ]
+    },
+    "edit.set_audio": {
+      "deprecated": false,
+      "params": {
+        "actor": {
+          "required": false,
+          "types": [
+            "object"
+          ]
+        },
+        "base_rev": {
+          "required": true,
+          "types": [
+            "integer"
+          ]
+        },
+        "channels": {
+          "required": false,
+          "types": [
+            "array",
+            "string"
+          ]
+        },
+        "clip": {
+          "required": true,
+          "types": [
+            "string"
+          ]
+        },
+        "dry_run": {
+          "required": false,
+          "types": [
+            "boolean"
+          ]
+        },
+        "stream": {
+          "required": false,
+          "types": [
+            "integer"
           ]
         }
       },
@@ -1484,6 +1543,12 @@
             "string"
           ]
         },
+        "stream": {
+          "required": false,
+          "types": [
+            "integer"
+          ]
+        },
         "to": {
           "required": false,
           "types": [
@@ -1532,6 +1597,12 @@
             "string"
           ]
         },
+        "stream": {
+          "required": false,
+          "types": [
+            "integer"
+          ]
+        },
         "to": {
           "required": false,
           "types": [
@@ -1576,6 +1647,12 @@
           "required": false,
           "types": [
             "string"
+          ]
+        },
+        "stream": {
+          "required": false,
+          "types": [
+            "integer"
           ]
         },
         "to": {
@@ -1624,6 +1701,12 @@
           "required": false,
           "types": [
             "string"
+          ]
+        },
+        "stream": {
+          "required": false,
+          "types": [
+            "integer"
           ]
         },
         "to": {
@@ -1681,6 +1764,12 @@
           "types": [
             "integer"
           ]
+        },
+        "stream": {
+          "required": false,
+          "types": [
+            "integer"
+          ]
         }
       },
       "result": [
@@ -1689,7 +1778,8 @@
         "duration",
         "format",
         "path",
-        "sample_rate"
+        "sample_rate",
+        "stream"
       ]
     },
     "media.import": {
@@ -2731,6 +2821,12 @@
             "string"
           ]
         },
+        "stream": {
+          "required": false,
+          "types": [
+            "integer"
+          ]
+        },
         "to": {
           "required": false,
           "types": [
@@ -2742,9 +2838,11 @@
         "asset",
         "language",
         "missing",
+        "missing_streams",
         "provenance",
         "revision",
         "speakers",
+        "stream",
         "text",
         "words"
       ]
@@ -2764,11 +2862,18 @@
           "types": [
             "string"
           ]
+        },
+        "stream": {
+          "required": false,
+          "types": [
+            "integer"
+          ]
         }
       },
       "result": [
         "asset",
-        "removed"
+        "removed",
+        "stream"
       ]
     },
     "transcript.set": {
@@ -2802,6 +2907,12 @@
             "array"
           ]
         },
+        "stream": {
+          "required": false,
+          "types": [
+            "integer"
+          ]
+        },
         "words": {
           "required": true,
           "types": [
@@ -2813,6 +2924,7 @@
         "asset",
         "end",
         "replaced",
+        "stream",
         "words"
       ]
     },

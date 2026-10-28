@@ -66,9 +66,9 @@ short answers; `layers` (bottom to top) and `audio` are the detail:
  "audible": ["A1", "A2"],
  "audio": [
   {"track": "A1", "track_index": 0, "clip": "clip_7f3b", "asset": "asset_834f84", "link": "link_2c1d",
-   "source_time": "118.400s", "gain_db": 2.5, "audible": true},
+   "source_time": "118.400s", "gain_db": 2.5, "stream": 0, "channels": "left", "audible": true},
   {"track": "A2", "track_index": 1, "clip": "clip_c0de", "asset": "asset_9a7b",
-   "source_time": "41.000s", "gain_db": -18.0, "audible": true}]}
+   "source_time": "41.000s", "gain_db": -18.0, "stream": 0, "channels": "auto", "audible": true}]}
 ```
 
 Full-screen b-roll on V2 hides the talking head on V1, but the talking
@@ -93,6 +93,7 @@ dB down.
 | `disabled` (top level) | Video tracks turned off with `track.set`; never drawn |
 | `audio[].gain_db` | The clip's gain: `edit.set_volume`, plus what `edit.normalize` added. 0 is unity |
 | `audio[].speed` | Playback speed, when not 1 |
+| `audio[].stream`, `audio[].channels` | The audio stream of the file it plays and how its channels reach stereo ([edit.md](edit.md#editset_audio)) |
 | `audio[].effects` | Audio effects in stack order, each with every param's value at this frame, like `effects` on video layers ([effects.md](effects.md#audio-effects)) |
 | `audio[].audible` | False when the gain is at the -100 dB floor (silenced); the clip is still listed |
 | `muted` (top level) | Audio tracks turned off with `track.set`; never mixed |

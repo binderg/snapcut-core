@@ -133,6 +133,7 @@ def secs(x):
 
 def transcribe(call_id, params):
     asset = params["asset"]
+    stream = int(params.get("stream") or 0)
     key = os.environ.get("DEEPGRAM_API_KEY")
     if not key:
         raise RpcError("DEEPGRAM_API_KEY is not set: run `ve plugin secret set deepgram DEEPGRAM_API_KEY`")
@@ -142,7 +143,7 @@ def transcribe(call_id, params):
     keywords = params.get("keywords") or []
 
     progress(call_id, 0.02, "extracting audio")
-    audio = engine("media.extract_audio", {"asset": asset, "format": "flac"})
+    audio = engine("media.extract_audio", {"asset": asset, "stream": stream, "format": "flac"})
     check_cancel(call_id)
     progress(call_id, 0.15, "uploading")
     url = request_url(model, language, diarize, keywords)
@@ -180,11 +181,12 @@ def transcribe(call_id, params):
         "model": model_info.get("name") or model,
         "model_version": model_info.get("version"),
         "request_id": meta.get("request_id"),
-        "params": {"model": model, "language": language, "diarize": diarize, "keywords": keywords},
+        "params": {"model": model, "language": language, "diarize": diarize, "keywords": keywords, "stream": stream},
         "created": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
     stored = engine("transcript.set", {
         "asset": asset,
+        "stream": stream,
         "words": words,
         "language": language or detected,
         "speakers": [{"id": s} for s in sorted(speakers)],

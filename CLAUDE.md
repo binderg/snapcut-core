@@ -246,6 +246,16 @@ source frame 0. Both paths agree exactly on hard alpha edges. ve-analyze is buil
 opt-level 2 in dev (per-sample loops). On Windows the CLI starts daemons from
 a copy of `ve.exe` in `<cache>/ve/bin/` so a running daemon never blocks a
 rebuild; `VE_DAEMON_ORIGIN` tells the daemon which binary it stands for.
+Audio streams (Oct 28 2026): probe records every audio stream
+(`media.audio_streams`, `index` = ffmpeg `a:N`; `media.audio` stays stream 0;
+project open fills the list for older assets). `metadata.ve.clip.audio`
+`{stream, channels}` (`ve_model::meta::ClipAudio`; channels `auto`, `left`,
+`right`, `mono` or `[a, b]`) is set by `edit.set_audio` (`ve audio`) and
+applied in the graph head by `ve_render::plan::channel_filter` (pieces
+share an input only with the same stream and mapping). Insert puts each
+stream on its own audio track (adding tracks), all linked; `streams` picks.
+Measurements, `media.extract_audio` and transcripts take `stream`; stream 0
+keeps the old cache and transcript names (`<hash>.s<n>.json` for others).
 Text (`ve-model::text`, `ve-render::text`, `ve_ops::edit::{add_text, set_text}`,
 `ve-daemon::text`): text clips are clips whose media is OTIO
 `GeneratorReference.1` (`generator_kind: "ve.text"`, parameters = words +

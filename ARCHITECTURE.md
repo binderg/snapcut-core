@@ -300,13 +300,19 @@ Audio effects use the same manifest, registry, packs, `effect.*` methods and key
 | --- | --- | --- | --- | --- |
 | `ffmpeg` (first, built) | a filter chain template in the manifest: `"filter": "equalizer=f={freq}:t=q:w={q}:g={gain}"` | inside the audio graph every render already builds (export, preview, measurements, analyzers); no new dependency | only filters on an allow list (EQ, filters, dynamics, noise reduction, de-essing, modulation, echo), one linear chain, no quotes, labels or `;`, so a template cannot read or write files or add inputs | EQ, compression, gate, limiter, de-esser, noise reduction: most of what a talking head needs |
 | `wasm` (second) | Rust, C++ or anything compiled to WebAssembly: `process(block, params)` over f32 samples | CPU, in the same `wasmtime` runtime as video `wasm`, called per block of samples | sandboxed, like video `wasm` | custom DSP nobody shipped as an ffmpeg filter |
-| `clap` (later) | an existing CLAP plugin (the open audio plugin standard) | native, in-process, through its own crate `ve-clap` (an approved `unsafe` exception, like `ve-ofx`) | none: installed plugins the user trusts only, never project-local | running existing third-party audio plugins |
+| `process` (decided Oct 28 2026) | a plugin program that processes blocks of samples (`contributes.audio_effects` in `plugin.json`) | in the plugin's own process: the engine sends f32 blocks and gets processed blocks back, before the mix (see below) | none beyond any process plugin: installed plugins the user trusts | VST3 and CLAP hosts (each its own plugin), DSP in any language |
 
 **The `ffmpeg` contract.** `{name}` in the template is replaced by the param's value at render time (numbers and integers as decimals, booleans as 0 or 1). Params are `number`, `integer` or `boolean`. A param with `x-animatable: true` must fill a whole `key={name}` option, and that option must be one the filter can change while running (ffmpeg's `T` flag); keyframes are then sent with `asendcmd` at every keyframe and every 10 ms between them (ease curves included), so automation is smooth and sample-timed. The engine names each filter instance per clip so commands reach the right one.
 
 **Validation** (`fx.define`, and the tests for built-ins): the template parses, every placeholder is a param, every filter is on the allow list, animatable params map to runtime options, and a test run of half a second of tone through the chain at the defaults (and with a command for each animatable param) succeeds and produces finite samples.
 
 **Built-ins** in `plugins/core/effects/` (compiled in, like the video ones): `core.audio/eq`, `core.audio/highpass`, `core.audio/compressor`, `core.audio/noise_reduction`, `core.audio/deesser`.
+
+**VST3 and CLAP are plugins, not core (decided Oct 28 2026; replaces the planned `ve-clap` crate).** A VST3 host and a CLAP host are each a process plugin that loads the user's installed plugins and offers them through the `process` runtime. Third-party audio plugins crash, hang and leak; in their own process a bad one takes down its host, not the daemon. No `unsafe` exception is needed in the engine, and a host plugin can open a VST's own window without the headless daemon having a UI. A VST's state is saved as a base64 blob param on the effect, so a project reopens with the same sound.
+
+**The `process` runtime (pre-render, cached).** ffmpeg cannot call out to a plugin, so audio leaves the graph before the mix: each clip that has a `process` effect is decoded (its stream and channel mapping applied, at the project sample rate, from the clip's start so plugin state and tails are right), sent through its effect chain block by block, and written as a file in `<project cache>/audio_fx/`, keyed by blake3 of the source hash, stream, channels, media range, speed, the effect chain (ids, params, keyframes) and each plugin's id and version. The render graph reads that file in place of the source for that clip; gain, edge fades, cut crossfades and the mix stay in ffmpeg, so measurements and analyzers hear the same sound. Speed is applied before the plugin (it hears timeline-rate sound), like the `ffmpeg` runtime. `ffmpeg` effects after a `process` effect in the list run in the graph on the processed file. Samples go over a local socket, not the JSON-RPC stdio channel (too slow for audio). A later low-latency path for real-time playback can use shared memory with the same messages.
+
+**Streams and channels.** Probe lists every audio stream (`media.audio_streams`: index, codec, rate, channels, layout, language, title, default); `media.audio` stays the default stream. A clip says which stream and channels it plays in `metadata.ve.clip.audio` (`stream`, `channels`: `auto`, `left`, `right`, `mono`, or `[a, b]` source channels for left and right; `[a]` feeds both). `auto` downmixes known layouts the standard way and takes the first two channels of unknown ones, with a warning. Insert brings in every stream of an asset as its own linked audio clip on its own track. The mix bus is stereo. Transcripts, measurements and extracted audio are per stream (stream 0 keeps the old file names).
 
 ## Plugin system
 
@@ -583,6 +589,14 @@ chunk. Removing that wait for good needs two things:
   shipping its DLLs. It is not the main cost of GPU export (that reads in
   order); profile export separately (RGBA pipes, synchronous readback, CPU
   RGBA to YUV).
+- [ ] **Live audio effects:** hear a plugin knob change while playing,
+  without waiting for the clip to be re-processed. Today `process` effects
+  are pre-rendered and cached (see "The `process` runtime"), so each change
+  re-processes the clip first. Live needs the audio mix in Rust (crossfades,
+  J/L cuts, fades, gain, effects) driven by the playback clock, streaming
+  samples through plugins over shared memory with the same messages as the
+  pre-render path, so plugins work unchanged. Export can keep the cached
+  path. Goes with the streaming playback path above.
 
 **Easy to build on (packaging and SDK).** The engine is meant to be a base
 other people and companies build editors on, so getting started has to take
@@ -690,11 +704,11 @@ clips, screen recordings) has messier audio than our test sources. Wrong
 audio is worse than missing features, so streams and channels come first.
 Suggested order, not decided:
 
-- [ ] **Every audio stream, not only the first.** Probe records only the
-  first audio stream today. Podcasts and screen recordings often carry mic
+- [x] **Every audio stream, not only the first** (Oct 28 2026). Probe recorded only the
+  first audio stream. Podcasts and screen recordings often carry mic
   and system audio as separate streams. Record all of them, and let import
   pick a stream or bring each in as its own linked clip.
-- [ ] **Channel layouts:** map and downmix mono, dual-mono (a lav on one
+- [x] **Channel layouts:** map and downmix mono, dual-mono (a lav on one
   side only), stereo, 5.1 and odd layouts predictably, with a per-clip
   channel choice (left only, right only, sum).
 - [ ] **Sample rates and drift:** mixed 44.1/48 kHz sources and VFR phone

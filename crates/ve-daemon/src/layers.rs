@@ -98,6 +98,10 @@ pub struct AudioInfo {
     /// Playback speed, when not 1.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub speed: Option<f64>,
+    /// Audio stream of the file the clip plays (0 is the first).
+    pub stream: u32,
+    /// How its channels reach the stereo mix: `auto`, `left`, `right`, `mono` or `[a, b]`.
+    pub channels: ve_model::meta::Channels,
     /// Audio effects, in order, with every param's value at this frame.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub effects: Vec<EffectAt>,
@@ -342,6 +346,8 @@ pub fn layers(p: &Snapshot, a: LayersParams) -> Result<LayersResult, RpcError> {
                 source_time: ve_ops::lane::seconds_text(a.source_time),
                 gain_db: a.gain_db,
                 speed: (a.speed != ve_model::time::Q::from_integer(1)).then(|| *a.speed.numer() as f64 / *a.speed.denom() as f64),
+                stream: a.stream,
+                channels: a.channels,
                 effects: a.effects.into_iter().map(|e| EffectAt { id: e.id, effect: e.effect, name: e.name, params: e.params, missing: e.missing }).collect(),
                 audible: a.audible,
             })

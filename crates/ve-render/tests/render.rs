@@ -63,6 +63,7 @@ fn project(src: &Path) -> Timeline {
         duration: None,
         video: true,
         audio: true,
+        streams: None,
         overwrite: false,
     };
     edit::insert(&tl, &ins).unwrap().0

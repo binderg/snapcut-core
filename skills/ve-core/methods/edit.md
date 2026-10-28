@@ -40,7 +40,15 @@ Put an asset (or part of it) on the timeline.
 | `track` | first video track (first audio track for audio-only assets) | Track for the picture |
 | `audio_track` | first audio track | Track for the sound of an A/V asset |
 | `video`, `audio` | true, true | Leave one out (`audio: false` for B-roll without its sound) |
+| `streams` | every audio stream | Audio streams to bring in, e.g. `[0]` (numbers from the asset's `audio_streams`) |
 | `overwrite` | false | Replace what is there instead of pushing it later |
+
+**Several audio streams** (a screen recording with mic and desktop sound, a
+camera with two mics): each stream becomes its own audio clip on its own
+track, the first on `audio_track`, the rest on the audio tracks after it
+(new ones are added when there are not enough), all linked to the picture
+and to each other. `created` lists them. Pass `streams` to bring in only
+some.
 
 Without `overwrite`, content after `at` on the **target tracks** moves right
 by the clip's length (a clip under `at` is split first, together with its
@@ -148,6 +156,31 @@ speed`). Writes OTIO's `LinearTimeWarp` too. Audio is pitch-corrected
 
 `{"clip": id, "db": -6, "linked": true}`. Sets (not adds) the gain of the
 clip's audio, -100 to +30 dB. On a video clip it applies to its linked audio.
+
+## `edit.set_audio`
+
+Which audio stream of its file an audio clip plays, and how that stream's
+channels reach the stereo mix.
+
+| Param | Default | |
+| --- | --- | --- |
+| `clip` | required | An audio clip. A video clip stands for its linked audio clip when it has exactly one; with several (one per stream) the call is refused and names them |
+| `stream` | unchanged | Audio stream number from the asset's `audio_streams` (0 is the first) |
+| `channels` | unchanged | `auto`, `left`, `right`, `mono`, or `[a, b]` / `[a]` (below) |
+
+| `channels` | What plays |
+| --- | --- |
+| `auto` | Standard layouts (mono, stereo, 5.1, ...) downmixed the usual way. A stream with more than two channels and no layout plays channels 0 and 1, with a warning in renders |
+| `left` / `right` | That side on both sides: a lav recorded on one channel only |
+| `mono` | All channels averaged onto both sides (two identical sides come out 6 dB lower than one alone) |
+| `[a, b]` | Source channel `a` on the left and `b` on the right, numbered from 0 |
+| `[a]` | Channel `a` on both sides: one mic of a multi-channel recorder |
+
+A channel the stream does not have is refused (`[0, 2]` on a stereo stream,
+`right` on a mono one). `measure.levels` with `asset` and `stream` shows
+which channels carry sound. The setting is `metadata.ve.clip.audio`
+(`{"stream": 1, "channels": "left"}`; absent means stream 0, `auto`), and
+`render.layers` reports it per audio clip.
 
 ## `edit.set_transform`
 

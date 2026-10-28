@@ -134,6 +134,10 @@ enum Command {
         no_video: bool,
         #[arg(long)]
         no_audio: bool,
+        /// Audio streams to bring in, e.g. `0,2` (`ve probe` lists them). Default: every stream,
+        /// each on its own audio track, linked to the picture.
+        #[arg(long, value_delimiter = ',')]
+        streams: Option<Vec<u32>>,
     },
     /// Cut clips at a time: `ve split --at 00:01:12:12` (every clip there) or `ve split clip_7f3a --at ...`.
     Split {
@@ -218,6 +222,18 @@ enum Command {
         db: f64,
         #[arg(long)]
         unlinked: bool,
+    },
+    /// Which audio stream a clip plays and how its channels reach stereo:
+    /// `ve audio clip_7f3a --channels left` (a lav on the left side only),
+    /// `--channels 2,3` (source channels for left and right), `--stream 1`.
+    Audio {
+        clip: String,
+        /// Audio stream of the file (`ve probe` lists them; 0 is the first).
+        #[arg(long)]
+        stream: Option<u32>,
+        /// `auto`, `left`, `right`, `mono` (all channels averaged), or source channels: `2,3` or `2`.
+        #[arg(long)]
+        channels: Option<String>,
     },
     /// Break a clip's link with its partners (video and its audio): `ve unlink clip_7f3a`.
     Unlink { clip: String },
@@ -409,6 +425,9 @@ enum Command {
         /// One asset's whole transcript, in its own media time.
         #[arg(long)]
         asset: Option<String>,
+        /// With --asset: which audio stream's transcript (default 0).
+        #[arg(long, requires = "asset")]
+        stream: Option<u32>,
         /// `text` (default), or captions: `srt` or `vtt` (`ve transcript --format srt > captions.srt`).
         #[arg(long)]
         format: Option<String>,
@@ -801,6 +820,9 @@ struct MeasureSource {
     /// Measure this asset's file instead of the timeline.
     #[arg(long)]
     asset: Option<String>,
+    /// With --asset: which audio stream (default 0, the first).
+    #[arg(long, requires = "asset")]
+    stream: Option<u32>,
     #[command(flatten)]
     span: Span,
 }
@@ -992,14 +1014,18 @@ fn plan(cmd: &Command, json_output: bool) -> Plan {
         Command::Relink { asset, path, folder, force } => {
             m("media.relink", json!({ "asset": asset, "path": path.as_deref().map(absolute), "folder": folder.as_deref().map(absolute), "force": force }))
         }
-        Command::Insert { asset, track, audio_track, at, source_in, source_out, duration, overwrite, no_video, no_audio } => m(
+        Command::Insert { asset, track, audio_track, at, source_in, source_out, duration, overwrite, no_video, no_audio, streams } => m(
             "edit.insert",
             json!({
                 "asset": asset, "track": track, "audio_track": audio_track, "at": at,
                 "source_in": source_in, "source_out": source_out, "duration": duration,
-                "overwrite": overwrite, "video": !no_video, "audio": !no_audio,
+                "overwrite": overwrite, "video": !no_video, "audio": !no_audio, "streams": streams,
             }),
         ),
+        Command::Audio { clip, stream, channels } => {
+            let channels = channels.as_deref().map(|c| channels_param(c, json_output));
+            m("edit.set_audio", json!({ "clip": clip, "stream": stream, "channels": channels }))
+        }
         Command::Split { clips, at, tracks, unlinked } => {
             m("edit.split", json!({ "clips": clips, "at": at, "tracks": tracks, "linked": !unlinked }))
         }
@@ -1232,6 +1258,9 @@ fn plan(cmd: &Command, json_output: bool) -> Plan {
             };
             let mut p = span_params(&source.span);
             p["asset"] = json!(source.asset);
+            if let Some(k) = source.stream {
+                p["stream"] = json!(k);
+            }
             for (k, v) in extra.as_object().into_iter().flatten() {
                 p[k] = v.clone();
             }
@@ -1250,11 +1279,14 @@ fn plan(cmd: &Command, json_output: bool) -> Plan {
         Command::Cache { cmd: Some(CacheCmd::Clear { kinds, dry_run }) } => {
             q("cache.clear", json!({ "kinds": kinds, "dry_run": dry_run }))
         }
-        Command::Transcript { asset, format, span } => {
+        Command::Transcript { asset, stream, format, span } => {
             let default = if json_output { "words" } else { "text" };
             let mut p = json!({ "format": format.as_deref().unwrap_or(default) });
             if let Some(a) = asset {
                 p["asset"] = json!(a);
+            }
+            if let Some(k) = stream {
+                p["stream"] = json!(k);
             }
             if let Some(f) = &span.from {
                 p["from"] = json!(f);
@@ -1265,6 +1297,19 @@ fn plan(cmd: &Command, json_output: bool) -> Plan {
             q("transcript.get", p)
         }
         Command::Call { .. } | Command::Daemon(_) | Command::Plugin(_) | Command::External(_) => unreachable!("planned in main"),
+    }
+}
+
+/// `--channels` text as the protocol value: a mode name, or source channel numbers.
+fn channels_param(s: &str, json_output: bool) -> Value {
+    let s = s.trim();
+    if ["auto", "left", "right", "mono"].contains(&s) {
+        return json!(s);
+    }
+    let nums: Result<Vec<u32>, _> = s.split(',').map(|n| n.trim().parse::<u32>()).collect();
+    match nums {
+        Ok(v) if (1..=2).contains(&v.len()) => json!(v),
+        _ => usage_error(format!("--channels takes auto, left, right, mono, or one or two channel numbers like 0,1 (got `{s}`)"), json_output),
     }
 }
 
@@ -1537,6 +1582,14 @@ fn print_layers(r: &Value) {
                 what += &format!(", with picture on {}", with.join(", "));
             }
         }
+        if let Some(k) = a["stream"].as_u64().filter(|&k| k > 0) {
+            what += &format!(", stream {k}");
+        }
+        match &a["channels"] {
+            Value::String(c) if c == "auto" => {}
+            Value::Null => {}
+            c => what += &format!(", channels {}", c.to_string().trim_matches('"')),
+        }
         println!("{:4} {}  {} at {}  {what}", s(&a["track"]), s(&a["clip"]), a["asset"].as_str().unwrap_or("-"), s(&a["source_time"]));
         effect_lines(&a["effects"]);
     }
@@ -1544,7 +1597,10 @@ fn print_layers(r: &Value) {
 
 fn print_measure(cmd: &MeasureCmd, r: &Value) {
     let src = &r["source"];
-    let what = src["asset"].as_str().map_or_else(|| "timeline".to_owned(), str::to_owned);
+    let mut what = src["asset"].as_str().map_or_else(|| "timeline".to_owned(), str::to_owned);
+    if let Some(k) = src["stream"].as_u64() {
+        what += &format!(" stream {k}");
+    }
     let cached = if r["cached"] == true { "  (cached)" } else { "" };
     println!("{what}  {}-{}{cached}", src["from"].as_str().unwrap_or("?"), src["to"].as_str().unwrap_or("?"));
     match cmd {
@@ -1942,6 +1998,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         | Command::Delete { .. }
         | Command::Speed { .. }
         | Command::Volume { .. }
+        | Command::Audio { .. }
         | Command::Unlink { .. }
         | Command::Transform { .. }
         | Command::Marker(_)

@@ -12,7 +12,8 @@ working directory, so send absolute paths.
 ```
 
 `media` is the compact summary (duration, video size/rate/rotation/vfr/color,
-first audio stream); see the asset fields in
+the first audio stream as `audio`, and every audio stream in `audio_streams`);
+see the asset fields in
 [../model/project.md](../model/project.md#asset). `ffprobe` is everything
 ffprobe said, for anything the summary leaves out. Errors: missing file or
 not media -> `invalid_params` with the reason.
@@ -106,20 +107,21 @@ checked; other URL schemes are left alone.
 
 ## `media.extract_audio`
 
-Decode an asset's first audio stream, whole, to a plain file in the
+Decode one of an asset's audio streams, whole, to a plain file in the
 engine's cache, so plugins (speech to text, beat detection) never need a
 decoder of their own.
 
 | Param | Type | |
 | --- | --- | --- |
 | `asset` | string | The asset |
+| `stream` | integer | Audio stream number from the asset's `audio_streams`. Default 0, the first |
 | `sample_rate` | integer | Default 16000 (what speech models expect); 8000 to 192000 |
 | `channels` | integer | 1 (default, a mono downmix) or 2 |
 | `format` | `wav` \| `flac` | Default `wav` (16-bit PCM). `flac` is lossless and about a third the size, for uploads |
 
 ```json
 {"path": "C:\Users\me\AppData\Local\ve\cache\ve\projects\6b69...\audio\ba7c...-16000-1.flac",
- "format": "flac", "sample_rate": 16000, "channels": 1, "duration": "602.433s", "cached": false}
+ "format": "flac", "sample_rate": 16000, "channels": 1, "stream": 0, "duration": "602.433s", "cached": false}
 ```
 
 The file is kept by the file's content hash and the settings, so a second

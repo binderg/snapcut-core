@@ -47,6 +47,9 @@ pub struct MeasureParams {
     /// Measure this asset's file (the whole file) instead of the timeline.
     #[serde(default)]
     pub asset: Option<Id>,
+    /// With `asset`: which audio stream (from its `audio_streams`, default 0).
+    #[serde(default)]
+    pub stream: Option<u32>,
     /// Timeline range start. Default: timeline start. Not used with `asset`.
     #[serde(default)]
     pub from: Option<String>,
@@ -70,6 +73,9 @@ fn default_buckets() -> usize {
 pub struct WaveformParams {
     #[serde(default)]
     pub asset: Option<Id>,
+    /// With `asset`: which audio stream (from its `audio_streams`, default 0).
+    #[serde(default)]
+    pub stream: Option<u32>,
     #[serde(default)]
     pub from: Option<String>,
     #[serde(default)]
@@ -116,6 +122,9 @@ pub struct SourceInfo {
     /// The asset, for file measurements; absent for the timeline.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub asset: Option<Id>,
+    /// The asset's audio stream, when not the first.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stream: Option<u32>,
     /// Range measured: timeline times, or `00:00:00:00` to the file's length.
     pub from: String,
     pub to: String,
@@ -225,7 +234,7 @@ pub struct PitchResult {
 
 enum Target {
     /// Asset file, its content hash (the cache key) and length in seconds.
-    File { asset: Id, path: PathBuf, hash: Option<String>, length: Q },
+    File { asset: Id, stream: u32, path: PathBuf, hash: Option<String>, length: Q },
     Timeline(Span),
 }
 
@@ -238,7 +247,7 @@ struct Resolved {
 impl Resolved {
     fn source<'a>(&'a self, tl: &'a Timeline, fx: &'a ve_render::fx::Registry) -> AudioSource<'a> {
         match &self.target {
-            Target::File { path, .. } => AudioSource::File { path },
+            Target::File { path, stream, .. } => AudioSource::File { path, stream: *stream },
             Target::Timeline(span) => AudioSource::Timeline { tl, span: *span, fx },
         }
     }
@@ -253,10 +262,21 @@ impl Resolved {
     fn info(&self, tl: &Timeline) -> SourceInfo {
         let rate = tl.output_rate();
         match &self.target {
-            Target::File { asset, length, .. } => {
-                SourceInfo { asset: Some(asset.clone()), from: tc(Q::from_integer(0), rate), to: tc(*length, rate) }
-            }
-            Target::Timeline(s) => SourceInfo { asset: None, from: tc(s.start, rate), to: tc(s.end, rate) },
+            Target::File { asset, stream, length, .. } => SourceInfo {
+                asset: Some(asset.clone()),
+                stream: (*stream > 0).then_some(*stream),
+                from: tc(Q::from_integer(0), rate),
+                to: tc(*length, rate),
+            },
+            Target::Timeline(s) => SourceInfo { asset: None, stream: None, from: tc(s.start, rate), to: tc(s.end, rate) },
+        }
+    }
+
+    /// Cache name for `method`: stream 0 keeps the name it had before streams.
+    fn method(&self, method: &str) -> String {
+        match &self.target {
+            Target::File { stream, .. } if *stream > 0 => format!("{method}-s{stream}"),
+            _ => method.to_owned(),
         }
     }
 
@@ -268,8 +288,11 @@ impl Resolved {
     }
 }
 
-fn resolve(tl: &Timeline, asset: Option<&Id>, from: Option<&String>, to: Option<&String>) -> Result<Resolved, RpcError> {
+fn resolve(tl: &Timeline, asset: Option<&Id>, stream: Option<u32>, from: Option<&String>, to: Option<&String>) -> Result<Resolved, RpcError> {
     let Some(id) = asset else {
+        if stream.is_some() {
+            return Err(RpcError::invalid_params("stream picks an asset's audio stream; give `asset` too"));
+        }
         let sample_rate = tl.project().map_or(48_000, |p| p.output.sample_rate);
         return Ok(Resolved { target: Target::Timeline(span(tl, from, to)?), channels: 2, sample_rate });
     };
@@ -284,11 +307,17 @@ fn resolve(tl: &Timeline, asset: Option<&Id>, from: Option<&String>, to: Option<
         .find(|a| &a.id == id)
         .ok_or_else(|| RpcError::invalid_params(format!("no asset `{id}`; `ve call media.assets` lists them")))?;
     let media = a.media.as_ref().ok_or_else(|| RpcError::invalid_params(format!("{id} has no probe data; re-import it")))?;
-    let audio = media.audio.as_ref().ok_or_else(|| RpcError::invalid_params(format!("{id} has no audio")))?;
+    if media.audio.is_none() {
+        return Err(RpcError::invalid_params(format!("{id} has no audio")));
+    }
+    let k = stream.unwrap_or(0);
+    let audio = media.audio_stream(k).ok_or_else(|| {
+        RpcError::invalid_params(format!("{id} has {} audio stream(s) (numbered from 0); there is no stream {k}", media.audio_stream_count()))
+    })?;
     let path = ve_render::local_path(&a.url)
         .ok_or_else(|| RpcError::new(ErrorCode::RenderFailure, format!("{id}: only file:// media can be measured ({})", a.url)))?;
     Ok(Resolved {
-        target: Target::File { asset: id.clone(), path, hash: a.hash.clone(), length: media.duration.seconds() },
+        target: Target::File { asset: id.clone(), stream: k, path, hash: a.hash.clone(), length: media.duration.seconds() },
         channels: audio.channels.clamp(1, 8),
         sample_rate: audio.sample_rate,
     })
@@ -365,10 +394,10 @@ fn measure_loudness(src: &AudioSource<'_>, work: &Path) -> Result<(Loudness, Vec
 pub fn loudness(p: &Snapshot, a: MeasureParams) -> Result<LoudnessResult, RpcError> {
     let work = work_dir(p);
     let tl = &p.timeline;
-    let r = resolve(tl, a.asset.as_ref(), a.from.as_ref(), a.to.as_ref())?;
+    let r = resolve(tl, a.asset.as_ref(), a.stream, a.from.as_ref(), a.to.as_ref())?;
     let steps = steps(tl, a.resolution.as_ref(), r.length())?;
     let key = json!({ "step": steps.map(|s| s.0.to_string()) });
-    let (mut out, hit) = cached(r.hash(), "loudness", &key, || {
+    let (mut out, hit) = cached(r.hash(), &r.method("loudness"), &key, || {
         let (l, warnings) = measure_loudness(&r.source(tl, &ve_render::fx::Registry::for_project(Some(p.root()))), &work)?;
         Ok(LoudnessResult {
             source: r.info(tl),
@@ -387,10 +416,10 @@ pub fn loudness(p: &Snapshot, a: MeasureParams) -> Result<LoudnessResult, RpcErr
 pub fn levels(p: &Snapshot, a: MeasureParams) -> Result<LevelsResult, RpcError> {
     let work = work_dir(p);
     let tl = &p.timeline;
-    let r = resolve(tl, a.asset.as_ref(), a.from.as_ref(), a.to.as_ref())?;
+    let r = resolve(tl, a.asset.as_ref(), a.stream, a.from.as_ref(), a.to.as_ref())?;
     let steps = steps(tl, a.resolution.as_ref(), r.length())?;
     let key = json!({ "step": steps.map(|s| s.0.to_string()) });
-    let (mut out, hit) = cached(r.hash(), "levels", &key, || {
+    let (mut out, hit) = cached(r.hash(), &r.method("levels"), &key, || {
         let mut meter = LevelMeter::new(r.channels, r.sample_rate, steps.map(|s| s.0));
         let warnings =
             ve_render::decode_audio(&r.source(tl, &ve_render::fx::Registry::for_project(Some(p.root()))), r.sample_rate, r.channels, &work, &mut |s| meter.push(s)).map_err(render_error)?;
@@ -428,9 +457,9 @@ pub fn waveform(p: &Snapshot, a: WaveformParams) -> Result<WaveformResult, RpcEr
     }
     let work = work_dir(p);
     let tl = &p.timeline;
-    let r = resolve(tl, a.asset.as_ref(), a.from.as_ref(), a.to.as_ref())?;
+    let r = resolve(tl, a.asset.as_ref(), a.stream, a.from.as_ref(), a.to.as_ref())?;
     let key = json!({ "buckets": a.buckets });
-    let (mut out, hit) = cached(r.hash(), "waveform", &key, || {
+    let (mut out, hit) = cached(r.hash(), &r.method("waveform"), &key, || {
         let mut w = WaveformBuilder::new(r.channels);
         let warnings =
             ve_render::decode_audio(&r.source(tl, &ve_render::fx::Registry::for_project(Some(p.root()))), r.sample_rate, r.channels, &work, &mut |s| w.push(s)).map_err(render_error)?;
@@ -453,10 +482,10 @@ pub fn waveform(p: &Snapshot, a: WaveformParams) -> Result<WaveformResult, RpcEr
 pub fn pitch(p: &Snapshot, a: MeasureParams) -> Result<PitchResult, RpcError> {
     let work = work_dir(p);
     let tl = &p.timeline;
-    let r = resolve(tl, a.asset.as_ref(), a.from.as_ref(), a.to.as_ref())?;
+    let r = resolve(tl, a.asset.as_ref(), a.stream, a.from.as_ref(), a.to.as_ref())?;
     let steps = steps(tl, a.resolution.as_ref(), r.length())?;
     let key = json!({ "step": steps.map(|s| s.0.to_string()) });
-    let (mut out, hit) = cached(r.hash(), "pitch", &key, || {
+    let (mut out, hit) = cached(r.hash(), &r.method("pitch"), &key, || {
         let mut t = PitchTracker::default();
         let warnings = ve_render::decode_audio(&r.source(tl, &ve_render::fx::Registry::for_project(Some(p.root()))), pitch::SAMPLE_RATE, 1, &work, &mut |s| t.push(s)).map_err(render_error)?;
         let s = pitch::summarize(&t.frames);

@@ -457,7 +457,19 @@ pub fn preview_key_from(tl: &Timeline, span: Span, s: &EncodeSettings, frame_key
     for t in &p.audio {
         for seg in &t.segments {
             h.update(
-                format!("{} {} {} {} {} {} {:?} {:?}", seg.path.display(), seg.start - span.start, seg.end - span.start, seg.media_start, seg.speed, seg.volume_db, seg.head, seg.tail)
+                format!(
+                    "{} {} {} {} {} {} {:?} {:?} a:{} {}",
+                    seg.path.display(),
+                    seg.start - span.start,
+                    seg.end - span.start,
+                    seg.media_start,
+                    seg.speed,
+                    seg.volume_db,
+                    seg.head,
+                    seg.tail,
+                    seg.stream,
+                    seg.channels.label()
+                )
                     .as_bytes(),
             );
             // Audio effects: which code (by hash) with which values; times are clip-relative.

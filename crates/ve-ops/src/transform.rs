@@ -188,6 +188,7 @@ mod tests {
                 duration: RationalTime::from_frames(250, Rate::integer(25)),
                 video: Some(VideoInfo { codec: "h264".into(), width: 640, height: 360, rate: Rate::integer(25), rotation: 0, vfr: false, still: false, color: None, alpha: None, see_through_percent: None }),
                 audio: Some(AudioInfo { codec: "aac".into(), sample_rate: 48_000, channels: 2 }),
+            audio_streams: Vec::new(),
                 size_bytes: 0,
             }),
         });
@@ -201,6 +202,7 @@ mod tests {
             duration: None,
             video: true,
             audio: true,
+            streams: None,
             overwrite: false,
         };
         let (tl, r) = insert(&tl, &p).unwrap();

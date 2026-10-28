@@ -58,6 +58,7 @@ fn insert(asset: &str, track: Option<&str>, at: Option<Q>, duration: Option<Q>) 
         duration,
         video: true,
         audio: false,
+        streams: None,
         overwrite: true,
     }
 }

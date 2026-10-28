@@ -204,8 +204,17 @@ pub(crate) fn follow_moves(tl: &mut ve_model::Timeline, root: &Path) -> (usize, 
         let Some(path) = ve_render::plan::local_path(&a.url) else { continue };
         if path.exists() {
             let rel = rel_path(root, &a.url);
+            // Assets probed before every audio stream was recorded.
+            let unlisted = a.media.as_ref().is_some_and(|m| m.audio.is_some() && m.audio_streams.is_empty());
             if rel != a.rel {
                 tl.metadata.ve.assets[i].rel = rel;
+                hints += 1;
+            }
+            if unlisted
+                && let Ok(p) = ve_media::probe(&path)
+                && let Some(m) = tl.metadata.ve.assets[i].media.as_mut()
+            {
+                m.audio_streams = p.media.audio_streams;
                 hints += 1;
             }
             continue;
@@ -358,8 +367,11 @@ fn media_error(e: MediaError) -> RpcError {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ExtractAudioParams {
-    /// The asset whose first audio stream to extract, whole.
+    /// The asset whose audio to extract, whole.
     pub asset: Id,
+    /// Which audio stream (from the asset's `audio_streams`). Default 0, the first.
+    #[serde(default)]
+    pub stream: u32,
     /// Samples per second. Default 16000, what speech models expect.
     #[serde(default = "default_extract_rate")]
     pub sample_rate: u32,
@@ -394,6 +406,8 @@ pub struct ExtractAudioResult {
     pub format: AudioFormat,
     pub sample_rate: u32,
     pub channels: u32,
+    /// The audio stream extracted.
+    pub stream: u32,
     /// The asset's duration (`"12.345s"`).
     pub duration: ve_model::transcript::Seconds,
     /// The file was already in the cache.
@@ -422,6 +436,14 @@ pub fn extract_audio(snap: &crate::Snapshot, p: ExtractAudioParams) -> Result<Ex
     if media.audio.is_none() {
         return Err(RpcError::invalid_params(format!("{} has no audio", a.id)));
     }
+    if media.audio_stream(p.stream).is_none() {
+        return Err(RpcError::invalid_params(format!(
+            "{} has {} audio stream(s) (numbered from 0); there is no stream {}",
+            a.id,
+            media.audio_stream_count(),
+            p.stream
+        )));
+    }
     let src = ve_render::local_path(&a.url)
         .ok_or_else(|| RpcError::invalid_params(format!("{}: only file:// media can be read ({})", a.id, a.url)))?;
     let hash = a.hash.as_deref().ok_or_else(|| RpcError::invalid_params(format!("{} has no content hash; re-import it", a.id)))?;
@@ -430,15 +452,25 @@ pub fn extract_audio(snap: &crate::Snapshot, p: ExtractAudioParams) -> Result<Ex
         AudioFormat::Flac => "flac",
     };
     let dir = snap.cache_dir().join("audio");
-    let path = dir.join(format!("{}-{}-{}.{ext}", crate::measure::cache_dir_name(hash), p.sample_rate, p.channels));
+    // Stream 0 keeps the name files had before streams.
+    let stream = if p.stream > 0 { format!("-s{}", p.stream) } else { String::new() };
+    let path = dir.join(format!("{}{stream}-{}-{}.{ext}", crate::measure::cache_dir_name(hash), p.sample_rate, p.channels));
     let duration = ve_model::transcript::Seconds::new(media.duration.seconds());
-    let result = |cached| ExtractAudioResult { path: path.clone(), format: p.format, sample_rate: p.sample_rate, channels: p.channels, duration, cached };
+    let result = |cached| ExtractAudioResult {
+        path: path.clone(),
+        format: p.format,
+        sample_rate: p.sample_rate,
+        channels: p.channels,
+        stream: p.stream,
+        duration,
+        cached,
+    };
     if path.is_file() {
         return Ok(result(true));
     }
     std::fs::create_dir_all(&dir).map_err(|e| RpcError::new(ErrorCode::Internal, format!("{}: {e}", dir.display())))?;
     let tmp = dir.join(format!("{}.{}.part.{ext}", path.file_stem().unwrap_or_default().to_string_lossy(), std::process::id()));
-    let inputs = ve_render::ffmpeg::Inputs::Args(vec!["-i".into(), src.to_string_lossy().into_owned(), "-map".into(), "0:a:0".into(), "-vn".into()]);
+    let inputs = ve_render::ffmpeg::Inputs::Args(vec!["-i".into(), src.to_string_lossy().into_owned(), "-map".into(), format!("0:a:{}", p.stream), "-vn".into()]);
     let codec = match p.format {
         AudioFormat::Wav => "pcm_s16le",
         AudioFormat::Flac => "flac",

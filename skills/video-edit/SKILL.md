@@ -81,6 +81,8 @@ Exit codes: 0 ok, 2 bad arguments (the message says what), 3 stale revision,
 | Swap a clip with the one before it | `ve move clip_7f3a --to <other clip's start> --reorder` |
 | Speed | `ve speed clip_7f3a 3/2` (exact ratios; `1/2` is slow motion) |
 | Gain | `ve volume clip_7f3a -6` (dB) |
+| Voice only in one ear (a lav recorded on one channel) | `ve measure levels --asset asset_94b8` shows which channel has sound; `ve audio clip_7f3a --channels left` (or `right`, `mono`, `2,3`) |
+| Several audio streams (OBS mic + desktop, two-mic camera) | `ve probe file.mkv` lists them (`a0 …, a1 …`); `ve insert` puts each on its own linked audio track; `ve insert asset_… --streams 0` takes only the mic |
 | Unlink video from its audio (later edits touch one side) | `ve unlink clip_7f3a` |
 | Loudness to a target (one gain on every audio clip) | `ve normalize --target -14` (-16 podcasts, -23 broadcast) |
 | Insert part of a source | `ve insert asset_94b8 --in 00:03:10:00 --out 00:03:25:00 --at 00:01:00:00` |

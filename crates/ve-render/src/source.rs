@@ -15,8 +15,8 @@ type Result<T> = std::result::Result<T, RenderError>;
 pub enum AudioSource<'a> {
     /// The mixed timeline audio over `span`, with audio effects from `fx`.
     Timeline { tl: &'a Timeline, span: Span, fx: &'a crate::fx::Registry },
-    /// A media file's first audio stream, whole.
-    File { path: &'a Path },
+    /// One audio stream of a media file (`a:N`), whole, channels as recorded.
+    File { path: &'a Path, stream: u32 },
 }
 
 /// The ffmpeg inputs and the label or map that yields the source's audio.
@@ -31,11 +31,11 @@ fn inputs(src: &AudioSource<'_>, filter: Option<&str>) -> Result<(Inputs<'static
             g.chain(format!("[{a}]{}[measure]", filter.unwrap_or("anull")));
             Ok((Inputs::Args(Vec::new()), p.warnings, Some(g)))
         }
-        AudioSource::File { path } => {
+        AudioSource::File { path, stream } => {
             if !path.is_file() {
                 return Err(RenderError::Media(format!("{} is missing", path.display())));
             }
-            let mut args = vec!["-i".to_owned(), path.to_string_lossy().into_owned(), "-map".into(), "0:a:0".into()];
+            let mut args = vec!["-i".to_owned(), path.to_string_lossy().into_owned(), "-map".into(), format!("0:a:{stream}")];
             if let Some(f) = filter {
                 args.extend(["-af".into(), f.to_owned()]);
             }

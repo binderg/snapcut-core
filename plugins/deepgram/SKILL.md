@@ -32,7 +32,8 @@ ve --json transcript                        # every word with start/end timecode
 
 Options: `--language`, `--model` (default `nova-3`), `--diarize false`
 (speakers are told apart by default: `S0`, `S1`, ...), `--keywords`
-(repeat it).
+(repeat it), `--stream 1` (a file's other audio stream, such as OBS desktop
+sound; each stream has its own transcript, and `ve transcript --asset … --stream 1` reads it).
 
 Transcribe each source once: the transcript is keyed by the file, kept in
 the project's `transcripts/` folder, and follows every edit. Re-running

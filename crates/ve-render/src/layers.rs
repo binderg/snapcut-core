@@ -63,6 +63,10 @@ pub struct AudioLayer {
     /// The clip's gain (`edit.set_volume`, plus what `edit.normalize` added).
     pub gain_db: f64,
     pub speed: Q,
+    /// Audio stream of the file the clip plays.
+    pub stream: u32,
+    /// Channel mapping to stereo (`auto`, `left`, `right`, `mono`, `[a, b]`).
+    pub channels: ve_model::meta::Channels,
     /// Audio effects, in order, with their values at this frame.
     pub effects: Vec<EffectAt>,
     /// False when the gain is at the -100 dB floor (silenced).
@@ -308,6 +312,8 @@ fn frame(ctx: &Ctx<'_>, p: &Plan, at: Q, detail: bool) -> Result<Frame> {
                 source_time: seg.media_start + (at - seg.start) * seg.speed,
                 gain_db: seg.volume_db,
                 speed: seg.speed,
+                stream: seg.stream,
+                channels: seg.channels.clone(),
                 effects: if detail { effects_at(ctx, seg, at, Kind::Audio) } else { Vec::new() },
                 audible: seg.volume_db > SILENT_DB,
             });

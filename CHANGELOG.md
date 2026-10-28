@@ -30,6 +30,15 @@ not final (the command is `ve`).
   (bit depth, range, primaries, transfer, HDR10/HLG).
 - Exact time everywhere (rationals, no floats); SMPTE timecode including
   drop-frame, frame counts and seconds as input.
+- Every audio stream of a file (`media.audio_streams`: channels, layout,
+  language, title). `ve insert` brings each stream in on its own linked
+  audio track (OBS mic and desktop sound, two-mic cameras); `streams` picks
+  some. `edit.set_audio` (`ve audio`) chooses a clip's stream and how its
+  channels reach stereo: `left`/`right` for a lav on one side, `mono`, or
+  source channels `[a, b]`. Files with discrete channels and no layout play
+  channels 0 and 1 with a warning instead of failing. Measurements,
+  `media.extract_audio` and transcripts take a `stream` (each stream has its
+  own transcript).
 
 ### Editing
 

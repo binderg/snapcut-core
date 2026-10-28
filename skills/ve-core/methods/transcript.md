@@ -30,13 +30,16 @@ Word shape:
 | Param | Type | |
 | --- | --- | --- |
 | `asset` | string | The asset the words belong to |
+| `stream` | integer? | The audio stream they were heard in (from the asset's `audio_streams`). Default 0 |
 | `words` | [word] | Every word (any order; stored sorted by start) |
 | `language` | string? | BCP 47 tag (`en`, `he`) |
 | `speakers` | [{id, name?}]? | Display names for speaker labels |
 | `provenance` | object? | Who made it: plugin, model, params, request id. Free form |
 | `actor` | object? | Recorded in `provenance.actor` (a plugin's calls carry `plugin:<id>` automatically) |
 
-Replaces any earlier transcript of the same file. Not an edit: no revision
+Replaces any earlier transcript of the same file and stream. Each stream
+has its own (a screen recording's mic and desktop sound say different
+things); stream 0 is `transcripts/<hash>.json`, others `<hash>.s<n>.json`. Not an edit: no revision
 change, no undo (the timeline does not change). Refused (`invalid_params`)
 when a word ends before it starts, starts before 0, has a confidence outside
 0..1, or ends more than half a second past the end of the file.
@@ -50,6 +53,7 @@ when a word ends before it starts, starts before 0, has a confidence outside
 | Param | Type | |
 | --- | --- | --- |
 | `asset` | string? | One asset's whole transcript, in its media time |
+| `stream` | integer? | With `asset`: which audio stream's transcript. Default 0 |
 | `from`, `to` | time? | Without `asset`: the timeline range (default: all) |
 | `format` | `words` \| `text` \| `srt` \| `vtt` | Default `words`. `text` gives readable lines; `srt` and `vtt` give a caption file, in `text` |
 
@@ -57,7 +61,8 @@ when a word ends before it starts, starts before 0, has a confidence outside
 `provenance` and `words` (or `text`). No transcript yet -> `invalid_params`.
 
 **Without `asset`**: the words that play on the timeline, from every audio
-clip whose asset has a transcript, in timeline order:
+clip whose asset (for the stream the clip plays) has a transcript, in
+timeline order:
 
 ```json
 {"revision": 12,
@@ -76,7 +81,9 @@ clip whose asset has a transcript, in timeline order:
   the clip.
 - Speed changes are accounted for (a word in a 2x clip takes half the time).
 - `missing` lists assets on audio tracks in the range that have no
-  transcript yet.
+  transcript yet. `missing_streams` (`[{asset, stream}]`, absent when empty)
+  names the streams other than the first that have none.
+- A word from a stream other than the first carries `stream`.
 
 `format: text` groups words into lines: a new line on a speaker change, a
 pause of a second or more, after a sentence once a line has 8 words, or at
@@ -99,7 +106,7 @@ find the words to cut, then use the word list for exact times.
 
 ## `transcript.list`
 
-`{}`. Assets with a transcript:
+`{}`. Assets with a transcript, one entry per stream (`stream` shown when not 0):
 
 ```json
 {"transcripts": [{"asset": "asset_94b8f2", "words": 1873, "end": "602.410s", "language": "en",
@@ -108,5 +115,5 @@ find the words to cut, then use the word list for exact times.
 
 ## `transcript.remove`
 
-`{"asset": "asset_94b8f2"}` -> `{"asset": "asset_94b8f2", "removed": true}`
+`{"asset": "asset_94b8f2", "stream": 0}` -> `{"asset": "asset_94b8f2", "removed": true}`
 (`false` when there was none). Deletes the file in `transcripts/`.

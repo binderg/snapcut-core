@@ -117,10 +117,41 @@ pub struct MediaInfo {
     pub duration: RationalTime,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub video: Option<VideoInfo>,
-    /// First audio stream.
+    /// First audio stream (stream 0 of `audio_streams`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub audio: Option<AudioInfo>,
+    /// Every audio stream, in file order. A clip picks one with
+    /// `metadata.ve.clip.audio.stream` (an index into this list). Empty in
+    /// assets probed before streams were recorded; project open fills it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub audio_streams: Vec<AudioStream>,
     pub size_bytes: u64,
+}
+
+impl MediaInfo {
+    /// Audio stream `i`, falling back to `audio` for stream 0 of an asset
+    /// probed before streams were recorded.
+    pub fn audio_stream(&self, i: u32) -> Option<AudioStream> {
+        match self.audio_streams.get(i as usize) {
+            Some(s) => Some(s.clone()),
+            None if i == 0 && self.audio_streams.is_empty() => self.audio.as_ref().map(|a| AudioStream {
+                index: 0,
+                codec: a.codec.clone(),
+                sample_rate: a.sample_rate,
+                channels: a.channels,
+                layout: None,
+                language: None,
+                title: None,
+                default: true,
+            }),
+            None => None,
+        }
+    }
+
+    /// How many audio streams the asset has.
+    pub fn audio_stream_count(&self) -> u32 {
+        if self.audio_streams.is_empty() { u32::from(self.audio.is_some()) } else { self.audio_streams.len() as u32 }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -223,6 +254,122 @@ pub struct AudioInfo {
     pub channels: u32,
 }
 
+/// One audio stream of a file.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct AudioStream {
+    /// Position among the file's audio streams (0 is the first), the number
+    /// `metadata.ve.clip.audio.stream` uses. Not ffprobe's overall stream index.
+    pub index: u32,
+    pub codec: String,
+    pub sample_rate: u32,
+    pub channels: u32,
+    /// ffmpeg's layout name (`mono`, `stereo`, `5.1`, ...). Absent when the
+    /// file does not say (discrete channels, as many recorders write them).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layout: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// The file marks this stream as the one to play by default.
+    #[serde(default)]
+    pub default: bool,
+}
+
+impl AudioStream {
+    /// The layout is one ffmpeg can downmix the standard way.
+    pub fn layout_known(&self) -> bool {
+        self.layout.as_deref().is_some_and(|l| !l.is_empty() && !l.contains("channels") && l != "unknown")
+    }
+}
+
+/// `metadata.ve.clip.audio`: which stream of the file a clip plays, and how
+/// its channels reach the stereo mix. Absent means stream 0, `auto`.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+pub struct ClipAudio {
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub stream: u32,
+    #[serde(default, skip_serializing_if = "Channels::is_auto")]
+    pub channels: Channels,
+}
+
+impl ClipAudio {
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+fn is_zero_u32(v: &u32) -> bool {
+    *v == 0
+}
+
+/// How a clip's source channels map to the stereo mix.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum Channels {
+    /// `auto`, `left`, `right` or `mono`.
+    Mode(ChannelMode),
+    /// Source channels (0-based) for left and right; one channel feeds both.
+    Pick(Vec<u32>),
+}
+
+impl Default for Channels {
+    fn default() -> Self {
+        Self::Mode(ChannelMode::Auto)
+    }
+}
+
+impl Channels {
+    pub fn is_auto(&self) -> bool {
+        *self == Self::Mode(ChannelMode::Auto)
+    }
+
+    /// Short text for listings: `auto`, `left`, `[0, 2]`.
+    pub fn label(&self) -> String {
+        match self {
+            Self::Mode(m) => m.as_str().to_owned(),
+            Self::Pick(v) => format!("{v:?}"),
+        }
+    }
+
+    /// Check against a stream with `channels` channels.
+    pub fn check(&self, channels: u32) -> Result<(), String> {
+        match self {
+            Self::Pick(v) if v.is_empty() || v.len() > 2 => Err("channels needs one or two source channel numbers".into()),
+            Self::Pick(v) => match v.iter().find(|&&c| c >= channels.max(1)) {
+                Some(c) => Err(format!("channel {c} does not exist; the stream has {channels} (numbered from 0)")),
+                None => Ok(()),
+            },
+            Self::Mode(ChannelMode::Right) if channels < 2 => Err("the stream is mono; it has no right channel".into()),
+            Self::Mode(_) => Ok(()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ChannelMode {
+    /// Known layouts downmix the standard way; unknown ones use their first two channels.
+    Auto,
+    /// The first channel on both sides.
+    Left,
+    /// The second channel on both sides.
+    Right,
+    /// All channels summed (averaged) onto both sides.
+    Mono,
+}
+
+impl ChannelMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Left => "left",
+            Self::Right => "right",
+            Self::Mono => "mono",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AssetKind {
@@ -278,11 +425,14 @@ pub struct ClipMeta {
     /// default: fitted and centered, fully opaque.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transform: Option<Box<Transform>>,
+    /// Which audio stream and channels the clip plays. Absent means stream 0, `auto`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audio: Option<ClipAudio>,
 }
 
 impl ClipMeta {
     pub fn new(id: Id) -> Self {
-        Self { id, speed: unit_speed(), volume_db: 0.0, link: None, transform: None }
+        Self { id, speed: unit_speed(), volume_db: 0.0, link: None, transform: None, audio: None }
     }
 }
 

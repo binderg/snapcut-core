@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use schemars::JsonSchema;
 use serde::Serialize;
 use serde_json::json;
-use ve_model::meta::ClipMeta;
+use ve_model::meta::{Channels, ClipAudio, ClipMeta};
 use ve_model::otio::{Clip, Composable, ExternalReference, MediaReference, Timeline, TrackKind};
 use ve_model::time::{Q, Rate, RationalTime, TimeRange};
 use ve_model::{Id, timecode};
@@ -329,6 +329,11 @@ pub struct Insert {
     pub duration: Option<Q>,
     pub video: bool,
     pub audio: bool,
+    /// Audio streams to bring in (indexes into the asset's `audio_streams`).
+    /// `None` means every stream. Each goes on its own audio track: the first
+    /// on the audio target, the rest on the audio tracks after it (made if
+    /// missing), all linked.
+    pub streams: Option<Vec<u32>>,
     /// Overwrite what is there instead of pushing later content right.
     pub overwrite: bool,
 }
@@ -356,11 +361,31 @@ pub fn insert(tl: &Timeline, p: &Insert) -> Result<(Timeline, EditReport)> {
     let media_end = media.duration.seconds();
     let mrate = if still { d.rate } else { media.duration.rate };
 
+    let count = media.audio_stream_count();
+    let streams: Vec<u32> = if !p.audio || count == 0 {
+        Vec::new()
+    } else {
+        match &p.streams {
+            None => (0..count).collect(),
+            Some(list) => {
+                let mut out: Vec<u32> = Vec::new();
+                for &k in list {
+                    if k >= count {
+                        return Err(EditError::new(format!("asset {} has {count} audio stream(s) (numbered from 0); there is no stream {k}", asset.id)));
+                    }
+                    if !out.contains(&k) {
+                        out.push(k);
+                    }
+                }
+                out
+            }
+        }
+    };
     let mut kinds = Vec::new();
     if media.video.is_some() && p.video {
         kinds.push(TrackKind::Video);
     }
-    if media.audio.is_some() && p.audio {
+    if !streams.is_empty() {
         kinds.push(TrackKind::Audio);
     }
     if kinds.is_empty() {
@@ -389,6 +414,23 @@ pub fn insert(tl: &Timeline, p: &Insert) -> Result<(Timeline, EditReport)> {
         return Err(EditError::new("the media range is shorter than one frame"));
     }
 
+    // Extra streams go on the audio tracks after the first one's; add any that are missing.
+    if streams.len() > 1 {
+        let primary = p.track.as_deref().map(|r| d.find_track(r)).transpose()?;
+        let audio_ref = p.audio_track.as_deref().map(|r| d.find_track(r)).transpose()?;
+        if let Some(base) = audio_ref.or(primary.filter(|&i| d.kind(i) == TrackKind::Audio)).or_else(|| d.first_track(TrackKind::Audio)) {
+            let after = d.track_indices().into_iter().filter(|&i| d.kind(i) == TrackKind::Audio && i > base).count();
+            let missing = (streams.len() - 1).saturating_sub(after);
+            if missing > 0 {
+                let mut with = tl.clone();
+                for _ in 0..missing {
+                    with = crate::tracks::add(&with, TrackKind::Audio, None, None)?.0;
+                }
+                d = Doc::new(&with)?;
+            }
+        }
+    }
+
     // Target track per kind.
     let primary = p.track.as_deref().map(|r| d.find_track(r)).transpose()?;
     let audio_ref = p.audio_track.as_deref().map(|r| d.find_track(r)).transpose()?;
@@ -402,17 +444,26 @@ pub fn insert(tl: &Timeline, p: &Insert) -> Result<(Timeline, EditReport)> {
         if d.kind(lane) != *kind {
             return Err(EditError::new(format!("track {} is not a {kind:?} track", d.track_name(lane))));
         }
-        targets.push((*kind, lane));
+        match kind {
+            TrackKind::Audio => {
+                let rest: Vec<usize> = d.track_indices().into_iter().filter(|&i| d.kind(i) == TrackKind::Audio && i > lane).collect();
+                for (k, &stream) in streams.iter().enumerate() {
+                    let l = if k == 0 { lane } else { rest[k - 1] };
+                    targets.push((*kind, l, Some(stream)));
+                }
+            }
+            TrackKind::Video => targets.push((*kind, lane, None)),
+        }
     }
     if let Some(i) = primary
-        && !targets.iter().any(|&(_, l)| l == i)
+        && !targets.iter().any(|&(_, l, _)| l == i)
     {
         return Err(EditError::new(format!("asset {} has nothing for {:?} track {}", asset.id, d.kind(i), d.track_name(i))));
     }
 
     let at = match p.at {
         Some(t) => d.snap(t),
-        None => targets.iter().map(|&(_, l)| d.lane_ref(l).end()).max().unwrap_or(zero),
+        None => targets.iter().map(|&(_, l, _)| d.lane_ref(l).end()).max().unwrap_or(zero),
     };
     need_positive("--at", at)?;
 
@@ -421,18 +472,19 @@ pub fn insert(tl: &Timeline, p: &Insert) -> Result<(Timeline, EditReport)> {
     let link = (targets.len() > 1).then(|| d.ids.fresh("lnk"));
     // Stills have no available range, so nothing limits their length.
     let avail = (!still).then(|| TimeRange::new(RationalTime::zero(mrate), media.duration));
-    let target_lanes: Vec<usize> = targets.iter().map(|&(_, l)| l).collect();
+    let target_lanes: Vec<usize> = targets.iter().map(|&(_, l, _)| l).collect();
     let rippled = if p.overwrite {
         HashSet::new()
     } else {
         let room: Vec<(usize, Q, Q)> = target_lanes.iter().map(|&l| (l, at, dur)).collect();
         make_room(&mut d, &room, Room::Full)?
     };
-    for lane in target_lanes {
+    for (_, lane, stream) in targets {
         let id = d.ids.fresh("clip");
         let range = TimeRange::new(at_rate(src_in, mrate), at_rate(dur, mrate));
         let mut clip = Clip::new(name.clone(), MediaReference::External(ExternalReference::new(asset.url.clone(), avail)), range);
-        clip.metadata.ve.clip = Some(ClipMeta { link: link.clone(), ..ClipMeta::new(id.clone()) });
+        let audio = stream.filter(|&k| k > 0).map(|stream| ClipAudio { stream, ..ClipAudio::default() });
+        clip.metadata.ve.clip = Some(ClipMeta { link: link.clone(), audio, ..ClipMeta::new(id.clone()) });
         let mut ids = std::mem::replace(&mut d.ids, Ids::new(HashSet::new()));
         let l = d.lane(lane);
         if p.overwrite {
@@ -1300,6 +1352,69 @@ pub fn set_volume(tl: &Timeline, p: &SetVolume) -> Result<(Timeline, EditReport)
     if !any {
         return Err(EditError::new(format!("{} has no audio clip (on an audio track) to set the volume of", p.clip)));
     }
+    d.finish()
+}
+
+/// [`set_audio`]: which stream and channels an audio clip plays.
+#[derive(Debug, Clone)]
+pub struct SetAudio {
+    pub clip: Id,
+    /// Index into the asset's `audio_streams`. `None` keeps the current one.
+    pub stream: Option<u32>,
+    /// `None` keeps the current mapping.
+    pub channels: Option<Channels>,
+}
+
+/// Set an audio clip's stream and channel mapping. A video clip stands for
+/// its linked audio clip when it has exactly one; with several (one per
+/// stream) the call names the audio clip.
+pub fn set_audio(tl: &Timeline, p: &SetAudio) -> Result<(Timeline, EditReport)> {
+    let mut d = Doc::new(tl)?;
+    if p.stream.is_none() && p.channels.is_none() {
+        return Err(EditError::new("nothing to change: give a stream or channels"));
+    }
+    let (lane, _) = d.locate(&p.clip)?;
+    let target = if d.kind(lane) == TrackKind::Audio {
+        p.clip.clone()
+    } else {
+        let audio: Vec<Id> = d.group(&p.clip, true)?.into_iter().filter(|&(l, _)| d.kind(l) == TrackKind::Audio).map(|(_, id)| id).collect();
+        match audio.as_slice() {
+            [one] => one.clone(),
+            [] => return Err(EditError::new(format!("{} has no audio clip (on an audio track)", p.clip))),
+            many => {
+                let ids: Vec<String> = many.iter().map(ToString::to_string).collect();
+                return Err(EditError::new(format!("{} is linked to several audio clips ({}); name one of them", p.clip, ids.join(", "))));
+            }
+        }
+    };
+    let (i, j) = d.locate(&target)?;
+    let c = d.lane(i).items[j].clip_mut().expect("located a clip");
+    let url = match c.active_media() {
+        Some(MediaReference::External(e)) => e.target_url.clone(),
+        _ => return Err(EditError::new(format!("{target} has no media file"))),
+    };
+    let media = tl
+        .metadata
+        .ve
+        .assets
+        .iter()
+        .find(|a| a.url == url)
+        .and_then(|a| a.media.clone())
+        .ok_or_else(|| EditError::new(format!("{target}: its media is not in the asset table")))?;
+    let mut audio = c.metadata.ve.clip.as_ref().and_then(|m| m.audio.clone()).unwrap_or_default();
+    if let Some(k) = p.stream {
+        audio.stream = k;
+    }
+    if let Some(ch) = &p.channels {
+        audio.channels = ch.clone();
+    }
+    let count = media.audio_stream_count();
+    let stream = media.audio_stream(audio.stream).ok_or_else(|| {
+        EditError::new(format!("the media has {count} audio stream(s) (numbered from 0); there is no stream {}", audio.stream))
+    })?;
+    audio.channels.check(stream.channels).map_err(|e| EditError::new(format!("stream {}: {e}", audio.stream)))?;
+    c.metadata.ve.clip.get_or_insert_with(|| ClipMeta::new(target.clone())).audio = (!audio.is_default()).then_some(audio);
+    d.mark_changed(&target);
     d.finish()
 }
 

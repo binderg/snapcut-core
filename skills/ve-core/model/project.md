@@ -92,6 +92,7 @@ Edit results also give you each touched clip's `start` and `end` directly
 | `metadata.ve.clip.link` | Clips sharing a link (a file's picture and sound) are edited together unless a call says `linked: false` |
 | `metadata.ve.clip.speed` | Exact ratio `[num, den]`; `[3, 2]` is 1.5x. OTIO's `LinearTimeWarp` effect is written too, for other tools |
 | `metadata.ve.clip.volume_db` | Audio gain in dB (audio clips) |
+| `metadata.ve.clip.audio` | Audio clips: `{"stream": 1, "channels": "left"}`, which audio stream of the file plays and how its channels reach stereo ([../methods/edit.md](../methods/edit.md#editset_audio)). Absent means stream 0, `auto` |
 | Text clips | Media is `GeneratorReference.1` with `generator_kind: "ve.text"` and the words and style as `parameters` ([../methods/text.md](../methods/text.md)) |
 | `metadata.ve.clip.transform` | Picture placement (x, y, scale, rotation, opacity, crop), `blend` mode and keyframes ([../methods/edit.md](../methods/edit.md)) |
 | `metadata.ve.effects[]` | Effect stack, applied in order: `{id, effect: "core.color/exposure@1", params, keyframes}` ([../methods/effects.md](../methods/effects.md)). Rendered by the GPU compositor (frames, previews, exports) |
@@ -123,7 +124,9 @@ straight to `edit.ripple_delete` by name.
    "video": {"codec": "h264", "width": 160, "height": 120, "rate": [25, 1],
      "color": {"pixel_format": "yuv420p", "bit_depth": 8, "chroma": "4:2:0", "range": "limited", "dynamic_range": "sdr"},
      "alpha": "none"},
-   "audio": {"codec": "pcm_s16le", "sample_rate": 48000, "channels": 2}}}
+   "audio": {"codec": "pcm_s16le", "sample_rate": 48000, "channels": 2},
+   "audio_streams": [{"index": 0, "codec": "pcm_s16le", "sample_rate": 48000, "channels": 2,
+     "layout": "stereo", "default": true}]}}
 ```
 
 | Field | Meaning |
@@ -138,7 +141,8 @@ straight to `edit.ripple_delete` by name.
 | `media.video.color` | Pixel format, bit depth, chroma, range, primaries, transfer, matrix, `sdr`/`hdr10`/`hlg`. Fields the file does not state are absent |
 | `media.video.alpha` | Transparency: `none` (no alpha channel), `opaque` (an alpha channel, every pixel measured opaque, e.g. a screenshot saved as RGBA), `transparent` (some pixels measured see-through, e.g. a cut-out logo), `unmeasured` (video with an alpha channel; assume it may be see-through). Stills are measured at import; absent on assets imported before this was recorded (read `color.pixel_format` then) |
 | `media.video.see_through_percent` | Stills with `alpha: transparent`: share of pixels not fully opaque, in percent, rounded up |
-| `media.audio` | First audio stream only |
+| `media.audio` | The first audio stream (the same as `audio_streams[0]`) |
+| `media.audio_streams` | Every audio stream, in file order: `index` (the number `stream` params use; 0 is the first), `codec`, `sample_rate`, `channels`, `layout` (`mono`, `stereo`, `5.1`, ...; absent when the file has discrete channels with no layout), `language`, `title`, `default`. Filled on open for assets imported before it was recorded |
 
 ### Project block
 

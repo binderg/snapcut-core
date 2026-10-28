@@ -129,8 +129,21 @@ pub fn media_line(m: &MediaInfo) -> String {
             }
         }
     }
-    if let Some(a) = &m.audio {
-        let _ = write!(out, "  {} {}Hz {}ch", a.codec, a.sample_rate, a.channels);
+    let stream_text = |a: &crate::meta::AudioStream| {
+        let mut t = format!("{} {}Hz {}ch", a.codec, a.sample_rate, a.channels);
+        if a.channels > 2 && !a.layout_known() {
+            t.push_str(" (no layout)");
+        }
+        if let Some(title) = &a.title {
+            let _ = write!(t, " \"{title}\"");
+        }
+        t
+    };
+    if m.audio_streams.len() > 1 {
+        let all: Vec<String> = m.audio_streams.iter().map(|a| format!("a{} {}", a.index, stream_text(a))).collect();
+        let _ = write!(out, "  {}", all.join(", "));
+    } else if let Some(a) = m.audio_stream(0) {
+        let _ = write!(out, "  {}", stream_text(&a));
     }
     out
 }
@@ -254,6 +267,14 @@ impl Fmt<'_> {
         if let Some(m) = meta {
             if m.speed != Q::from_integer(1) {
                 let _ = write!(out, "  speed {}/{}", m.speed.numer(), m.speed.denom());
+            }
+            if let Some(a) = &m.audio {
+                if a.stream > 0 {
+                    let _ = write!(out, "  a{}", a.stream);
+                }
+                if !a.channels.is_auto() {
+                    let _ = write!(out, "  ch {}", a.channels.label());
+                }
             }
             if m.volume_db != 0.0 {
                 let _ = write!(out, "  vol {:+}dB", m.volume_db);

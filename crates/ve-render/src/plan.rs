@@ -6,7 +6,7 @@
 
 use std::path::PathBuf;
 
-use ve_model::meta::{EffectInstance, Transform, TransitionMeta};
+use ve_model::meta::{ChannelMode, Channels, EffectInstance, Transform, TransitionMeta};
 use ve_model::otio::{Clip, Composable, MediaReference, Timeline, Track, TrackKind};
 use ve_model::time::{Q, Rate};
 use ve_ops::lane::{Lane, clip_id, clip_speed, media_bounds};
@@ -53,6 +53,13 @@ pub struct Segment {
     pub media_start: Q,
     pub speed: Q,
     pub volume_db: f64,
+    /// Audio stream of the file (`a:N`). 0 for video segments.
+    pub stream: u32,
+    /// How the stream's channels reach stereo: `mono`, `left`, `[0, 2]`, `auto`
+    /// (`metadata.ve.clip.audio`). The filter for it is [`channel_filter`].
+    pub channels: Channels,
+    /// The stream's channel count and whether its layout is a standard one.
+    pub source_channels: (u32, bool),
     /// Frame rate of the source video (conform target for VFR footage).
     pub media_rate: Rate,
     /// Media seconds the source has, if known.
@@ -268,6 +275,25 @@ pub(crate) fn changes_picture(t: &Transform, from: Q, to: Q) -> bool {
     !base.is_identity()
 }
 
+/// The ffmpeg filter that takes a stream with `n` channels (`known`: a
+/// standard layout) to stereo the way `channels` says.
+pub fn channel_filter(channels: &Channels, (n, known): (u32, bool)) -> String {
+    let pan = |l: u32, r: u32| format!("pan=stereo|c0=c{l}|c1=c{r}");
+    match channels {
+        Channels::Mode(ChannelMode::Auto) if known || n == 0 => "aformat=channel_layouts=stereo".to_owned(),
+        Channels::Mode(ChannelMode::Auto) => pan(0, u32::from(n > 1)),
+        Channels::Mode(ChannelMode::Left) => pan(0, 0),
+        Channels::Mode(ChannelMode::Right) => pan(1, 1),
+        Channels::Mode(ChannelMode::Mono) => {
+            let n = n.max(1);
+            let sum: Vec<String> = (0..n).map(|i| format!("{:.6}*c{i}", 1.0 / f64::from(n))).collect();
+            let sum = sum.join("+");
+            format!("pan=stereo|c0={sum}|c1={sum}")
+        }
+        Channels::Pick(v) => pan(v[0], *v.get(1).unwrap_or(&v[0])),
+    }
+}
+
 /// The part `[s, e)` of `clip` (which spans `clip_range` on the timeline) as
 /// a segment. `s` may lie before the clip's start or `e` after its end (a
 /// transition plays into the clip's handles). `None` when the track kind
@@ -297,6 +323,9 @@ fn segment(
             media_start: src.start_time.seconds() + (s - start),
             speed: Q::from_integer(1),
             volume_db: 0.0,
+            stream: 0,
+            channels: Channels::default(),
+            source_channels: (2, true),
             media_rate: tl.output_rate(),
             bounds: None,
             head,
@@ -326,6 +355,27 @@ fn segment(
         warnings.push(format!("{id} is on video track {} but its media has no picture", track.name));
         return Ok(None);
     }
+    let pick = clip.metadata.ve.clip.as_ref().and_then(|m| m.audio.clone()).unwrap_or_default();
+    let mut source_channels = (2, true);
+    if track.kind == TrackKind::Audio
+        && let Some(m) = asset
+    {
+        let Some(st) = m.audio_stream(pick.stream) else {
+            warnings.push(format!("{id} plays audio stream {} but its media has {} stream(s); it is silent", pick.stream, m.audio_stream_count()));
+            return Ok(None);
+        };
+        if let Err(e) = pick.channels.check(st.channels) {
+            warnings.push(format!("{id}: {e}; it is silent"));
+            return Ok(None);
+        }
+        if pick.channels.is_auto() && !st.layout_known() && st.channels > 2 {
+            warnings.push(format!(
+                "{id}: stream {} has {} channels with no standard layout; playing channels 0 and 1 (choose others with `ve audio {id} --channels`)",
+                pick.stream, st.channels
+            ));
+        }
+        source_channels = (st.channels, st.layout_known());
+    }
     let src = clip.source_range.expect("lanes fill in source ranges");
     let speed = clip_speed(clip);
     let still = asset.and_then(|m| m.video.as_ref()).is_some_and(|v| v.still);
@@ -337,6 +387,9 @@ fn segment(
         media_start: src.start_time.seconds() + (s - start) * speed,
         speed,
         volume_db: clip.metadata.ve.clip.as_ref().map_or(0.0, |m| m.volume_db),
+        stream: pick.stream,
+        channels: pick.channels,
+        source_channels,
         media_rate: if still { tl.output_rate() } else { asset.and_then(|m| m.video.as_ref()).map_or(src.start_time.rate, |v| v.rate) },
         bounds: media_bounds(clip),
         head,

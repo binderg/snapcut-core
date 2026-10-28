@@ -32,6 +32,9 @@ const END_SLACK: Q = Q::new_raw(1, 2);
 pub struct SetParams {
     /// The asset the words belong to.
     pub asset: Id,
+    /// The audio stream they were heard in (from the asset's `audio_streams`). Default 0.
+    #[serde(default)]
+    pub stream: u32,
     /// Every word, with media times of the asset's file (`"12.345s"`).
     pub words: Vec<Word>,
     /// BCP 47 language tag (`en`, `he`), if known.
@@ -51,6 +54,8 @@ pub struct SetParams {
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct SetResult {
     pub asset: Id,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub stream: u32,
     pub words: usize,
     /// Media time the last word ends.
     pub end: Seconds,
@@ -65,6 +70,9 @@ pub struct GetParams {
     /// that play on the timeline, in timeline time.
     #[serde(default)]
     pub asset: Option<Id>,
+    /// With `asset`: which audio stream's transcript. Default 0.
+    #[serde(default)]
+    pub stream: Option<u32>,
     /// Timeline start (with no `asset`). Default: the timeline start.
     #[serde(default)]
     pub from: Option<String>,
@@ -106,6 +114,8 @@ impl Format {
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct AssetTranscript {
     pub asset: Id,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub stream: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -136,6 +146,9 @@ pub struct TimelineWord {
     /// The audio clip it plays in.
     pub clip: Id,
     pub asset: Id,
+    /// The asset's audio stream the clip plays, when not the first.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub stream: u32,
     /// Media time in the asset's file.
     pub source_start: Seconds,
 }
@@ -152,6 +165,20 @@ pub struct TimelineTranscript {
     pub text: Option<String>,
     /// Assets on audio tracks in the range that have no transcript yet.
     pub missing: Vec<Id>,
+    /// Streams other than the first, played in the range, with no transcript yet.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub missing_streams: Vec<StreamRef>,
+}
+
+/// An asset's audio stream.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct StreamRef {
+    pub asset: Id,
+    pub stream: u32,
+}
+
+fn is_zero(v: &u32) -> bool {
+    *v == 0
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
@@ -164,6 +191,8 @@ pub enum GetResult {
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct ListEntry {
     pub asset: Id,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub stream: u32,
     pub words: usize,
     pub end: Seconds,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -181,11 +210,16 @@ pub struct ListResult {
 #[serde(deny_unknown_fields)]
 pub struct RemoveParams {
     pub asset: Id,
+    /// Which audio stream's transcript. Default 0.
+    #[serde(default)]
+    pub stream: u32,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct RemoveResult {
     pub asset: Id,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub stream: u32,
     /// False when the asset had no transcript.
     pub removed: bool,
 }
@@ -194,14 +228,29 @@ fn asset<'a>(tl: &'a Timeline, id: &Id) -> Result<&'a Asset, RpcError> {
     tl.metadata.ve.assets.iter().find(|a| &a.id == id).ok_or_else(|| RpcError::invalid_params(format!("no asset `{id}`; `ve call media.assets` lists them")))
 }
 
-fn path_for(project: &OpenProject, a: &Asset) -> Result<PathBuf, RpcError> {
+/// `transcripts/<hash>.json` for stream 0 (the name it had before streams), `<hash>.s<n>.json` for others.
+fn path_for(project: &OpenProject, a: &Asset, stream: u32) -> Result<PathBuf, RpcError> {
     let hash = a.hash.as_deref().ok_or_else(|| RpcError::invalid_params(format!("{} has no content hash; re-import it", a.id)))?;
-    Ok(project.root().join(FOLDER).join(format!("{}.json", crate::measure::cache_dir_name(hash))))
+    let name = crate::measure::cache_dir_name(hash);
+    let file = if stream == 0 { format!("{name}.json") } else { format!("{name}.s{stream}.json") };
+    Ok(project.root().join(FOLDER).join(file))
 }
 
-/// The stored transcript of an asset, if any.
-fn load(project: &OpenProject, a: &Asset) -> Result<Option<Transcript>, RpcError> {
-    let path = path_for(project, a)?;
+/// Refuse a stream the asset does not have.
+fn check_stream(a: &Asset, stream: u32) -> Result<(), RpcError> {
+    match a.media.as_ref() {
+        Some(m) if stream > 0 && m.audio_stream(stream).is_none() => Err(RpcError::invalid_params(format!(
+            "{} has {} audio stream(s) (numbered from 0); there is no stream {stream}",
+            a.id,
+            m.audio_stream_count()
+        ))),
+        _ => Ok(()),
+    }
+}
+
+/// The stored transcript of an asset's stream, if any.
+fn load(project: &OpenProject, a: &Asset, stream: u32) -> Result<Option<Transcript>, RpcError> {
+    let path = path_for(project, a, stream)?;
     let Ok(bytes) = std::fs::read(&path) else { return Ok(None) };
     let mut t: Transcript = serde_json::from_slice(&bytes)
         .map_err(|e| RpcError::new(ErrorCode::Internal, format!("{} is not a valid transcript: {e}", path.display())))?;
@@ -212,6 +261,7 @@ fn load(project: &OpenProject, a: &Asset) -> Result<Option<Transcript>, RpcError
 
 pub fn set(project: &mut OpenProject, p: SetParams) -> Result<SetResult, RpcError> {
     let a = asset(&project.timeline, &p.asset)?.clone();
+    check_stream(&a, p.stream)?;
     let mut provenance = p.provenance;
     if let Some(actor) = &p.actor {
         let label = serde_json::Value::String(actor_label(Some(actor)));
@@ -242,12 +292,12 @@ pub fn set(project: &mut OpenProject, p: SetParams) -> Result<SetResult, RpcErro
             )));
         }
     }
-    let path = path_for(project, &a)?;
+    let path = path_for(project, &a, p.stream)?;
     let replaced = path.is_file();
     let mut text = serde_json::to_string_pretty(&t).map_err(|e| RpcError::new(ErrorCode::Internal, e.to_string()))?;
     text.push('\n');
     crate::project::write_file_atomic(&path, text.as_bytes()).map_err(crate::rpc_error)?;
-    Ok(SetResult { asset: a.id, words: t.words.len(), end: Seconds::new(t.end()), replaced })
+    Ok(SetResult { asset: a.id, stream: p.stream, words: t.words.len(), end: Seconds::new(t.end()), replaced })
 }
 
 pub fn get(project: &mut OpenProject, p: GetParams) -> Result<GetResult, RpcError> {
@@ -256,15 +306,18 @@ pub fn get(project: &mut OpenProject, p: GetParams) -> Result<GetResult, RpcErro
             return Err(RpcError::invalid_params("from/to are timeline times; with `asset` the whole transcript comes back"));
         }
         let a = asset(&project.timeline, id)?.clone();
-        let t = load(project, &a)?.ok_or_else(|| {
-            RpcError::invalid_params(format!("{id} has no transcript yet; a speech-to-text plugin makes one (`ve plugin list`)"))
+        let stream = p.stream.unwrap_or(0);
+        check_stream(&a, stream)?;
+        let t = load(project, &a, stream)?.ok_or_else(|| {
+            let which = if stream > 0 { format!(" for stream {stream}") } else { String::new() };
+            RpcError::invalid_params(format!("{id} has no transcript{which} yet; a speech-to-text plugin makes one (`ve plugin list`)"))
         })?;
         let text = p.format.is_text().then(|| {
             let lines: Vec<Line> = t.words.iter().map(|w| Line::word(w.start.to_string(), w.start.0, w.end.0, &w.text, w.speaker.as_deref())).collect();
             p.format.render(&lines)
         });
         let words = (p.format == Format::Words).then(|| t.words.clone());
-        return Ok(GetResult::Asset(AssetTranscript { asset: t.asset, language: t.language, speakers: t.speakers, provenance: t.provenance, words, text }));
+        return Ok(GetResult::Asset(AssetTranscript { asset: t.asset, stream, language: t.language, speakers: t.speakers, provenance: t.provenance, words, text }));
     }
     timeline(project, &p).map(GetResult::Timeline)
 }
@@ -415,8 +468,8 @@ fn cues(words: &[Line]) -> Vec<Cue> {
 /// Captions for the words that play on the timeline in `[from, to)`
 /// (timeline time), and the assets in range with no transcript.
 pub(crate) fn timeline_cues(project: &OpenProject, from: Option<String>, to: Option<String>) -> Result<(Vec<Cue>, Vec<Id>), RpcError> {
-    let p = GetParams { asset: None, from, to, format: Format::Words };
-    let (words, missing) = timeline_words(project, &p)?;
+    let p = GetParams { asset: None, stream: None, from, to, format: Format::Words };
+    let (words, missing, _) = timeline_words(project, &p)?;
     let lines: Vec<Line> = words.iter().map(|(t0, w, t1)| Line::word(String::new(), *t0, *t1, &w.text, w.speaker.as_deref())).collect();
     Ok((cues(&lines), missing))
 }
@@ -453,19 +506,22 @@ fn wrap(text: &str) -> Vec<String> {
 }
 
 fn timeline(project: &OpenProject, p: &GetParams) -> Result<TimelineTranscript, RpcError> {
-    let (words, missing) = timeline_words(project, p)?;
+    if p.stream.is_some() {
+        return Err(RpcError::invalid_params("stream picks an asset's transcript; give `asset` too"));
+    }
+    let (words, missing, missing_streams) = timeline_words(project, p)?;
     let text = p.format.is_text().then(|| {
         let lines: Vec<Line> = words.iter().map(|(t0, w, t1)| Line::word(w.start.clone(), *t0, *t1, &w.text, w.speaker.as_deref())).collect();
         p.format.render(&lines)
     });
     let words = (p.format == Format::Words).then(|| words.into_iter().map(|(_, w, _)| w).collect());
-    Ok(TimelineTranscript { revision: project.revision(), words, text, missing })
+    Ok(TimelineTranscript { revision: project.revision(), words, text, missing, missing_streams })
 }
 
 /// Words that play on the timeline in the range, in order, with their exact
 /// timeline start and end; and the assets in range with no transcript.
 #[allow(clippy::type_complexity)]
-fn timeline_words(project: &OpenProject, p: &GetParams) -> Result<(Vec<(Q, TimelineWord, Q)>, Vec<Id>), RpcError> {
+fn timeline_words(project: &OpenProject, p: &GetParams) -> Result<(Vec<(Q, TimelineWord, Q)>, Vec<Id>, Vec<StreamRef>), RpcError> {
     let tl = &project.timeline;
     let rate = tl.output_rate();
     let start = p.from.as_deref().map(|s| parse_time("from", s, rate)).transpose()?.unwrap_or(Q::from_integer(0));
@@ -474,9 +530,10 @@ fn timeline_words(project: &OpenProject, p: &GetParams) -> Result<(Vec<(Q, Timel
         return Err(RpcError::invalid_params("`to` must be after `from`"));
     }
     let by_url: HashMap<&str, &Asset> = tl.metadata.ve.assets.iter().map(|a| (a.url.as_str(), a)).collect();
-    let mut cache: HashMap<Id, Option<Transcript>> = HashMap::new();
+    let mut cache: HashMap<(Id, u32), Option<Transcript>> = HashMap::new();
     let mut words: Vec<(Q, TimelineWord, Q)> = Vec::new();
     let mut missing: Vec<Id> = Vec::new();
+    let mut missing_streams: Vec<StreamRef> = Vec::new();
     for item in &tl.tracks.children {
         let Composable::Track(track) = item else { continue };
         if track.kind != TrackKind::Audio {
@@ -491,13 +548,19 @@ fn timeline_words(project: &OpenProject, p: &GetParams) -> Result<(Vec<(Q, Timel
             let Some(ve_model::MediaReference::External(ext)) = clip.active_media() else { continue };
             let Some(a) = by_url.get(ext.target_url.as_str()) else { continue };
             let Some(id) = clip_id(clip) else { continue };
-            if !cache.contains_key(&a.id) {
-                let t = load(project, a)?;
-                cache.insert(a.id.clone(), t);
+            let stream = clip.metadata.ve.clip.as_ref().and_then(|m| m.audio.as_ref()).map_or(0, |x| x.stream);
+            let key = (a.id.clone(), stream);
+            if !cache.contains_key(&key) {
+                let t = load(project, a, stream)?;
+                cache.insert(key.clone(), t);
             }
-            let Some(t) = cache.get(&a.id).and_then(Option::as_ref) else {
+            let Some(t) = cache.get(&key).and_then(Option::as_ref) else {
                 if !missing.contains(&a.id) {
                     missing.push(a.id.clone());
+                }
+                let r = StreamRef { asset: a.id.clone(), stream };
+                if stream > 0 && !missing_streams.contains(&r) {
+                    missing_streams.push(r);
                 }
                 continue;
             };
@@ -523,6 +586,7 @@ fn timeline_words(project: &OpenProject, p: &GetParams) -> Result<(Vec<(Q, Timel
                     confidence: w.confidence,
                     clip: id.clone(),
                     asset: a.id.clone(),
+                    stream,
                     source_start: w.start,
                 };
                 words.push((t0, word, t1));
@@ -530,7 +594,7 @@ fn timeline_words(project: &OpenProject, p: &GetParams) -> Result<(Vec<(Q, Timel
         }
     }
     words.sort_by_key(|w| w.0);
-    Ok((words, missing))
+    Ok((words, missing, missing_streams))
 }
 
 /// Timecode of the frame `t` falls in (or, with `ceil`, the first frame at or after it).
@@ -547,8 +611,10 @@ pub fn list(project: &mut OpenProject) -> Result<ListResult, RpcError> {
         if a.hash.is_none() {
             continue;
         }
-        if let Some(t) = load(project, a)? {
-            out.push(ListEntry { asset: a.id.clone(), words: t.words.len(), end: Seconds::new(t.end()), language: t.language, provenance: t.provenance });
+        let streams = a.media.as_ref().map_or(1, |m| m.audio_stream_count().max(1));
+        for stream in 0..streams {
+            let Some(t) = load(project, a, stream)? else { continue };
+            out.push(ListEntry { asset: a.id.clone(), stream, words: t.words.len(), end: Seconds::new(t.end()), language: t.language, provenance: t.provenance });
         }
     }
     Ok(ListResult { transcripts: out })
@@ -556,13 +622,14 @@ pub fn list(project: &mut OpenProject) -> Result<ListResult, RpcError> {
 
 pub fn remove(project: &mut OpenProject, p: RemoveParams) -> Result<RemoveResult, RpcError> {
     let a = asset(&project.timeline, &p.asset)?.clone();
-    let path = path_for(project, &a)?;
+    check_stream(&a, p.stream)?;
+    let path = path_for(project, &a, p.stream)?;
     let removed = match std::fs::remove_file(&path) {
         Ok(()) => true,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
         Err(e) => return Err(RpcError::new(ErrorCode::Internal, format!("{}: {e}", path.display()))),
     };
-    Ok(RemoveResult { asset: a.id, removed })
+    Ok(RemoveResult { asset: a.id, stream: p.stream, removed })
 }
 
 #[cfg(test)]
