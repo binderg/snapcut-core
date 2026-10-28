@@ -685,6 +685,35 @@ asks to match the timeline to the first clip dropped on it.
   result field saying the first clip's rate and size differ from the
   project's), so an agent or editor can offer the switch.
 
+**Robust audio (wanted before alpha).** Real footage (podcasts, phone
+clips, screen recordings) has messier audio than our test sources. Wrong
+audio is worse than missing features, so streams and channels come first.
+Suggested order, not decided:
+
+- [ ] **Every audio stream, not only the first.** Probe records only the
+  first audio stream today. Podcasts and screen recordings often carry mic
+  and system audio as separate streams. Record all of them, and let import
+  pick a stream or bring each in as its own linked clip.
+- [ ] **Channel layouts:** map and downmix mono, dual-mono (a lav on one
+  side only), stereo, 5.1 and odd layouts predictably, with a per-clip
+  channel choice (left only, right only, sum).
+- [ ] **Sample rates and drift:** mixed 44.1/48 kHz sources and VFR phone
+  clips whose audio drifts from the picture. A test that checks sync at the
+  end of a long clip, not only at the start.
+- [ ] **Keyframed volume and pan**, using the keyframe curves
+  (`ve-model::curve`).
+- [ ] **Fades as first-class items**, not only the 20 ms cut crossfades and
+  gap-edge fades.
+- [ ] **Ducking:** lower music under voice (sidechain on a chosen track, or
+  driven by speech ranges from the transcript or silence analysis).
+- [ ] **Sync by waveform:** line up a separate recorder track or a second
+  camera with the main clip by matching audio. The matching can be a
+  plugin; placing the aligned clip needs a core method.
+- [ ] **Loudness targets on export:** presets such as -14 LUFS (YouTube)
+  and -16 LUFS (podcasts), built on `edit.normalize`.
+- [ ] **Pre-export audio report:** clipping, long silences, very low or
+  unbalanced levels, from the existing measurements.
+
 **Ready to ship (robustness and the features editors expect).** What a
 CapCut-class editor still needs from the core, beyond the sections above.
 Not ordered or decided yet.
@@ -700,9 +729,8 @@ Not ordered or decided yet.
 - [ ] **Masks and track mattes:** shape masks with feather on a clip, and a
   clip using the track above as its alpha or luma matte. Goes with blend
   modes.
-- [ ] **Audio:** keyframed volume and pan, fades as first-class items (not
-  only the 20 ms cut crossfades), and ducking music under voice. EQ,
-  compression and denoise can be plugins.
+- [ ] **Audio:** see "Robust audio" below. EQ, highpass, compression,
+  denoise and de-essing are built (`core.audio/*`).
 - [ ] **Color:** `.cube` LUTs on a clip, and the open BT.601 vs BT.709 choice
   for untagged HD footage (read as 601 everywhere today, while players show
   it as 709).
