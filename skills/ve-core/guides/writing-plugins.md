@@ -183,6 +183,43 @@ engine copies that effect's folder into the project's `effects/`. Bump the
 major version for a change that would alter existing projects' look;
 projects keep the copy they have until asked for the new major.
 
+## Plugin audio effects
+
+A plugin can process audio for an effect in its effect pack: a VST3 or
+CLAP host, a denoiser, anything that reads samples and writes samples. The
+effect's manifest says `"runtime": "process"` and names one of the plugin's
+commands in `"method"` ([../methods/effects.md](../methods/effects.md#plugin-audio-effects-runtime-process)):
+
+```json
+{
+  "contributes": {
+    "commands": [{ "method": "myvst.process", "summary": "Run a VST3 over a clip's audio" }],
+    "effects": ["effects"]
+  }
+}
+```
+
+When a render needs a clip with that effect, the engine calls the method
+once with:
+
+| Field | |
+| --- | --- |
+| `input` | Path of the clip's audio: raw little-endian 32-bit float, stereo interleaved (L R L R ...) |
+| `output` | Path to write the result, same format |
+| `frames` | Frames in `input`; write exactly this many to `output` |
+| `channels` | 2 |
+| `sample_rate` | The project's sample rate |
+| `start_sample` | Clip-relative index of the first frame. Negative: the file starts before the clip (up to 1 s of handle for crossfades). Frame `i` is at clip time `(start_sample + i) / sample_rate` seconds |
+| `effect`, `clip` | The effect (`myvst.compressor@1`) and the clip it is on |
+| `params` | Every param's value, defaults filled in |
+| `keyframes` | As the clip stores them (`{"threshold": [{"t": ..., "v": -24, "ease": "linear"}]}`), times relative to the clip's start |
+
+Answer `{}` once `output` is written. Process the whole file in order (a
+reverb's tail or a compressor's state carries across blocks). Send
+`$/progress` on long clips and honour `$/cancel`. The engine keeps the
+result, so the same clip with the same values is processed once; bump your
+plugin's `version` when its sound changes, which renders such clips again.
+
 ## Checklist
 
 - [ ] Nothing but JSON-RPC on stdout; logs to stderr.

@@ -26,9 +26,15 @@ pub enum CacheKind {
     Measure,
     /// Audio extracted for plugins (`media.extract_audio`).
     Audio,
+    /// Clips processed by plugin audio effects (`runtime: "process"`).
+    #[serde(rename = "audio_fx")]
+    AudioFx,
 }
 
-const ALL: [CacheKind; 5] = [CacheKind::Frames, CacheKind::Previews, CacheKind::Renders, CacheKind::Measure, CacheKind::Audio];
+const ALL: [CacheKind; 6] = [CacheKind::Frames, CacheKind::Previews, CacheKind::Renders, CacheKind::Measure, CacheKind::Audio, CacheKind::AudioFx];
+
+/// Folder in the project cache for clips processed by plugin audio effects.
+pub const AUDIO_FX: &str = "audio_fx";
 
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -64,6 +70,7 @@ fn folders(p: &OpenProject, kind: CacheKind) -> Vec<PathBuf> {
         CacheKind::Previews => vec![p.cache_dir().join("previews")],
         CacheKind::Renders => vec![p.cache_dir().join("renders")],
         CacheKind::Audio => vec![p.cache_dir().join("audio")],
+        CacheKind::AudioFx => vec![p.cache_dir().join(AUDIO_FX)],
         CacheKind::Measure => {
             let Ok(base) = cache_base() else { return Vec::new() };
             p.timeline

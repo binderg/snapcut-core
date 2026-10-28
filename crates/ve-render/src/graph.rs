@@ -83,12 +83,12 @@ pub struct Graph {
 }
 
 /// Exact rational as an FFmpeg-friendly decimal with 6 places, rounded down.
-fn micros(q: Q) -> String {
+pub(crate) fn micros(q: Q) -> String {
     let us = (q * Q::from_integer(1_000_000)).floor().to_integer().max(0);
     format!("{}.{:06}", us / 1_000_000, us % 1_000_000)
 }
 
-fn floor_micros(q: Q) -> Q {
+pub(crate) fn floor_micros(q: Q) -> Q {
     (q * Q::from_integer(1_000_000)).floor() / Q::from_integer(1_000_000)
 }
 
@@ -97,7 +97,7 @@ fn rate_text(r: Rate) -> String {
 }
 
 /// Index of the frame (or sample) at `t` seconds, counting at `rate` per second.
-fn index(t: Q, per_second: Q) -> i64 {
+pub(crate) fn index(t: Q, per_second: Q) -> i64 {
     (t * per_second).round().to_integer()
 }
 
@@ -344,6 +344,9 @@ impl Graph {
     /// at cuts (0 for hard cuts). Audio clips' effects come from `fx`; one
     /// that is missing, or is not an audio effect, is an error.
     pub fn audio(&mut self, plan: &Plan, c: &Canvas, xfade: Q, fx: &Registry) -> Result<String, RenderError> {
+        // Clips with plugin effects play from their processed files.
+        let prepared = crate::plugin_fx::prepare(plan, fx, c.sample_rate)?;
+        let plan = &*prepared;
         let sr = Q::from_integer(i64::from(c.sample_rate));
         let start = plan.span.start;
         let total = index(plan.span.end - start, sr);
@@ -527,7 +530,7 @@ struct AudioPiece<'a> {
 }
 
 /// `atempo` takes 0.5..100 per instance; chain instances for slower speeds.
-fn atempo_chain(speed: Q) -> Vec<String> {
+pub(crate) fn atempo_chain(speed: Q) -> Vec<String> {
     let mut s = *speed.numer() as f64 / *speed.denom() as f64;
     let mut out = Vec::new();
     while s < 0.5 {

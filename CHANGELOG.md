@@ -39,6 +39,13 @@ not final (the command is `ve`).
   channels 0 and 1 with a warning instead of failing. Measurements,
   `media.extract_audio` and transcripts take a `stream` (each stream has its
   own transcript).
+- Plugin audio effects (`runtime: "process"`): an effect in a plugin's
+  pack names one of the plugin's commands, which processes the clip's
+  audio from a raw f32 file into another. The clip is rendered through it
+  once, kept in the project cache (`cache.clear audio_fx`), and heard in
+  exports, previews, measurements and analysis. This is the base for VST3
+  and CLAP host plugins. Effect params may now be plain strings for these
+  (a plugin's saved state).
 
 ### Editing
 

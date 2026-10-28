@@ -17,6 +17,7 @@ Kinds:
 | `renders` | Exports waiting to be collected, and leftovers from failed or cancelled ones | `<project cache>/renders/` |
 | `measure` | `measure.*` results for this project's media files (shared with other projects that use the same files) | `<cache>/measure/<file hash>/` |
 | `audio` | Audio files made by `media.extract_audio` for plugins | `<project cache>/audio/` |
+| `audio_fx` | Clips processed by plugin audio effects (`runtime: "process"`) | `<project cache>/audio_fx/` |
 
 ## `cache.status`
 

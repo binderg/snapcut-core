@@ -1,0 +1,16 @@
+{
+  "id": "gainfx.gain",
+  "version": "1.0.0",
+  "kind": "audio",
+  "runtime": "process",
+  "method": "gainfx.process",
+  "name": "Plugin gain",
+  "description": "Gain in dB, run in a plugin process.",
+  "params": {
+    "type": "object",
+    "properties": {
+      "db": { "type": "number", "minimum": -60, "maximum": 24, "default": 0 },
+      "state": { "type": "string", "description": "Opaque plugin state (unused here)" }
+    }
+  }
+}

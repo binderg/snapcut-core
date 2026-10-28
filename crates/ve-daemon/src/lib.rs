@@ -60,6 +60,10 @@ pub struct Session {
     pub(crate) shutdown: tokio::sync::Notify,
     /// Plugin processes for the open project.
     pub plugins: plugins::PluginSlot,
+    /// The project's folder and cache folder, set once when it opens (a
+    /// session never opens another). Read without the project lock, so
+    /// renders that call plugins never wait on it.
+    pub(crate) opened: OnceLock<(PathBuf, PathBuf)>,
 }
 
 impl Default for Session {
@@ -75,6 +79,7 @@ impl Default for Session {
             daemon: OnceLock::new(),
             shutdown: tokio::sync::Notify::new(),
             plugins: plugins::PluginSlot::default(),
+            opened: OnceLock::new(),
         }
     }
 }
@@ -188,6 +193,7 @@ pub fn registry(session: Arc<Session>) -> Arc<Registry> {
         }
         let project = project::init(&p.path, &name, output).map_err(rpc_error)?;
         let info = ProjectInfo::of(&project);
+        let _ = s.opened.set((project.root().to_owned(), project.cache_dir().to_owned()));
         *guard = Some(project);
         Ok(info)
     });
@@ -205,6 +211,7 @@ pub fn registry(session: Arc<Session>) -> Arc<Registry> {
         }
         let project = project::open(&p.path).map_err(rpc_error)?;
         let info = ProjectInfo::of(&project);
+        let _ = s.opened.set((project.root().to_owned(), project.cache_dir().to_owned()));
         *guard = Some(project);
         Ok(info)
     });

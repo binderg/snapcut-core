@@ -256,6 +256,16 @@ share an input only with the same stream and mapping). Insert puts each
 stream on its own audio track (adding tracks), all linked; `streams` picks.
 Measurements, `media.extract_audio` and transcripts take `stream`; stream 0
 keeps the old cache and transcript names (`<hash>.s<n>.json` for others).
+Plugin audio effects (Oct 28 2026): `runtime: "process"` effects (manifest
+`method` = a plugin command; plain `string` params allowed) are pre-rendered
+per clip by `ve-render::plugin_fx::prepare` (called at the top of
+`Graph::audio`): decode with stream/channels/speed plus up to 1 s handles,
+ffmpeg passes and plugin calls file to file (raw f32 stereo), then a float
+WAV in `<project cache>/audio_fx/` keyed by media stamp, range, effects and
+plugin version; the segment is swapped to read it. The daemon's
+`PluginMethods` is the `Processor` (registered weakly at attach; finds the
+project via `Session::opened`, set once at open, so no project lock is
+taken during renders). VST3/CLAP hosts will be such plugins (no `ve-clap`).
 Text (`ve-model::text`, `ve-render::text`, `ve_ops::edit::{add_text, set_text}`,
 `ve-daemon::text`): text clips are clips whose media is OTIO
 `GeneratorReference.1` (`generator_kind: "ve.text"`, parameters = words +

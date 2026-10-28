@@ -276,3 +276,76 @@ async fn crashes_and_refusals_are_reported() {
     let rev = ok(&r, "project.summary", json!({})).await["revision"].clone();
     ok(&r, "edit.split", json!({"at": "00:00:01:00", "base_rev": rev})).await;
 }
+
+fn copy_tree(from: &Path, to: &Path) {
+    fs::create_dir_all(to).unwrap();
+    for e in fs::read_dir(from).unwrap() {
+        let e = e.unwrap();
+        if e.file_type().unwrap().is_dir() {
+            copy_tree(&e.path(), &to.join(e.file_name()));
+        } else {
+            fs::copy(e.path(), to.join(e.file_name())).unwrap();
+        }
+    }
+}
+
+/// A `process` audio effect: the clip is rendered through the plugin once,
+/// kept in the cache, and heard everywhere the mix is (measurements here),
+/// with `ffmpeg` effects before it run in the same pre-render.
+#[tokio::test]
+async fn plugin_audio_effect_renders_once_and_is_heard() {
+    if !python_available() {
+        eprintln!("skipping: no Python 3 on PATH");
+        return;
+    }
+    let dir = scratch("plugins-audio-fx");
+    make_media(&dir.join("clip.mp4"), 3);
+    let r = ve_daemon::registry(Arc::new(ve_daemon::Session::default()));
+    let root = dir.join("edit");
+    ok(&r, "project.init", json!({"path": root, "fps": "30", "width": 320, "height": 240})).await;
+    let asset = ok(&r, "media.import", json!({"paths": [dir.join("clip.mp4")], "base_rev": 0})).await["assets"][0]["id"].clone();
+    let ins = ok(&r, "edit.insert", json!({"asset": asset, "base_rev": 1})).await;
+    let audio = find(&ins["created"], "track", "A1")["id"].clone();
+    copy_tree(&Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/plugins/gainfx"), &root.join("plugins/gainfx"));
+    let calls = || fs::read_to_string(root.join("plugins/gainfx/calls.log")).unwrap_or_default().lines().count();
+    let lufs = |v: Value| v["integrated_lufs"].as_f64().unwrap();
+
+    let plain = lufs(ok(&r, "measure.loudness", json!({})).await);
+    let added = ok(&r, "effect.add", json!({"clip": audio, "effect": "gainfx.gain@1", "params": {"db": -6}, "base_rev": 2})).await;
+    let fx_id = added["effect"].clone();
+    assert!(root.join("effects").read_dir().unwrap().count() > 0, "the pack's effect is copied into the project");
+    let quieter = ok(&r, "measure.loudness", json!({})).await;
+    assert!((plain - lufs(quieter.clone()) - 6.0).abs() < 0.3, "plain {plain}, with -6 dB plugin gain {}", lufs(quieter));
+    assert_eq!(calls(), 1);
+    ok(&r, "measure.loudness", json!({})).await;
+    assert_eq!(calls(), 1, "the processed clip is reused");
+
+    // A new value renders again; an ffmpeg effect before it runs in the pre-render too.
+    let rev = ok(&r, "project.summary", json!({})).await["revision"].clone();
+    let set = ok(&r, "effect.set", json!({"id": fx_id, "params": {"db": -12}, "base_rev": rev})).await;
+    let eq = json!({"frequency": 330, "gain": -6, "q": 1});
+    let added = ok(&r, "effect.add", json!({"clip": audio, "effect": "core.audio/eq@1", "params": eq, "index": 0, "base_rev": set["revision"]})).await;
+    let both = lufs(ok(&r, "measure.loudness", json!({})).await);
+    assert!((plain - both - 18.0).abs() < 0.6, "plain {plain}, EQ -6 dB then plugin -12 dB: {both}");
+    assert_eq!(calls(), 2);
+
+    // What the layer inspector and the cache report say.
+    let layers = ok(&r, "render.layers", json!({"at": "1s"})).await;
+    let fx: Vec<&str> = layers["audio"][0]["effects"].as_array().unwrap().iter().map(|e| e["effect"].as_str().unwrap()).collect();
+    assert_eq!(fx, ["core.audio/eq@1", "gainfx.gain@1"]);
+    let cache = ok(&r, "cache.status", json!({})).await;
+    assert!(find(&cache["entries"], "kind", "audio_fx")["files"].as_u64().unwrap() >= 2, "{cache}");
+
+    // When no plugin provides the method, the render says which one is missing.
+    let _ = added;
+    ok(&r, "cache.clear", json!({"kinds": ["audio_fx"]})).await;
+    let copied = fs::read_dir(root.join("effects")).unwrap().flatten().map(|e| e.path().join("effect.json")).find(|p| {
+        fs::read_to_string(p).is_ok_and(|t| t.contains("gainfx.process"))
+    });
+    let copied = copied.expect("the project's copy of the effect");
+    fs::write(&copied, fs::read_to_string(&copied).unwrap().replace("gainfx.process", "missing-plugin.process")).unwrap();
+    // Project effects are re-listed at most every 200 ms.
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    let e = err(&r, "measure.loudness", json!({})).await;
+    assert!(e["message"].as_str().unwrap().contains("missing-plugin.process"), "{e}");
+}

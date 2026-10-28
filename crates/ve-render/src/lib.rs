@@ -25,6 +25,7 @@ pub mod gpu;
 pub mod graph;
 pub mod layers;
 pub mod plan;
+pub mod plugin_fx;
 pub mod source;
 pub mod text;
 
@@ -480,6 +481,8 @@ pub fn preview_key_from(tl: &Timeline, span: Span, s: &EncodeSettings, frame_key
         }
         h.update(b"|");
     }
+    // Plugin audio effects: an upgraded plugin may sound different.
+    h.update(&crate::plugin_fx::versions_key(&p, fx).to_le_bytes());
     Ok(h.finalize().to_hex().to_string())
 }
 

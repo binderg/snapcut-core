@@ -1,0 +1,15 @@
+{
+  "id": "gainfx",
+  "version": "0.1.0",
+  "engine": ">=0.1.0-rc.1",
+  "protocol": "1",
+  "name": "Gain (plugin audio effect test)",
+  "description": "A `process` audio effect for the engine's tests: multiplies the samples.",
+  "contributes": {
+    "commands": [
+      { "method": "gainfx.process", "summary": "Apply the gain effect to a raw audio file" }
+    ],
+    "effects": ["effects"]
+  },
+  "run": { "command": "python3", "args": ["main.py"], "windows": { "command": "python" } }
+}

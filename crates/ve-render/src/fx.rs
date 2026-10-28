@@ -67,8 +67,8 @@ pub struct Manifest {
     /// Semver. Clips may pin the major version: `core.color/desaturate@1`.
     pub version: String,
     pub kind: Kind,
-    /// `wgsl` for video effects and transitions, `ffmpeg` for audio effects
-    /// (`wasm`, `ofx`, `clap` and `process` come later).
+    /// `wgsl` for video effects and transitions, `ffmpeg` or `process` for
+    /// audio effects (`wasm` and `ofx` come later).
     #[serde(default = "wgsl")]
     pub runtime: String,
     pub name: String,
@@ -80,6 +80,10 @@ pub struct Manifest {
     /// The ffmpeg filter chain template (`ffmpeg` runtime, audio effects).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub filter: Option<String>,
+    /// The plugin command that processes the audio (`process` runtime): a
+    /// method one installed plugin contributes, e.g. `vst3.process`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub method: Option<String>,
     /// JSON Schema object whose `properties` are the params.
     #[serde(default = "empty_schema")]
     pub params: Value,
@@ -105,6 +109,8 @@ pub enum ParamType {
     Vec(u8),
     /// A picture from the effect's folder, bound as a texture.
     Image,
+    /// Plain text (`process` runtime only), e.g. a plugin's saved state.
+    Text,
 }
 
 /// A picture an effect samples (a luma map, a displacement map), decoded once.
@@ -241,11 +247,11 @@ impl Fx {
             ("wgsl", Kind::Audio) => {
                 return Err(err("audio effects run on the `ffmpeg` runtime: set \"runtime\": \"ffmpeg\" and give a \"filter\" chain"));
             }
-            ("ffmpeg", Kind::Audio) | ("wgsl", _) => {}
-            ("ffmpeg", _) => return Err(err("the `ffmpeg` runtime is for audio effects (\"kind\": \"audio\")")),
+            ("ffmpeg" | "process", Kind::Audio) | ("wgsl", _) => {}
+            ("ffmpeg" | "process", _) => return Err(err(format!("the `{}` runtime is for audio effects (\"kind\": \"audio\")", manifest.runtime))),
             (other, _) => {
                 return Err(err(format!(
-                    "runtime `{other}` is not supported yet; `wgsl` (video) and `ffmpeg` (audio) run today (wasm, ofx, clap and process come later)"
+                    "runtime `{other}` is not supported yet; `wgsl` (video), `ffmpeg` and `process` (audio) run today (wasm and ofx come later)"
                 )));
             }
         }
@@ -256,7 +262,18 @@ impl Fx {
         }
         semver::Version::parse(&manifest.version).map_err(|e| err(format!("version `{}`: {e}", manifest.version)))?;
         let params = parse_params(&manifest.params)?;
-        let source = if manifest.kind == Kind::Audio {
+        if manifest.runtime != "process"
+            && let Some(p) = params.iter().find(|p| p.ty == ParamType::Text)
+        {
+            return Err(err(format!("param `{}`: plain text params are for the `process` runtime only", p.name)));
+        }
+        let source = if manifest.runtime == "process" {
+            let method = manifest.method.clone().unwrap_or_default();
+            if !method.contains('.') {
+                return Err(err("a `process` effect needs a \"method\": the plugin command that processes the audio, like `myplugin.process`"));
+            }
+            method
+        } else if manifest.kind == Kind::Audio {
             let filter = manifest.filter.clone().ok_or_else(|| err("an audio effect needs a \"filter\": an ffmpeg audio filter chain with {param} placeholders"))?;
             crate::afx::check(&crate::afx::parse(&filter)?, &params)?;
             filter
@@ -500,7 +517,7 @@ impl Fx {
                 }
                 ParamType::Number => out.extend_from_slice(&(p.clamp(v.as_f64().unwrap_or(0.0)) as f32).to_le_bytes()),
                 ParamType::Bool => out.extend_from_slice(&(if v.as_bool().unwrap_or(false) { 1.0f32 } else { 0.0 }).to_le_bytes()),
-                ParamType::Image => {}
+                ParamType::Image | ParamType::Text => {}
             }
         }
         out.resize(self.params_size(), 0);
@@ -524,6 +541,9 @@ fn check_value(p: &Param, v: &Value) -> Result<(), FxError> {
         }
         ParamType::Bool => {
             v.as_bool().ok_or_else(|| bad("expected true or false"))?;
+        }
+        ParamType::Text => {
+            v.as_str().ok_or_else(|| bad("expected a string"))?;
         }
         ParamType::Color => {
             let a = v.as_array().ok_or_else(|| bad("expected a color like [1, 0.5, 0] (sRGB, 0 to 1)"))?;
@@ -604,9 +624,10 @@ fn parse_params(schema: &Value) -> Result<Vec<Param>, FxError> {
                 }
             }
             Some("string") if format == Some("image") => ParamType::Image,
+            Some("string") if format.is_none() => ParamType::Text,
             other => {
                 return Err(err(format!(
-                    "param `{name}`: type {other:?} is not supported; use number, integer, boolean, a color or vector array, or a string with \"format\": \"image\""
+                    "param `{name}`: type {other:?} is not supported; use number, integer, boolean, a color or vector array, a string with \"format\": \"image\", or (process effects) a plain string"
                 )));
             }
         };
@@ -620,10 +641,11 @@ fn parse_params(schema: &Value) -> Result<Vec<Param>, FxError> {
             (None, ParamType::Color) => serde_json::json!([1.0, 1.0, 1.0]),
             (None, ParamType::Vec(n)) => Value::Array(vec![Value::from(min.unwrap_or(0.0).max(0.0)); n as usize]),
             (None, ParamType::Image) => return Err(err(format!("param `{name}`: an image param needs a \"default\" file"))),
+            (None, ParamType::Text) => Value::String(String::new()),
         };
         let animatable = s.get("x-animatable").and_then(Value::as_bool).unwrap_or(false);
-        if animatable && ty == ParamType::Image {
-            return Err(err(format!("param `{name}`: images cannot be keyframed")));
+        if animatable && matches!(ty, ParamType::Image | ParamType::Text) {
+            return Err(err(format!("param `{name}`: images and text cannot be keyframed")));
         }
         let p = Param { name: name.clone(), ty, default, min, max, animatable };
         check_value(&p, &p.default).map_err(|e| err(format!("default: {e}")))?;
@@ -669,6 +691,9 @@ pub struct Registry {
     pub list: Vec<Arc<Fx>>,
     /// Project effects that failed to load, with the reason.
     pub problems: Vec<String>,
+    /// The project folder it was loaded for: `process` effects find the
+    /// plugin host that serves it ([`crate::plugin_fx`]).
+    pub root: Option<PathBuf>,
 }
 
 fn builtins() -> &'static [Arc<Fx>] {
@@ -764,7 +789,7 @@ impl Registry {
     /// project and reused while no file under `effects/` changed (names,
     /// sizes and modification times; one directory listing per effect).
     pub fn for_project(root: Option<&Path>) -> Self {
-        let Some(root) = root else { return Self { list: builtins().to_vec(), problems: Vec::new() } };
+        let Some(root) = root else { return Self { list: builtins().to_vec(), problems: Vec::new(), root: None } };
         let loaded = loaded();
         if let Some(e) = loaded.lock().unwrap_or_else(|e| e.into_inner()).get(root)
             && e.checked.elapsed() < RECHECK
@@ -795,7 +820,7 @@ impl Registry {
 
     /// [`Self::for_project`] without the reuse: read and validate everything.
     pub fn load(root: &Path) -> Self {
-        let mut r = Self { list: builtins().to_vec(), problems: Vec::new() };
+        let mut r = Self { list: builtins().to_vec(), problems: Vec::new(), root: Some(root.to_owned()) };
         let Ok(entries) = std::fs::read_dir(root.join("effects")) else { return r };
         let mut dirs: Vec<PathBuf> = entries.flatten().map(|e| e.path()).filter(|p| p.join("effect.json").is_file()).collect();
         dirs.sort();
@@ -909,6 +934,7 @@ mod tests {
             description: String::new(),
             shader: "effect.wgsl".into(),
             filter: None,
+            method: None,
             params,
             skill: None,
         }

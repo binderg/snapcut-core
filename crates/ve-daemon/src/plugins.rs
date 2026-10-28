@@ -55,6 +55,9 @@ impl PluginMethods {
         let _ = self.reserved.set(Arc::new(reserved));
         let _ = self.registry.set(Arc::downgrade(registry));
         registry.set_extension(self.clone());
+        // Renders reach plugin audio effects through this.
+        let me: Arc<dyn ve_render::plugin_fx::Processor> = self.clone();
+        ve_render::plugin_fx::register(Arc::downgrade(&me));
     }
 
     fn registry(&self) -> Weak<Registry> {
@@ -64,7 +67,7 @@ impl PluginMethods {
     /// The host for the session's current project, made on first use.
     fn host(&self) -> Result<Arc<Host>, RpcError> {
         let session = self.session.upgrade().ok_or_else(gone)?;
-        let paths = session.paths();
+        let paths = session.opened.get().cloned().or_else(|| session.paths());
         let root = paths.as_ref().map(|(r, _)| r.clone());
         let mut slot = session.plugins.0.lock().unwrap_or_else(|e| e.into_inner());
         if let Some((r, h)) = slot.as_ref()
@@ -97,6 +100,40 @@ impl PluginMethods {
         Ok(host)
     }
 
+}
+
+/// Plugin audio effects (`runtime: "process"`) during renders of this
+/// session's project ([`ve_render::plugin_fx`]).
+impl ve_render::plugin_fx::Processor for PluginMethods {
+    fn serves(&self, root: &std::path::Path) -> bool {
+        self.session.upgrade().and_then(|s| s.opened.get().map(|(r, _)| r == root)).unwrap_or(false)
+    }
+
+    fn cache_dir(&self) -> Option<PathBuf> {
+        self.session.upgrade().and_then(|s| s.opened.get().map(|(_, c)| c.join(crate::cache::AUDIO_FX)))
+    }
+
+    fn version(&self, method: &str) -> Option<String> {
+        let host = self.host().ok()?;
+        let (p, _) = host.command(method).or_else(|| {
+            host.rescan();
+            host.command(method)
+        })?;
+        Some(format!("{}@{}", p.manifest.id, p.manifest.version))
+    }
+
+    fn process(&self, method: &str, params: Value) -> Result<Value, String> {
+        let host = self.host().map_err(|e| e.message)?;
+        if host.command(method).is_none() {
+            host.rescan();
+        }
+        if host.command(method).is_none() {
+            return Err(format!("no installed plugin provides `{method}`; `ve plugin list` shows what is installed"));
+        }
+        // Progress belongs to the render (frames done); only cancel is passed on.
+        let hooks = CallHooks { on_progress: &|_, _| {}, cancelled: &ve_render::control::cancelled };
+        host.call(method, params, &hooks).map_err(|e| e.message)
+    }
 }
 
 impl Extension for PluginMethods {

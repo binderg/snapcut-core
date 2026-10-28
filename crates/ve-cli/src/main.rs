@@ -493,7 +493,7 @@ enum SecretCmd {
 enum CacheCmd {
     /// Delete the project's caches (everything is rebuilt when needed). Undo history is kept.
     Clear {
-        /// Only these: frames, previews, renders, measure, audio. Default: all.
+        /// Only these: frames, previews, renders, measure, audio, audio_fx. Default: all.
         #[arg(value_delimiter = ',')]
         kinds: Vec<String>,
         /// Show what would be freed without deleting anything.

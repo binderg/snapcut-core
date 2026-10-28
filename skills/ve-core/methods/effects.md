@@ -192,6 +192,36 @@ An audio effect's code is an ffmpeg audio filter chain in the manifest:
   keyframe change for each animatable param, and fails on any ffmpeg error
   or NaN output.
 
+### Plugin audio effects (`runtime: "process"`)
+
+An audio effect can also run in a plugin's own program: a VST3 or CLAP
+host, or DSP in any language. The manifest names the plugin command that
+does the work instead of a filter chain, and ships in the plugin's effect
+pack ([../guides/writing-plugins.md](../guides/writing-plugins.md#plugin-audio-effects)):
+
+```json
+{"id": "myvst.compressor", "version": "1.0.0", "kind": "audio", "runtime": "process",
+ "method": "myvst.process", "name": "Compressor (VST3)",
+ "params": {"type": "object", "properties": {
+   "threshold": {"type": "number", "minimum": -60, "maximum": 0, "default": -18, "x-animatable": true},
+   "state": {"type": "string", "description": "The VST's saved state, base64"}}}}
+```
+
+- Params may also be plain strings (`state` above: a plugin's saved
+  settings), which cannot be keyframed.
+- A clip with such an effect is rendered through the plugin once, before
+  the mix: its sound (stream, channels and speed applied) from up to 1 s
+  before the clip to 1 s after it, through its effects in stack order up to
+  the last plugin one (`ffmpeg` effects before it run in the same pass).
+  The result is kept in the project cache (`audio_fx`), keyed by the media,
+  the clip's range and speed, the effect values and the plugin's version,
+  so later renders reuse it. Effects after the last plugin one, gain, fades
+  and crossfades run in the mix as usual.
+- The first render of a clip waits for the plugin; editing the clip's
+  effect values or range renders it again.
+- If no installed plugin provides `method`, renders that hear the clip fail
+  and name the method. `fx.define` does not test-run plugin effects.
+
 ## `effect.remove` (edit)
 
 `{"id": "fx_..."}`.

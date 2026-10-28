@@ -1138,6 +1138,7 @@ mod tests {
             description: String::new(),
             shader: "effect.wgsl".into(),
             filter: None,
+            method: None,
             params: serde_json::json!({"properties": {}}),
             skill: None,
         };

@@ -302,7 +302,10 @@ pub fn define(p: &mut OpenProject, a: DefineParams) -> Result<Defined, RpcError>
         raw.push((name.clone(), bytes));
     }
     let fx = Fx::with_images(m, a.source, Origin::Project, None, images).map_err(invalid)?;
-    let tested_on = if fx.kind() == Kind::Audio {
+    let tested_on = if fx.manifest.runtime == "process" {
+        // The plugin runs at render time; nothing here can run it alone.
+        format!("not test-rendered (runs in plugin method {})", fx.source)
+    } else if fx.kind() == Kind::Audio {
         ve_render::afx::test(&fx).map_err(invalid)?;
         "ffmpeg".to_owned()
     } else {
